@@ -1,10 +1,24 @@
 const express = require("express");
+const fs = require("fs/promises");
+const path = require("path");
 const { generatePosterImage } = require("./utils/posterGenerator");
 const { sendPosterEmail } = require("./services/emailService");
 
 const app = express();
+const generatedPostersDir = path.join(__dirname, "public", "generated-posters");
 
+app.set("trust proxy", true);
 app.use(express.json());
+app.use("/generated-posters", express.static(generatedPostersDir));
+
+function getPublicBaseUrl(req) {
+  const configuredBaseUrl = process.env.PUBLIC_BASE_URL;
+  if (configuredBaseUrl && configuredBaseUrl.trim()) {
+    return configuredBaseUrl.trim().replace(/\/$/, "");
+  }
+
+  return `${req.protocol}://${req.get("host")}`;
+}
 
 app.get("/", (req, res) => {
   res.json({ message: "API is running" });
@@ -26,6 +40,7 @@ app.post("/generate-poster", async (req, res) => {
       x,
       y,
       email,
+      username,
       userImageSource,
       imageX,
       imageY,
@@ -82,18 +97,27 @@ app.post("/generate-poster", async (req, res) => {
       textBlendMode,
       posterSource,
     });
+    const imageName = posterResult.fileName;
+    const imagePath = path.join(generatedPostersDir, imageName);
+    await fs.mkdir(generatedPostersDir, { recursive: true });
+    await fs.writeFile(imagePath, posterResult.buffer);
+    const imageUrl = `${getPublicBaseUrl(req)}/generated-posters/${encodeURIComponent(imageName)}`;
 
     const emailResult = await sendPosterEmail({
       toEmail: email,
       posterBuffer: posterResult.buffer,
-      fileName: posterResult.fileName,
+      fileName: imageName,
     });
 
     return res.status(200).json({
       success: true,
       message: "Poster generated and email sent successfully.",
       messageId: emailResult.messageId,
-      fileName: posterResult.fileName,
+      username: typeof username === "string" && username.trim() ? username.trim() : name,
+      email,
+      imageName,
+      imageUrl,
+      fileName: imageName,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
