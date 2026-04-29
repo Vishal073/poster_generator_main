@@ -1,0 +1,5 @@
+.env
+**/node_modules/
+**/public/generated-posters/
+.DS_Store
+__MACOSX/
