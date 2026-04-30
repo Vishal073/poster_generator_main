@@ -5,8 +5,7 @@ const { uploadPosterToCloudinary } = require("./cloudnaryService");
 
 const router = express.Router();
 
-function getPosterFileName({ mobile, mobileNo, phone, phoneNumber, email, fallbackName }) {
-  const mobileValue = mobile || mobileNo || phone || phoneNumber;
+function getPosterFileName({ mobileValue, email, fallbackName }) {
   const normalizedIdentifier = mobileValue
     ? String(mobileValue).replace(/\D/g, "")
     : typeof email === "string" && email.trim()
@@ -31,10 +30,7 @@ async function generatePoster(req, res) {
       y,
       email,
       username,
-      mobile,
-      mobileNo,
-      phone,
-      phoneNumber,
+      MobileNo,
       userImageSource,
       imageX,
       imageY,
@@ -56,6 +52,17 @@ async function generatePoster(req, res) {
       textBlendMode = "multiply",
       posterSource = process.env.DEFAULT_POSTER_SOURCE,
     } = body;
+
+    const mobileValue = MobileNo;
+    const hasMobile = mobileValue != null && String(mobileValue).trim().length > 0;
+    const hasEmail = typeof email === "string" && email.trim().length > 0;
+
+    if (!hasMobile && !hasEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Either mobile number or email is required.",
+      });
+    }
 
     const posterResult = await generatePosterImage({
       name,
@@ -86,10 +93,7 @@ async function generatePoster(req, res) {
     });
 
     const imageName = getPosterFileName({
-      mobile,
-      mobileNo,
-      phone,
-      phoneNumber,
+      mobileValue,
       email,
       fallbackName: posterResult.fileName,
     });
@@ -103,6 +107,7 @@ async function generatePoster(req, res) {
       message: "Poster generated successfully.",
       username: typeof username === "string" && username.trim() ? username.trim() : name,
       email,
+      mobile: hasMobile ? String(mobileValue).trim() : undefined,
       imageName,
       fileName: imageName,
     });
