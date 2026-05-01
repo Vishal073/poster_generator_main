@@ -367,7 +367,7 @@ router.post("/webhook", async (req, res) => {
 
   try {
     if (!from) {
-      return res.sendStatus(200);
+      return res.status(204).end();
     }
 
     console.log("Incoming WhatsApp reply:", { from: normalizedFrom, reply });
@@ -385,15 +385,15 @@ router.post("/webhook", async (req, res) => {
       }).catch((error) => {
         console.error("Background poster WhatsApp send failed:", getErrorMessage(error));
       });
-      return res.sendStatus(200);
+      return res.status(204).end();
     }
 
     if (reply === "skip") {
       pendingPosterRequests.delete(normalizedFrom);
-      return res.sendStatus(200);
+      return res.status(204).end();
     }
 
-    return res.sendStatus(200);
+    return res.status(204).end();
   } catch (error) {
     console.error("WhatsApp webhook failed:", getErrorMessage(error));
     return res.sendStatus(500);
