@@ -1,9 +1,23 @@
 const express = require("express");
 const { generatePosterImage } = require("../utils/posterGenerator");
 const { uploadPosterToCloudinary } = require("./cloudnaryService");
+const { sendPosterWhatsApp } = require("./whatsappService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
+
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (error && typeof error === "object" && typeof error.message === "string") {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "Unknown error";
+}
 
 function getPosterFileName({ mobileValue, email, fallbackName }) {
   const normalizedIdentifier = mobileValue
@@ -55,68 +69,106 @@ async function generatePoster(req, res) {
 
     const mobileValue = MobileNo;
     const hasMobile = mobileValue != null && String(mobileValue).trim().length > 0;
-    const hasEmail = typeof email === "string" && email.trim().length > 0;
 
-    if (!hasMobile && !hasEmail) {
+    if (!hasMobile) {
       return res.status(400).json({
         success: false,
-        message: "Either mobile number or email is required.",
+        message: "Mobile number is required to send poster on WhatsApp.",
       });
     }
 
-    const posterResult = await generatePosterImage({
-      name,
-      textLines,
-      textLineStyles,
-      x,
-      y,
-      userImageSource,
-      imageX,
-      imageY,
-      imageWidth,
-      imageHeight,
-      imageShape,
-      imagePosition,
-      insetFromBottom,
-      insetLeft,
-      insetRight,
-      imageGap,
-      imageMaxSize,
-      lineGap,
-      paragraphGap,
-      fontSize,
-      fontColor,
-      fontFamily,
-      textOpacity,
-      textBlendMode,
-      posterSource,
-    });
+    let posterResult;
+    try {
+      posterResult = await generatePosterImage({
+        name,
+        textLines,
+        textLineStyles,
+        x,
+        y,
+        userImageSource,
+        imageX,
+        imageY,
+        imageWidth,
+        imageHeight,
+        imageShape,
+        imagePosition,
+        insetFromBottom,
+        insetLeft,
+        insetRight,
+        imageGap,
+        imageMaxSize,
+        lineGap,
+        paragraphGap,
+        fontSize,
+        fontColor,
+        fontFamily,
+        textOpacity,
+        textBlendMode,
+        posterSource,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to generate poster image.",
+        error: getErrorMessage(error),
+      });
+    }
 
     const imageName = getPosterFileName({
       mobileValue,
       email,
       fallbackName: posterResult.fileName,
     });
-    await uploadPosterToCloudinary(posterResult.buffer, imageName);
+    let uploadResult;
+    try {
+      uploadResult = await uploadPosterToCloudinary(posterResult.buffer, imageName);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Poster generated, but Cloudinary upload failed.",
+        imageName,
+        error: getErrorMessage(error),
+      });
+    }
+
+    let whatsappResult;
+    try {
+      whatsappResult = await sendPosterWhatsApp({
+        toMobile: mobileValue,
+        imageUrl: uploadResult.imageUrl,
+        body: "Here is your image",
+      });
+    } catch (error) {
+      return res.status(502).json({
+        success: false,
+        message: "Poster generated and uploaded, but WhatsApp delivery failed.",
+        imageName,
+        imageUrl: uploadResult.imageUrl,
+        cloudinaryPublicId: uploadResult.publicId,
+        error: getErrorMessage(error),
+      });
+    }
 
     // Gmail send disabled. To re-enable, call sendPosterEmail(...) here.
     // const emailResult = await sendPosterEmail({ toEmail: email, posterBuffer: posterResult.buffer, fileName: imageName });
 
     return res.status(200).json({
       success: true,
-      message: "Poster generated successfully.",
+      message: "Poster generated, uploaded, and sent to WhatsApp.",
       username: typeof username === "string" && username.trim() ? username.trim() : name,
       email,
       mobile: hasMobile ? String(mobileValue).trim() : undefined,
       imageName,
       fileName: imageName,
+      imageUrl: uploadResult.imageUrl,
+      cloudinaryPublicId: uploadResult.publicId,
+      whatsapp: whatsappResult,
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return res.status(500).json({
       success: false,
       message: "Failed to generate poster.",
-      error: errorMessage,
+      error: getErrorMessage(error),
     });
   }
 }

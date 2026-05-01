@@ -1,5 +1,9 @@
 const { v2: cloudinary } = require("cloudinary");
 
+function isPlaceholderValue(value) {
+  return typeof value === "string" && /^your_/i.test(value.trim());
+}
+
 function configureCloudinary() {
   if (process.env.CLOUDINARY_URL) {
     return;
@@ -13,6 +17,9 @@ function configureCloudinary() {
     throw new Error(
       "Cloudinary configuration is missing. Set CLOUDINARY_CLOUD_NAME/CLOUD_NAME, CLOUDINARY_API_KEY/API_KEY, and CLOUDINARY_API_SECRET/API_SECRET."
     );
+  }
+  if ([cloudName, apiKey, apiSecret].some(isPlaceholderValue)) {
+    throw new Error("Cloudinary configuration still contains placeholder values in .env.");
   }
 
   cloudinary.config({
@@ -40,7 +47,7 @@ function uploadPosterToCloudinary(buffer, fileName) {
       },
       (error, result) => {
         if (error) {
-          reject(error);
+          reject(new Error(error.message || "Cloudinary upload failed."));
           return;
         }
 
