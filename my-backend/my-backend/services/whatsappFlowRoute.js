@@ -364,15 +364,27 @@ router.post("/webhook", async (req, res) => {
   const reply = String(req.body.ButtonPayload || req.body.ButtonText || req.body.Body || "")
     .trim()
     .toLowerCase();
+  const downloadPayload = String(process.env.TWILIO_DOWNLOAD_BUTTON_PAYLOAD || "0123456789")
+    .trim()
+    .toLowerCase();
+  const skipPayload = String(process.env.TWILIO_SKIP_BUTTON_PAYLOAD || "skip")
+    .trim()
+    .toLowerCase();
 
   try {
     if (!from) {
       return res.status(204).end();
     }
 
-    console.log("Incoming WhatsApp reply:", { from: normalizedFrom, reply });
+    console.log("Incoming WhatsApp reply:", {
+      from: normalizedFrom,
+      reply,
+      body: req.body.Body,
+      buttonText: req.body.ButtonText,
+      buttonPayload: req.body.ButtonPayload,
+    });
 
-    if (reply === "download" || reply === "downlaod") {
+    if (["download", "downlaod", downloadPayload].includes(reply)) {
       const pendingRequest = pendingPosterRequests.get(normalizedFrom) || {
         name: "Rajesh Kunwar",
         mobile: getMobileFromWhatsAppNumber(normalizedFrom),
@@ -388,7 +400,7 @@ router.post("/webhook", async (req, res) => {
       return res.status(204).end();
     }
 
-    if (reply === "skip") {
+    if (["skip", skipPayload].includes(reply)) {
       pendingPosterRequests.delete(normalizedFrom);
       return res.status(204).end();
     }
