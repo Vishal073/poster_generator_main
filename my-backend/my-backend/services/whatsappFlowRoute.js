@@ -139,16 +139,9 @@ function updatePendingRequest(to, updates) {
   });
 }
 
-function getContentVariables({ name, mobile }) {
-  const rawVariables = process.env.TWILIO_DOWNLOAD_TEMPLATE_VARIABLES;
-
-  if (rawVariables && rawVariables.trim()) {
-    return JSON.parse(rawVariables);
-  }
-
+function getContentVariables({ name }) {
   return {
     1: name,
-    2: mobile,
   };
 }
 
@@ -302,7 +295,7 @@ router.post("/send-whatsapp-template", async (req, res) => {
     const templateResult = await sendWhatsAppContentTemplate({
       toMobile: to,
       contentSid,
-      contentVariables: getContentVariables({ name, mobile: String(mobile).trim() }),
+      contentVariables: getContentVariables({ name }),
     });
     preparePosterInBackground({
       to,
@@ -364,9 +357,6 @@ router.post("/webhook", async (req, res) => {
   const reply = String(req.body.ButtonPayload || req.body.ButtonText || req.body.Body || "")
     .trim()
     .toLowerCase();
-  const downloadPayload = String(process.env.TWILIO_DOWNLOAD_BUTTON_PAYLOAD || "0123456789")
-    .trim()
-    .toLowerCase();
   const skipPayload = String(process.env.TWILIO_SKIP_BUTTON_PAYLOAD || "skip")
     .trim()
     .toLowerCase();
@@ -384,7 +374,7 @@ router.post("/webhook", async (req, res) => {
       buttonPayload: req.body.ButtonPayload,
     });
 
-    if (["download", "downlaod", downloadPayload].includes(reply)) {
+    if (reply === "download") {
       const pendingRequest = pendingPosterRequests.get(normalizedFrom) || {
         name: "Rajesh Kunwar",
         mobile: getMobileFromWhatsAppNumber(normalizedFrom),
