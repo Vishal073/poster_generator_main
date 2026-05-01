@@ -24,6 +24,19 @@ function getErrorMessage(error) {
   return "Unknown error";
 }
 
+function getErrorDetails(error) {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  return {
+    code: error.code,
+    status: error.status,
+    moreInfo: error.moreInfo,
+    details: error.details,
+  };
+}
+
 function getPosterFileName(mobileValue) {
   const normalizedMobile = String(mobileValue || "").replace(/\D/g, "");
   return `${normalizedMobile || `poster-${Date.now()}`}.png`;
@@ -141,7 +154,7 @@ function updatePendingRequest(to, updates) {
 
 function getContentVariables({ name }) {
   return {
-    1: name,
+    "1": String(name || "Customer"),
   };
 }
 
@@ -317,6 +330,7 @@ router.post("/send-whatsapp-template", async (req, res) => {
       success: false,
       message: "Failed to send WhatsApp template.",
       error: getErrorMessage(error),
+      details: getErrorDetails(error),
     });
   }
 });

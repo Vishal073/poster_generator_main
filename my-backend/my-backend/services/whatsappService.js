@@ -118,14 +118,26 @@ async function sendWhatsAppContentTemplate({ toMobile, contentSid, contentVariab
     payload.contentVariables = JSON.stringify(contentVariables);
   }
 
-  const message = await client.messages.create(payload);
+  try {
+    const message = await client.messages.create(payload);
 
-  return {
-    sid: message.sid,
-    status: message.status,
-    to: message.to,
-    from: message.from,
-  };
+    return {
+      sid: message.sid,
+      status: message.status,
+      to: message.to,
+      from: message.from,
+    };
+  } catch (error) {
+    console.error("Twilio content template send failed:", {
+      code: error.code,
+      status: error.status,
+      message: error.message,
+      moreInfo: error.moreInfo,
+      details: error.details,
+      payload,
+    });
+    throw error;
+  }
 }
 
 module.exports = {
