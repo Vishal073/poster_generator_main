@@ -67,12 +67,17 @@ async function sendPosterWhatsApp({ toMobile, imageUrl, body }) {
   }
 
   const { client, from } = getTwilioClient();
-  const message = await client.messages.create({
+  const payload = {
     from,
     to: formatWhatsAppNumber(toMobile),
-    body: body || "Here is your image",
     mediaUrl: [imageUrl],
-  });
+  };
+
+  if (body && typeof body === "string") {
+    payload.body = body;
+  }
+
+  const message = await client.messages.create(payload);
 
   return {
     sid: message.sid,

@@ -31,6 +31,16 @@ function getPosterFileName({ mobileValue, email, fallbackName }) {
   return `${normalizedIdentifier || `poster-${Date.now()}`}.png`;
 }
 
+function isTruthyParam(value) {
+  if (value === true) {
+    return true;
+  }
+  if (typeof value === "string") {
+    return ["true", "1", "yes", "y"].includes(value.trim().toLowerCase());
+  }
+  return value === 1;
+}
+
 async function generatePoster(req, res) {
   try {
     const body = req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
@@ -69,11 +79,14 @@ async function generatePoster(req, res) {
 
     const mobileValue = MobileNo;
     const hasMobile = mobileValue != null && String(mobileValue).trim().length > 0;
+    const shouldSendWhatsApp = isTruthyParam(
+      body.sendWhatsApp ?? body.sendToWhatsApp ?? body.sendWhatsapp ?? body.whatsapp
+    );
 
-    if (!hasMobile) {
+    if (shouldSendWhatsApp && !hasMobile) {
       return res.status(400).json({
         success: false,
-        message: "Mobile number is required to send poster on WhatsApp.",
+        message: "Mobile number is required when sendWhatsApp is true.",
       });
     }
 
@@ -132,21 +145,23 @@ async function generatePoster(req, res) {
     }
 
     let whatsappResult;
-    try {
-      whatsappResult = await sendPosterWhatsApp({
-        toMobile: mobileValue,
-        imageUrl: uploadResult.imageUrl,
-        body: "Here is your image",
-      });
-    } catch (error) {
-      return res.status(502).json({
-        success: false,
-        message: "Poster generated and uploaded, but WhatsApp delivery failed.",
-        imageName,
-        imageUrl: uploadResult.imageUrl,
-        cloudinaryPublicId: uploadResult.publicId,
-        error: getErrorMessage(error),
-      });
+    if (shouldSendWhatsApp) {
+      try {
+        whatsappResult = await sendPosterWhatsApp({
+          toMobile: mobileValue,
+          imageUrl: uploadResult.imageUrl,
+          body: "Here is your image",
+        });
+      } catch (error) {
+        return res.status(502).json({
+          success: false,
+          message: "Poster generated and uploaded, but WhatsApp delivery failed.",
+          imageName,
+          imageUrl: uploadResult.imageUrl,
+          cloudinaryPublicId: uploadResult.publicId,
+          error: getErrorMessage(error),
+        });
+      }
     }
 
     // Gmail send disabled. To re-enable, call sendPosterEmail(...) here.
@@ -154,10 +169,13 @@ async function generatePoster(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: "Poster generated, uploaded, and sent to WhatsApp.",
+      message: shouldSendWhatsApp
+        ? "Poster generated, uploaded, and sent to WhatsApp."
+        : "Poster generated and uploaded to Cloudinary.",
       username: typeof username === "string" && username.trim() ? username.trim() : name,
       email,
       mobile: hasMobile ? String(mobileValue).trim() : undefined,
+      sendWhatsApp: shouldSendWhatsApp,
       imageName,
       fileName: imageName,
       imageUrl: uploadResult.imageUrl,

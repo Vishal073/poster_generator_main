@@ -37,6 +37,15 @@ function getErrorDetails(error) {
   };
 }
 
+function maskValue(value) {
+  const rawValue = String(value || "");
+  if (rawValue.length <= 8) {
+    return rawValue;
+  }
+
+  return `${rawValue.slice(0, 4)}...${rawValue.slice(-4)}`;
+}
+
 function getPosterFileName(mobileValue) {
   const normalizedMobile = String(mobileValue || "").replace(/\D/g, "");
   return `${normalizedMobile || `poster-${Date.now()}`}.png`;
@@ -243,7 +252,6 @@ async function sendReadyPoster({ to, name, mobile, posterPayload }) {
   const whatsappResult = await sendPosterWhatsApp({
     toMobile: to,
     imageUrl: posterResult.imageUrl,
-    body: "Here is your downloaded image",
   });
 
   console.log("Poster sent to WhatsApp:", {
@@ -296,7 +304,7 @@ router.post("/send-whatsapp-template", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    const contentSid = process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID;
+    const contentSid = String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim();
     if (!contentSid || !contentSid.trim()) {
       return res.status(500).json({
         success: false,
@@ -304,11 +312,12 @@ router.post("/send-whatsapp-template", async (req, res) => {
         error: "Set TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID in .env.",
       });
     }
+    const contentVariables = getContentVariables({ name });
 
     const templateResult = await sendWhatsAppContentTemplate({
       toMobile: to,
       contentSid,
-      contentVariables: getContentVariables({ name }),
+      contentVariables,
     });
     preparePosterInBackground({
       to,
@@ -331,6 +340,10 @@ router.post("/send-whatsapp-template", async (req, res) => {
       message: "Failed to send WhatsApp template.",
       error: getErrorMessage(error),
       details: getErrorDetails(error),
+      twilioTemplate: {
+        contentSid: maskValue(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID),
+        contentVariables: getContentVariables({ name }),
+      },
     });
   }
 });
