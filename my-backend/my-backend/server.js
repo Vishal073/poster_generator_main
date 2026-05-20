@@ -28,26 +28,32 @@ app.get("/", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok" });
+  const dbConnected = mongoose.connection.readyState === 1;
+  res.status(dbConnected ? 200 : 503).json({
+    status: dbConnected ? "ok" : "degraded",
+    database: dbConnected ? "connected" : "disconnected",
+    dbState: mongoose.connection.readyState,
+  });
 });
 
 const PORT = process.env.PORT || 5000;
 
-async function connectMongo() {
+async function startServer() {
   if (!process.env.MONGO_URI) {
-    console.error("MONGO_URI is not configured");
-    return;
+    throw new Error("MONGO_URI is not configured");
   }
 
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("MongoDB Connected");
-  } catch (err) {
-    console.error("MongoDB connection failed:", err.message);
-  }
+  await mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 30000,
+  });
+  console.log("MongoDB Connected");
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 }
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-  connectMongo();
+startServer().catch((err) => {
+  console.error("Failed to start server:", err.message);
+  process.exit(1);
 });

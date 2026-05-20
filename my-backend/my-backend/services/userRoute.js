@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const User = require("../models/User");
 const { requireAuth } = require("../middleware/requireAuth");
+const { requireDb } = require("../middleware/requireDb");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
 
 const router = express.Router();
@@ -111,7 +112,7 @@ function getUserImageFileName(payload, originalName) {
   return `user-${mobile || Date.now()}${extension}`;
 }
 
-router.post("/users", requireAuth, upload.single("userImage"), async (req, res) => {
+router.post("/users", requireAuth, requireDb, upload.single("userImage"), async (req, res) => {
   try {
     const body = req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
       ? req.body
@@ -148,6 +149,13 @@ router.post("/users", requireAuth, upload.single("userImage"), async (req, res) 
       data: user,
     });
   } catch (error) {
+    if (error && error.name === "MongooseError" && /buffering timed out/i.test(error.message)) {
+      return res.status(503).json({
+        success: false,
+        message: "Database is not connected. Check MONGO_URI on Render and Atlas Network Access.",
+      });
+    }
+
     if (error && error.code === 11000 && error.keyPattern && error.keyPattern.mobileNumber) {
       return res.status(409).json({
         success: false,
