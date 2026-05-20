@@ -8,6 +8,9 @@
     "start": "node my-backend/server.js",
     "test": "echo \"No tests configured\""
   },
+  "engines": {
+    "node": ">=20"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",

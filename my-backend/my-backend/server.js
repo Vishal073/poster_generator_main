@@ -1,8 +1,12 @@
 const express = require("express");
+const fs = require("fs");
 const mongoose = require("mongoose");
 const path = require("path");
 
-require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
+const envPath = path.resolve(__dirname, "../../.env");
+if (fs.existsSync(envPath)) {
+  require("dotenv").config({ path: envPath });
+}
 
 const { router: authRoute } = require("./services/authRoute");
 const { router: generatePosterRoute } = require("./services/generatePosterRoute");
@@ -29,20 +33,21 @@ app.get("/health", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-async function startServer() {
+async function connectMongo() {
   if (!process.env.MONGO_URI) {
-    throw new Error("MONGO_URI is not configured");
+    console.error("MONGO_URI is not configured");
+    return;
   }
 
-  await mongoose.connect(process.env.MONGO_URI);
-  console.log("MongoDB Connected");
-
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log("MongoDB Connected");
+  } catch (err) {
+    console.error("MongoDB connection failed:", err.message);
+  }
 }
 
-startServer().catch((err) => {
-  console.error("Failed to start server:", err);
-  process.exit(1);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+  connectMongo();
 });
