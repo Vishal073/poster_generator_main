@@ -12,13 +12,19 @@ const userSchema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
+      match: [/^\d{10}$/, "Mobile number must be 10 digits."],
     },
     caste: {
       type: String,
       trim: true,
       default: "",
     },
-    profession: {
+    post: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    address: {
       type: String,
       trim: true,
       default: "",
@@ -62,6 +68,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: "",
+    },
+    pincode: {
+      type: String,
+      required: true,
+      trim: true,
+      match: [/^\d{6}$/, "Pincode must be 6 digits."],
     },
     userImageUrl: {
       type: String,

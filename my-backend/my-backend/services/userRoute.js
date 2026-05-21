@@ -43,14 +43,39 @@ function getFirstValue(body, fieldNames) {
 function normalizeOccupationType(value) {
   const normalizedValue = String(value || "").trim().toLowerCase();
 
-  if (["politician", "polition"].includes(normalizedValue)) {
+  if (["politician", "polition", "leader"].includes(normalizedValue)) {
     return "Politician";
   }
-  if (normalizedValue === "shopkeeper") {
+  if (["shopkeeper", "shop"].includes(normalizedValue)) {
     return "Shopkeeper";
   }
 
   return "";
+}
+
+function applyOccupationFields(payload, body) {
+  const post = getFirstValue(body, ["post", "Post", "profession", "Profession"]);
+  const address = getFirstValue(body, ["address", "Address", "shopAddress"]);
+  const party = getFirstValue(body, ["party", "Party", "politicalParty"]);
+
+  if (payload.occupationType === "Politician") {
+    payload.post = post;
+    payload.address = "";
+    payload.party = party;
+    return payload;
+  }
+
+  if (payload.occupationType === "Shopkeeper") {
+    payload.address = address || post;
+    payload.post = "";
+    payload.party = "";
+    return payload;
+  }
+
+  payload.post = post;
+  payload.address = address;
+  payload.party = party;
+  return payload;
 }
 
 function normalizeCategory(value) {
@@ -78,21 +103,25 @@ function buildUserPayload(body) {
   );
   const category = normalizeCategory(getFirstValue(body, ["category", "Category"]));
 
-  return {
+  const payload = {
     name: getFirstValue(body, ["name", "Name"]),
-    mobileNumber: getFirstValue(body, ["mobileNumber", "mobile", "MobileNo", "Mobile Number"]),
+    mobileNumber: getFirstValue(body, ["mobileNumber", "mobile", "MobileNo", "Mobile Number"]).replace(/\D/g, ""),
     caste: getFirstValue(body, ["caste", "cast", "Cast"]),
-    profession: getFirstValue(body, ["profession", "Profession"]),
     occupationType: occupationType || undefined,
-    party: getFirstValue(body, ["party", "Party", "politicalParty"]),
     wardNo: getFirstValue(body, ["wardNo", "wardNumber", "Ward NO", "Ward NO:"]),
     gender: getFirstValue(body, ["gender", "Gender"]),
     city: getFirstValue(body, ["city", "City"]),
     category: category || undefined,
     state: getFirstValue(body, ["state", "State"]),
     district: getFirstValue(body, ["district", "District"]),
+    pincode: getFirstValue(body, ["pincode", "pinCode", "Pincode", "zip"]).replace(/\D/g, ""),
     userImageUrl: getFirstValue(body, ["userImageUrl", "userImageSource", "userImage"]),
+    post: "",
+    address: "",
+    party: "",
   };
+
+  return applyOccupationFields(payload, body);
 }
 
 function validateUserPayload(payload) {
@@ -102,8 +131,83 @@ function validateUserPayload(payload) {
     "wardNo",
     "city",
     "state",
+    "pincode",
   ];
   return requiredFields.filter((field) => !payload[field]);
+}
+
+function validateFieldFormats(payload) {
+  const errors = [];
+
+  if (payload.mobileNumber && !/^\d{10}$/.test(payload.mobileNumber.replace(/\D/g, ""))) {
+    errors.push({
+      field: "mobileNumber",
+      message: "Mobile number must be 10 digits.",
+    });
+  }
+
+  if (payload.pincode && !/^\d{6}$/.test(payload.pincode)) {
+    errors.push({
+      field: "pincode",
+      message: "Pincode must be 6 digits.",
+    });
+  }
+
+  return errors;
+}
+
+function formatUserResponse(user) {
+  return {
+    _id: user._id,
+    name: user.name,
+    mobileNumber: user.mobileNumber,
+    caste: user.caste || "",
+    occupationType: user.occupationType || "",
+    post: user.post || "",
+    address: user.address || "",
+    party: user.party || "",
+    wardNo: user.wardNo,
+    gender: user.gender || "",
+    city: user.city,
+    category: user.category || "",
+    state: user.state,
+    district: user.district || "",
+    pincode: user.pincode,
+    userImageUrl: user.userImageUrl || "",
+    userImagePublicId: user.userImagePublicId || "",
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+}
+
+function buildUserSearchQuery(search) {
+  const term = String(search || "").trim();
+  if (!term) {
+    return {};
+  }
+
+  const pattern = new RegExp(
+    term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "i"
+  );
+
+  return {
+    $or: [
+      { name: pattern },
+      { mobileNumber: pattern },
+      { city: pattern },
+      { state: pattern },
+      { district: pattern },
+      { pincode: pattern },
+      { wardNo: pattern },
+      { party: pattern },
+      { post: pattern },
+      { address: pattern },
+      { caste: pattern },
+      { category: pattern },
+      { occupationType: pattern },
+    ],
+  };
 }
 
 function getUserImageFileName(payload, originalName) {
@@ -125,6 +229,15 @@ router.post("/users", requireAuth, requireDb, upload.single("userImage"), async 
         success: false,
         message: "Required fields are missing.",
         missingFields,
+      });
+    }
+
+    const formatErrors = validateFieldFormats(payload);
+    if (formatErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: formatErrors[0].message,
+        errors: formatErrors,
       });
     }
 
@@ -154,13 +267,26 @@ router.post("/users", requireAuth, requireDb, upload.single("userImage"), async 
     return res.status(201).json({
       success: true,
       message: "User data saved successfully.",
-      data: user,
+      data: formatUserResponse(user),
     });
   } catch (error) {
     if (error && error.name === "MongooseError" && /buffering timed out/i.test(error.message)) {
       return res.status(503).json({
         success: false,
         message: "Database is not connected. Check MONGO_URI on Render and Atlas Network Access.",
+      });
+    }
+
+    if (error && error.name === "ValidationError") {
+      const validationErrors = Object.values(error.errors || {}).map((entry) => ({
+        field: entry.path,
+        message: entry.message,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message: validationErrors[0]?.message || "Validation failed.",
+        errors: validationErrors,
       });
     }
 
@@ -175,6 +301,62 @@ router.post("/users", requireAuth, requireDb, upload.single("userImage"), async 
     return res.status(500).json({
       success: false,
       message: "Failed to save user data.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+router.get("/users", requireAuth, requireDb, async (req, res) => {
+  try {
+    const search = typeof req.query.search === "string" ? req.query.search : "";
+    const users = await User.find(buildUserSearchQuery(search))
+      .sort({ createdAt: -1 })
+      .select("-__v");
+
+    return res.status(200).json({
+      success: true,
+      message: "Users fetched successfully.",
+      count: users.length,
+      data: users.map(formatUserResponse),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch users.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+router.get("/users/:id", requireAuth, requireDb, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id || !/^[a-f\d]{24}$/i.test(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user id.",
+      });
+    }
+
+    const user = await User.findById(id).select("-__v");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "User fetched successfully.",
+      data: formatUserResponse(user),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch user.",
       error: getErrorMessage(error),
     });
   }
