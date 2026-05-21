@@ -129,16 +129,24 @@ router.post("/users", requireAuth, requireDb, upload.single("userImage"), async 
     }
 
     if (req.file) {
-      const uploadResult = await uploadBufferToCloudinary(
-        req.file.buffer,
-        getUserImageFileName(payload, req.file.originalname),
-        {
-          folder: process.env.CLOUDINARY_USER_FOLDER || "user-images",
-        }
-      );
+      try {
+        const uploadResult = await uploadBufferToCloudinary(
+          req.file.buffer,
+          getUserImageFileName(payload, req.file.originalname),
+          {
+            folder: process.env.CLOUDINARY_USER_FOLDER || "user-images",
+          }
+        );
 
-      payload.userImageUrl = uploadResult.imageUrl;
-      payload.userImagePublicId = uploadResult.publicId;
+        payload.userImageUrl = uploadResult.imageUrl;
+        payload.userImagePublicId = uploadResult.publicId;
+      } catch (uploadError) {
+        return res.status(502).json({
+          success: false,
+          message: "Failed to upload user image to Cloudinary.",
+          error: getErrorMessage(uploadError),
+        });
+      }
     }
 
     const user = await User.create(payload);

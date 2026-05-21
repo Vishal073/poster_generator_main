@@ -16,6 +16,58 @@ const { router: whatsappFlowRoute } = require("./services/whatsappFlowRoute");
 const app = express();
 
 app.set("trust proxy", true);
+
+const allowedOrigins = (process.env.CORS_ORIGINS ||
+  "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function isAllowedOrigin(origin) {
+  if (!origin) {
+    return false;
+  }
+
+  if (allowedOrigins.includes(origin)) {
+    return true;
+  }
+
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+
+  if (isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization",
+  );
+}
+
+app.use((req, res, next) => {
+  applyCors(req, res);
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  return next();
+});
+
+app.options(/.*/, (req, res) => {
+  applyCors(req, res);
+  return res.sendStatus(204);
+});
+
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(authRoute);
