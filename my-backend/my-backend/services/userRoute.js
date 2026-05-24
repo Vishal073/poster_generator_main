@@ -328,6 +328,118 @@ router.get("/users", requireAuth, requireDb, async (req, res) => {
   }
 });
 
+router.put("/users/:id", requireAuth, requireDb, upload.single("userImage"), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id || !/^[a-f\d]{24}$/i.test(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user id.",
+      });
+    }
+
+    const existingUser = await User.findById(id);
+
+    if (!existingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    const body = req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
+      ? req.body
+      : {};
+    const payload = buildUserPayload(body);
+    const missingFields = validateUserPayload(payload);
+
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Required fields are missing.",
+        missingFields,
+      });
+    }
+
+    const formatErrors = validateFieldFormats(payload);
+    if (formatErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: formatErrors[0].message,
+        errors: formatErrors,
+      });
+    }
+
+    if (req.file) {
+      try {
+        const uploadResult = await uploadBufferToCloudinary(
+          req.file.buffer,
+          getUserImageFileName(payload, req.file.originalname),
+          {
+            folder: process.env.CLOUDINARY_USER_FOLDER || "user-images",
+          }
+        );
+
+        payload.userImageUrl = uploadResult.imageUrl;
+        payload.userImagePublicId = uploadResult.publicId;
+      } catch (uploadError) {
+        return res.status(502).json({
+          success: false,
+          message: "Failed to upload user image to Cloudinary.",
+          error: getErrorMessage(uploadError),
+        });
+      }
+    } else {
+      payload.userImageUrl = existingUser.userImageUrl || "";
+      payload.userImagePublicId = existingUser.userImagePublicId || "";
+    }
+
+    Object.assign(existingUser, payload);
+    await existingUser.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "User updated successfully.",
+      data: formatUserResponse(existingUser),
+    });
+  } catch (error) {
+    if (error && error.name === "MongooseError" && /buffering timed out/i.test(error.message)) {
+      return res.status(503).json({
+        success: false,
+        message: "Database is not connected. Check MONGO_URI on Render and Atlas Network Access.",
+      });
+    }
+
+    if (error && error.name === "ValidationError") {
+      const validationErrors = Object.values(error.errors || {}).map((entry) => ({
+        field: entry.path,
+        message: entry.message,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        message: validationErrors[0]?.message || "Validation failed.",
+        errors: validationErrors,
+      });
+    }
+
+    if (error && error.code === 11000 && error.keyPattern && error.keyPattern.mobileNumber) {
+      return res.status(409).json({
+        success: false,
+        message: "Mobile number already exists.",
+        field: "mobileNumber",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update user.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
 router.get("/users/:id", requireAuth, requireDb, async (req, res) => {
   try {
     const { id } = req.params;
