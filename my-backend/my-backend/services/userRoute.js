@@ -57,12 +57,15 @@ function applyOccupationFields(payload, body) {
   const post = getFirstValue(body, ["post", "Post", "profession", "Profession"]);
   const address = getFirstValue(body, ["address", "Address", "shopAddress"]);
   const party = getFirstValue(body, ["party", "Party", "politicalParty"]);
+  const shopType = getFirstValue(body, ["shopType", "ShopType", "shop_type"]);
 
   payload.address = address;
+  payload.shopType = shopType;
 
   if (payload.occupationType === "Politician") {
     payload.post = post;
     payload.party = party;
+    payload.shopType = "";
     return payload;
   }
 
@@ -77,6 +80,7 @@ function applyOccupationFields(payload, body) {
 
   payload.post = post;
   payload.party = party;
+  payload.shopType = "";
   return payload;
 }
 
@@ -167,6 +171,7 @@ function formatUserResponse(user) {
     occupationType: user.occupationType || "",
     post: user.post || "",
     address: user.address || "",
+    shopType: user.shopType || "",
     party: user.party || "",
     wardNo: user.wardNo,
     gender: user.gender || "",
@@ -205,6 +210,7 @@ function buildUserSearchQuery(search) {
       { party: pattern },
       { post: pattern },
       { address: pattern },
+      { shopType: pattern },
       { caste: pattern },
       { category: pattern },
       { occupationType: pattern },

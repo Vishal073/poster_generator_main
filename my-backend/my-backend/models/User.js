@@ -34,6 +34,11 @@ const userSchema = new mongoose.Schema(
       enum: ["Politician", "Shopkeeper"],
       default: undefined,
     },
+    shopType: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     party: {
       type: String,
       trim: true,
