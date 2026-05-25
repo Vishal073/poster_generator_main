@@ -75,6 +75,7 @@ async function generatePoster(req, res) {
       textOpacity = 0.9,
       textBlendMode = "multiply",
       posterSource = process.env.DEFAULT_POSTER_SOURCE,
+      language = "en",
     } = body;
 
     const mobileValue = MobileNo;
@@ -118,6 +119,7 @@ async function generatePoster(req, res) {
         textOpacity,
         textBlendMode,
         posterSource,
+        language,
       });
     } catch (error) {
       return res.status(500).json({

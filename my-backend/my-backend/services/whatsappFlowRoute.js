@@ -132,6 +132,7 @@ function pickPosterOverrides(body) {
     "fontFamily",
     "textOpacity",
     "textBlendMode",
+    "language",
   ];
 
   return allowedFields.reduce((overrides, field) => {

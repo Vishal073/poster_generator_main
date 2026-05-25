@@ -1,5 +1,9 @@
 const fs = require("fs/promises");
 const path = require("path");
+const {
+  applyLanguageToPosterContent,
+  registerPosterFonts,
+} = require("./languageSupport");
 
 function isUrl(value) {
   return /^https?:\/\//i.test(value);
@@ -552,6 +556,7 @@ async function generatePosterImage({
   fontFamily = "Helvetica Neue",
   textOpacity = 0.9,
   textBlendMode = "multiply",
+  language = "en",
 }) {
   let canvasApi;
   try {
@@ -561,6 +566,20 @@ async function generatePosterImage({
       "The 'canvas' package is not available. Install native dependencies and run: npm install canvas"
     );
   }
+
+  registerPosterFonts();
+
+  const localizedContent = applyLanguageToPosterContent({
+    name,
+    textLines,
+    language,
+    fontFamily,
+    textLineStyles,
+  });
+  name = localizedContent.name;
+  textLines = localizedContent.textLines;
+  textLineStyles = localizedContent.textLineStyles;
+  fontFamily = localizedContent.fontFamily;
 
   const { createCanvas, loadImage } = canvasApi;
   const useInsets = isInsetLayout(insetFromBottom, insetLeft, insetRight);
