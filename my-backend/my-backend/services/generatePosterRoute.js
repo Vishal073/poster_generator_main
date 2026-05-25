@@ -389,6 +389,49 @@ router.post(
           ? body.language.trim()
           : "en";
 
+      // Admin-overrides for image/text layout. Anything not provided falls
+      // back to BULK_DEFAULT_LAYOUT so behaviour is unchanged for callers
+      // that only pass userIds + posterSource.
+      function pickNumber(value) {
+        return typeof value === "number" && Number.isFinite(value)
+          ? value
+          : undefined;
+      }
+      function pickString(value, allowed) {
+        if (typeof value !== "string" || !value.trim()) return undefined;
+        const trimmed = value.trim();
+        if (Array.isArray(allowed) && !allowed.includes(trimmed)) {
+          return undefined;
+        }
+        return trimmed;
+      }
+
+      const layoutOverrides = {
+        insetFromBottom: pickNumber(body.insetFromBottom),
+        insetLeft: pickNumber(body.insetLeft),
+        insetRight: pickNumber(body.insetRight),
+        imagePosition: pickString(body.imagePosition, ["left", "right", "top"]),
+        imageWidth: pickNumber(body.imageWidth),
+        imageHeight: pickNumber(body.imageHeight),
+        imageShape: pickString(body.imageShape, ["circle", "rectangle"]),
+        imageGap: pickNumber(body.imageGap),
+        imageMaxSize: pickNumber(body.imageMaxSize),
+        lineGap: pickNumber(body.lineGap),
+        paragraphGap: pickNumber(body.paragraphGap),
+        fontSize: pickNumber(body.fontSize),
+        fontColor: pickString(body.fontColor),
+        fontFamily: pickString(body.fontFamily),
+        textOpacity: pickNumber(body.textOpacity),
+        textBlendMode: pickString(body.textBlendMode, ["multiply", "overlay"]),
+      };
+
+      const resolvedLayout = { ...BULK_DEFAULT_LAYOUT };
+      for (const [key, value] of Object.entries(layoutOverrides)) {
+        if (value !== undefined) {
+          resolvedLayout[key] = value;
+        }
+      }
+
       if (!posterSource) {
         return res.status(400).json({
           success: false,
@@ -471,7 +514,7 @@ router.post(
             userImageSource: user.userImageUrl || undefined,
             posterSource,
             language,
-            ...BULK_DEFAULT_LAYOUT,
+            ...resolvedLayout,
           });
 
           const imageName = getPosterFileName({
@@ -516,6 +559,7 @@ router.post(
             : `Generated ${successCount} of ${results.length} posters (${errorCount} failed).`,
         posterSource,
         language,
+        layout: resolvedLayout,
         requested: userIds.length,
         successCount,
         errorCount,
