@@ -1,6 +1,10 @@
 const GOOGLE_INPUT_TOOLS_URL = "https://inputtools.google.com/request";
-const DEFAULT_ITC = "hi-t-i0-und";
 const DEFAULT_APP = "poster-generator";
+
+const LANGUAGE_ITC = {
+  hi: "hi-t-i0-und",
+  pa: "pa-t-i0-und",
+};
 
 const cache = new Map();
 
@@ -9,8 +13,19 @@ function isEnabled() {
   return !["false", "0", "no", "off"].includes(value);
 }
 
-function getCacheKey(text) {
-  return `${process.env.GOOGLE_TRANSLITERATE_ITC || DEFAULT_ITC}::${text}`;
+function getItcForLanguage(language) {
+  const normalized = String(language || "hi").trim().toLowerCase();
+  if (process.env.GOOGLE_TRANSLITERATE_ITC && normalized === "hi") {
+    return process.env.GOOGLE_TRANSLITERATE_ITC;
+  }
+  if (process.env.GOOGLE_TRANSLITERATE_ITC_PA && normalized === "pa") {
+    return process.env.GOOGLE_TRANSLITERATE_ITC_PA;
+  }
+  return LANGUAGE_ITC[normalized] || LANGUAGE_ITC.hi;
+}
+
+function getCacheKey(text, language) {
+  return `${getItcForLanguage(language)}::${text}`;
 }
 
 function parseGoogleResponse(payload, fallbackText) {
@@ -33,10 +48,10 @@ function parseGoogleResponse(payload, fallbackText) {
     .join(", ");
 }
 
-async function requestGoogleTransliteration(text) {
+async function requestGoogleTransliteration(text, language) {
   const params = new URLSearchParams({
     text,
-    itc: process.env.GOOGLE_TRANSLITERATE_ITC || DEFAULT_ITC,
+    itc: getItcForLanguage(language),
     num: "1",
     cp: "0",
     cs: "1",
@@ -62,7 +77,7 @@ function isAcronym(value) {
   return /^[A-Z0-9]{2,}$/.test(String(value || "").trim());
 }
 
-async function transliterateToHindi(text) {
+async function transliterateText(text, language = "hi") {
   const content = String(text || "");
   if (!content.trim()) {
     return content;
@@ -76,16 +91,21 @@ async function transliterateToHindi(text) {
     return content;
   }
 
-  const cacheKey = getCacheKey(content);
+  const cacheKey = getCacheKey(content, language);
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey);
   }
 
-  const result = await requestGoogleTransliteration(content);
+  const result = await requestGoogleTransliteration(content, language);
   cache.set(cacheKey, result);
   return result;
 }
 
+async function transliterateToHindi(text) {
+  return transliterateText(text, "hi");
+}
+
 module.exports = {
+  transliterateText,
   transliterateToHindi,
 };

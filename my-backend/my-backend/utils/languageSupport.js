@@ -1,47 +1,78 @@
 const fs = require("fs");
 const path = require("path");
-const { transliterateToHindi } = require("./googleTransliterate");
+const { transliterateText } = require("./googleTransliterate");
 
 const HINDI_FONT_FAMILY = "Noto Sans Devanagari";
+const PUNJABI_FONT_FAMILY = "Noto Sans Gurmukhi";
 const ENGLISH_FONT_FAMILY = "Helvetica Neue";
+
 const DEVANAGARI_REGEX = /[\u0900-\u097F]/;
+const GURMUKHI_REGEX = /[\u0A00-\u0A7F]/;
+
+const LANGUAGE_CONFIG = {
+  hi: {
+    fontFamily: HINDI_FONT_FAMILY,
+    fontFile: "NotoSansDevanagari-Regular.ttf",
+    scriptRegex: DEVANAGARI_REGEX,
+  },
+  pa: {
+    fontFamily: PUNJABI_FONT_FAMILY,
+    fontFile: "NotoSansGurmukhi-Regular.ttf",
+    scriptRegex: GURMUKHI_REGEX,
+  },
+};
 
 // Optional manual overrides — only for special cases you want to force.
 const CUSTOM_MAP = {
-  "district president": "जिला अध्यक्ष",
+  hi: {
+    "district president": "जिला अध्यक्ष",
+  },
+  pa: {
+    "district president": "ਜ਼ਿਲ੍ਹਾ ਪ੍ਰਧਾਨ",
+  },
 };
 
-let fontsRegistered = false;
+const registeredFonts = new Set();
 
 function normalizeLanguage(language) {
   const value = String(language || "en").trim().toLowerCase();
   if (["hi", "hindi", "hin"].includes(value)) {
     return "hi";
   }
+  if (["pa", "punjabi", "pan", "pun"].includes(value)) {
+    return "pa";
+  }
   return "en";
 }
 
-function isDevanagariText(value) {
-  return DEVANAGARI_REGEX.test(value);
+function isNativeScriptText(value, language) {
+  const config = LANGUAGE_CONFIG[language];
+  return Boolean(config?.scriptRegex?.test(value));
+}
+
+function getCustomOverride(text, language) {
+  const customKey = String(text || "").trim().replace(/\s+/g, " ").toLowerCase();
+  return CUSTOM_MAP[language]?.[customKey];
 }
 
 async function applyLanguageToText(text, language) {
-  if (normalizeLanguage(language) !== "hi") {
+  const normalizedLanguage = normalizeLanguage(language);
+  if (normalizedLanguage === "en") {
     return String(text || "");
   }
 
   const content = String(text || "");
-  if (!content.trim() || isDevanagariText(content)) {
+  if (!content.trim() || isNativeScriptText(content, normalizedLanguage)) {
     return content;
   }
 
-  const customKey = content.trim().replace(/\s+/g, " ").toLowerCase();
-  if (CUSTOM_MAP[customKey]) {
-    return CUSTOM_MAP[customKey];
+  const customOverride = getCustomOverride(content, normalizedLanguage);
+  if (customOverride) {
+    return customOverride;
   }
 
   try {
-    return await transliterateToHindi(content);
+    return await transliterateText(content, normalizedLanguage);
   } catch (error) {
     console.error("Google transliteration failed, using original text:", error.message);
     return content;
@@ -56,6 +87,19 @@ async function applyLanguageToTextLines(textLines, language) {
   return Promise.all(textLines.map((line) => applyLanguageToText(line, language)));
 }
 
+function resolveFontFamily(normalizedLanguage, fontFamily) {
+  const config = LANGUAGE_CONFIG[normalizedLanguage];
+  if (!config) {
+    return fontFamily || ENGLISH_FONT_FAMILY;
+  }
+
+  if (!fontFamily || fontFamily === ENGLISH_FONT_FAMILY) {
+    return config.fontFamily;
+  }
+
+  return fontFamily;
+}
+
 async function applyLanguageToPosterContent({
   name,
   textLines,
@@ -66,13 +110,11 @@ async function applyLanguageToPosterContent({
   const normalizedLanguage = normalizeLanguage(language);
   const resolvedName = await applyLanguageToText(name, normalizedLanguage);
   const resolvedTextLines = await applyLanguageToTextLines(textLines, normalizedLanguage);
-  const resolvedFontFamily =
-    normalizedLanguage === "hi" && (!fontFamily || fontFamily === ENGLISH_FONT_FAMILY)
-      ? HINDI_FONT_FAMILY
-      : fontFamily || ENGLISH_FONT_FAMILY;
+  const resolvedFontFamily = resolveFontFamily(normalizedLanguage, fontFamily);
 
   let resolvedTextLineStyles = textLineStyles;
-  if (normalizedLanguage === "hi" && Array.isArray(textLineStyles)) {
+  if (normalizedLanguage !== "en" && Array.isArray(textLineStyles)) {
+    const targetFontFamily = LANGUAGE_CONFIG[normalizedLanguage]?.fontFamily;
     resolvedTextLineStyles = textLineStyles.map((style) => {
       if (!style || typeof style !== "object") {
         return style;
@@ -80,11 +122,12 @@ async function applyLanguageToPosterContent({
 
       const nextStyle = { ...style };
       if (
-        !nextStyle.fontFamily ||
-        nextStyle.fontFamily === ENGLISH_FONT_FAMILY ||
-        nextStyle.fontFamily === "Avenir Next"
+        targetFontFamily &&
+        (!nextStyle.fontFamily ||
+          nextStyle.fontFamily === ENGLISH_FONT_FAMILY ||
+          nextStyle.fontFamily === "Avenir Next")
       ) {
-        nextStyle.fontFamily = HINDI_FONT_FAMILY;
+        nextStyle.fontFamily = targetFontFamily;
       }
       return nextStyle;
     });
@@ -99,8 +142,9 @@ async function applyLanguageToPosterContent({
   };
 }
 
-function registerPosterFonts() {
-  if (fontsRegistered) {
+function registerLanguageFont(language) {
+  const config = LANGUAGE_CONFIG[language];
+  if (!config || registeredFonts.has(language)) {
     return;
   }
 
@@ -111,27 +155,29 @@ function registerPosterFonts() {
     return;
   }
 
-  const fontPath = path.resolve(
-    __dirname,
-    "../assets/fonts/NotoSansDevanagari-Regular.ttf"
-  );
-
+  const fontPath = path.resolve(__dirname, "../assets/fonts", config.fontFile);
   if (!fs.existsSync(fontPath)) {
-    console.warn("Hindi font not found at:", fontPath);
+    console.warn(`${config.fontFamily} font not found at:`, fontPath);
     return;
   }
 
   canvasApi.registerFont(fontPath, {
-    family: HINDI_FONT_FAMILY,
+    family: config.fontFamily,
     weight: "normal",
     style: "normal",
   });
 
-  fontsRegistered = true;
+  registeredFonts.add(language);
+}
+
+function registerPosterFonts() {
+  registerLanguageFont("hi");
+  registerLanguageFont("pa");
 }
 
 module.exports = {
   HINDI_FONT_FAMILY,
+  PUNJABI_FONT_FAMILY,
   ENGLISH_FONT_FAMILY,
   CUSTOM_MAP,
   normalizeLanguage,
