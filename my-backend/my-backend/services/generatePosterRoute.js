@@ -1,6 +1,11 @@
 const express = require("express");
 const { generatePosterImage } = require("../utils/posterGenerator");
-const { uploadPosterToCloudinary } = require("./cloudnaryService");
+const {
+  uploadPosterToCloudinary,
+  isAllowedBasePosterSource,
+  listBasePostersFromCloudinary,
+  getBasePosterFolder,
+} = require("./cloudnaryService");
 const { sendPosterWhatsApp } = require("./whatsappService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
@@ -74,9 +79,28 @@ async function generatePoster(req, res) {
       fontFamily = "Helvetica Neue",
       textOpacity = 0.9,
       textBlendMode = "multiply",
-      posterSource = process.env.DEFAULT_POSTER_SOURCE,
+      posterSource,
       language = "en",
     } = body;
+
+    const resolvedPosterSource =
+      typeof posterSource === "string" ? posterSource.trim() : "";
+
+    if (!resolvedPosterSource) {
+      return res.status(400).json({
+        success: false,
+        message: "posterSource is required. Fetch available posters from GET /base-posters.",
+        folder: getBasePosterFolder(),
+      });
+    }
+
+    if (!isAllowedBasePosterSource(resolvedPosterSource)) {
+      return res.status(400).json({
+        success: false,
+        message: `posterSource must be an image from Cloudinary folder "${getBasePosterFolder()}".`,
+        folder: getBasePosterFolder(),
+      });
+    }
 
     const mobileValue = MobileNo;
     const hasMobile = mobileValue != null && String(mobileValue).trim().length > 0;
@@ -118,7 +142,7 @@ async function generatePoster(req, res) {
         fontFamily,
         textOpacity,
         textBlendMode,
-        posterSource,
+        posterSource: resolvedPosterSource,
         language,
       });
     } catch (error) {
@@ -194,6 +218,29 @@ async function generatePoster(req, res) {
 }
 
 router.post("/generate-poster", generatePoster);
+
+router.get("/base-posters", async (req, res) => {
+  try {
+    const posters = await listBasePostersFromCloudinary();
+
+    return res.status(200).json({
+      success: true,
+      message: posters.length
+        ? "Base posters fetched successfully."
+        : "No base posters found in Cloudinary.",
+      folder: getBasePosterFolder(),
+      count: posters.length,
+      data: posters,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch base posters from Cloudinary.",
+      folder: getBasePosterFolder(),
+      error: getErrorMessage(error),
+    });
+  }
+});
 
 module.exports = {
   router,
