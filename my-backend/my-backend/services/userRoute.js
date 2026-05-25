@@ -4,6 +4,7 @@ const User = require("../models/User");
 const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
+const { normalizeEnhancePriority } = require("../utils/posterEnhancementService");
 
 const router = express.Router();
 const upload = multer({
@@ -122,6 +123,10 @@ function buildUserPayload(body) {
     district: getFirstValue(body, ["district", "District"]),
     pincode: getFirstValue(body, ["pincode", "pinCode", "Pincode", "zip"]).replace(/\D/g, ""),
     userImageUrl: getFirstValue(body, ["userImageUrl", "userImageSource", "userImage"]),
+    enhancePriority: normalizeEnhancePriority(
+      getFirstValue(body, ["enhancePriority", "EnhancePriority", "posterQuality", "posterPriority"]),
+      "medium"
+    ),
     post: "",
     address: "",
     party: "",
@@ -186,6 +191,7 @@ function formatUserResponse(user) {
     pincode: user.pincode,
     userImageUrl: user.userImageUrl || "",
     userImagePublicId: user.userImagePublicId || "",
+    enhancePriority: user.enhancePriority || "medium",
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -218,6 +224,7 @@ function buildUserSearchQuery(search) {
       { caste: pattern },
       { category: pattern },
       { occupationType: pattern },
+      { enhancePriority: pattern },
     ],
   };
 }

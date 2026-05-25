@@ -90,6 +90,11 @@ const userSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    enhancePriority: {
+      type: String,
+      enum: ["low", "medium", "high"],
+      default: "medium",
+    },
   },
   {
     timestamps: true,

@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const { generatePosterImage } = require("../utils/posterGenerator");
+const { enhancePosterBuffer, normalizeEnhancePriority } = require("../utils/posterEnhancementService");
 const {
   uploadPosterToCloudinary,
   uploadBufferToCloudinary,
@@ -97,6 +98,42 @@ function isTruthyParam(value) {
   return value === 1;
 }
 
+async function applyPosterEnhancement(buffer, enhancePriority) {
+  try {
+    return await enhancePosterBuffer(buffer, {
+      enhancePriority,
+      defaultPriority: "medium",
+    });
+  } catch (error) {
+    console.error("Poster enhancement failed, using original image:", error.message);
+    return {
+      buffer,
+      enhancePriority: normalizeEnhancePriority(enhancePriority, "medium"),
+      enhanceApplied: "none",
+      enhanceFallback: true,
+    };
+  }
+}
+
+async function resolveUserEnhancePriority({ userId, mobileNumber }) {
+  let user = null;
+
+  if (userId && isValidObjectId(userId)) {
+    user = await User.findById(userId).select("enhancePriority").lean();
+  }
+
+  if (!user && mobileNumber) {
+    const normalizedMobile = String(mobileNumber).replace(/\D/g, "");
+    if (normalizedMobile) {
+      user = await User.findOne({ mobileNumber: normalizedMobile })
+        .select("enhancePriority")
+        .lean();
+    }
+  }
+
+  return normalizeEnhancePriority(user?.enhancePriority, "medium");
+}
+
 async function generatePoster(req, res) {
   try {
     const body = req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
@@ -132,6 +169,7 @@ async function generatePoster(req, res) {
       textBlendMode = "multiply",
       posterSource,
       language = "en",
+      userId,
     } = body;
 
     const resolvedPosterSource =
@@ -165,6 +203,11 @@ async function generatePoster(req, res) {
         message: "Mobile number is required when sendWhatsApp is true.",
       });
     }
+
+    const resolvedEnhancePriority = await resolveUserEnhancePriority({
+      userId: body.userId || userId,
+      mobileNumber: mobileValue,
+    });
 
     let posterResult;
     try {
@@ -204,6 +247,11 @@ async function generatePoster(req, res) {
       });
     }
 
+    const enhancement = await applyPosterEnhancement(
+      posterResult.buffer,
+      resolvedEnhancePriority
+    );
+
     const imageName = getPosterFileName({
       mobileValue,
       email,
@@ -211,7 +259,7 @@ async function generatePoster(req, res) {
     });
     let uploadResult;
     try {
-      uploadResult = await uploadPosterToCloudinary(posterResult.buffer, imageName);
+      uploadResult = await uploadPosterToCloudinary(enhancement.buffer, imageName);
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -257,6 +305,9 @@ async function generatePoster(req, res) {
       fileName: imageName,
       imageUrl: uploadResult.imageUrl,
       cloudinaryPublicId: uploadResult.publicId,
+      enhancePriority: enhancement.enhancePriority,
+      enhanceApplied: enhancement.enhanceApplied,
+      enhanceFallback: enhancement.enhanceFallback,
       whatsapp: whatsappResult,
     });
   } catch (error) {
@@ -517,6 +568,11 @@ router.post(
             ...resolvedLayout,
           });
 
+          const enhancement = await applyPosterEnhancement(
+            posterResult.buffer,
+            user.enhancePriority
+          );
+
           const imageName = getPosterFileName({
             mobileValue: user.mobileNumber,
             email: undefined,
@@ -524,7 +580,7 @@ router.post(
           });
 
           const uploadResult = await uploadPosterToCloudinary(
-            posterResult.buffer,
+            enhancement.buffer,
             imageName
           );
 
@@ -536,6 +592,9 @@ router.post(
             imageUrl: uploadResult.imageUrl,
             cloudinaryPublicId: uploadResult.publicId,
             imageName,
+            enhancePriority: enhancement.enhancePriority,
+            enhanceApplied: enhancement.enhanceApplied,
+            enhanceFallback: enhancement.enhanceFallback,
           });
         } catch (error) {
           results.push({
