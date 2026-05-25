@@ -569,7 +569,7 @@ async function generatePosterImage({
 
   registerPosterFonts();
 
-  const localizedContent = applyLanguageToPosterContent({
+  const localizedContent = await applyLanguageToPosterContent({
     name,
     textLines,
     language,

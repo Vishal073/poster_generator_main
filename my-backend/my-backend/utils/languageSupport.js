@@ -1,25 +1,14 @@
 const fs = require("fs");
 const path = require("path");
-const Sanscript = require("@indic-transliteration/sanscript");
+const { transliterateToHindi } = require("./googleTransliterate");
 
 const HINDI_FONT_FAMILY = "Noto Sans Devanagari";
 const ENGLISH_FONT_FAMILY = "Helvetica Neue";
 const DEVANAGARI_REGEX = /[\u0900-\u097F]/;
 
-const PHRASE_MAP = {
+// Optional manual overrides — only for special cases you want to force.
+const CUSTOM_MAP = {
   "district president": "जिला अध्यक्ष",
-  "state president": "प्रदेश अध्यक्ष",
-  "ward president": "वार्ड अध्यक्ष",
-  "block president": "ब्लॉक अध्यक्ष",
-  "district vice president": "जिला उपाध्यक्ष",
-  "state vice president": "प्रदेश उपाध्यक्ष",
-  "general secretary": "महासचिव",
-  "district secretary": "जिला सचिव",
-  "president": "अध्यक्ष",
-  "vice president": "उपाध्यक्ष",
-  "secretary": "सचिव",
-  "shopkeeper": "दुकानदार",
-  "politician": "राजनेता",
 };
 
 let fontsRegistered = false;
@@ -32,101 +21,11 @@ function normalizeLanguage(language) {
   return "en";
 }
 
-function normalizePhraseKey(text) {
-  return String(text || "").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function isUrl(value) {
-  return /^https?:\/\//i.test(value);
-}
-
-function isDigitsOnly(value) {
-  return /^\d+$/.test(value);
-}
-
-function isAcronym(value) {
-  return /^[A-Z0-9]{2,}$/.test(value);
-}
-
 function isDevanagariText(value) {
   return DEVANAGARI_REGEX.test(value);
 }
 
-function shouldPreserveToken(token) {
-  if (!token) {
-    return true;
-  }
-  if (isUrl(token) || isDigitsOnly(token) || isAcronym(token) || isDevanagariText(token)) {
-    return true;
-  }
-  return false;
-}
-
-function translatePhrase(text) {
-  const key = normalizePhraseKey(text);
-  if (!key) {
-    return null;
-  }
-  return PHRASE_MAP[key] || null;
-}
-
-function toItransWord(word) {
-  let value = String(word || "").toLowerCase();
-  if (!value) {
-    return value;
-  }
-
-  value = value
-    .replace(/al$/, "Ala")
-    .replace(/ar$/, "Ara")
-    .replace(/an$/, "Ana")
-    .replace(/esh$/, "esha")
-    .replace(/ee$/, "I")
-    .replace(/oo$/, "U");
-
-  if (/[bcdfghjklmnpqrstvwxyz]$/i.test(value)) {
-    value += "a";
-  }
-
-  return value;
-}
-
-function transliterateWord(word) {
-  if (shouldPreserveToken(word)) {
-    return word;
-  }
-
-  const match = String(word).match(/^([^A-Za-z0-9]*)([A-Za-z0-9]+)([^A-Za-z0-9]*)$/);
-  if (!match) {
-    return word;
-  }
-
-  const [, prefix, core, suffix] = match;
-  if (shouldPreserveToken(core)) {
-    return word;
-  }
-
-  try {
-    const hindi = Sanscript.t(toItransWord(core), "itrans", "devanagari").replace(/\u094D$/u, "");
-    return `${prefix}${hindi}${suffix}`;
-  } catch (error) {
-    return word;
-  }
-}
-
-function transliterateText(text) {
-  const content = String(text || "");
-  if (!content.trim() || isDevanagariText(content)) {
-    return content;
-  }
-
-  return content
-    .split(/(\s+)/)
-    .map((part) => (/\s+/.test(part) ? part : transliterateWord(part)))
-    .join("");
-}
-
-function applyLanguageToText(text, language) {
+async function applyLanguageToText(text, language) {
   if (normalizeLanguage(language) !== "hi") {
     return String(text || "");
   }
@@ -136,26 +35,37 @@ function applyLanguageToText(text, language) {
     return content;
   }
 
-  const translatedPhrase = translatePhrase(content);
-  if (translatedPhrase) {
-    return translatedPhrase;
+  const customKey = content.trim().replace(/\s+/g, " ").toLowerCase();
+  if (CUSTOM_MAP[customKey]) {
+    return CUSTOM_MAP[customKey];
   }
 
-  return transliterateText(content);
+  try {
+    return await transliterateToHindi(content);
+  } catch (error) {
+    console.error("Google transliteration failed, using original text:", error.message);
+    return content;
+  }
 }
 
-function applyLanguageToTextLines(textLines, language) {
+async function applyLanguageToTextLines(textLines, language) {
   if (!Array.isArray(textLines)) {
     return textLines;
   }
 
-  return textLines.map((line) => applyLanguageToText(line, language));
+  return Promise.all(textLines.map((line) => applyLanguageToText(line, language)));
 }
 
-function applyLanguageToPosterContent({ name, textLines, language, fontFamily, textLineStyles }) {
+async function applyLanguageToPosterContent({
+  name,
+  textLines,
+  language,
+  fontFamily,
+  textLineStyles,
+}) {
   const normalizedLanguage = normalizeLanguage(language);
-  const resolvedName = applyLanguageToText(name, normalizedLanguage);
-  const resolvedTextLines = applyLanguageToTextLines(textLines, normalizedLanguage);
+  const resolvedName = await applyLanguageToText(name, normalizedLanguage);
+  const resolvedTextLines = await applyLanguageToTextLines(textLines, normalizedLanguage);
   const resolvedFontFamily =
     normalizedLanguage === "hi" && (!fontFamily || fontFamily === ENGLISH_FONT_FAMILY)
       ? HINDI_FONT_FAMILY
@@ -223,11 +133,9 @@ function registerPosterFonts() {
 module.exports = {
   HINDI_FONT_FAMILY,
   ENGLISH_FONT_FAMILY,
-  PHRASE_MAP,
+  CUSTOM_MAP,
   normalizeLanguage,
   applyLanguageToPosterContent,
   applyLanguageToText,
   registerPosterFonts,
-  transliterateText,
-  translatePhrase,
 };
