@@ -46,8 +46,8 @@ const userSchema = new mongoose.Schema(
     },
     wardNo: {
       type: String,
-      required: true,
       trim: true,
+      default: "",
     },
     gender: {
       type: String,

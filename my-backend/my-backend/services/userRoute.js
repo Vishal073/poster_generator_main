@@ -134,11 +134,15 @@ function validateUserPayload(payload) {
   const requiredFields = [
     "name",
     "mobileNumber",
-    "wardNo",
     "city",
     "state",
     "pincode",
   ];
+
+  if (payload.occupationType !== "Shopkeeper") {
+    requiredFields.push("wardNo");
+  }
+
   return requiredFields.filter((field) => !payload[field]);
 }
 
