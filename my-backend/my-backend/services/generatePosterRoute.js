@@ -9,10 +9,45 @@ const {
   getBasePosterFolder,
 } = require("./cloudnaryService");
 const { requireAuth } = require("../middleware/requireAuth");
+const { requireDb } = require("../middleware/requireDb");
+const User = require("../models/User");
 const { sendPosterWhatsApp } = require("./whatsappService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
+
+// Hard cap on how many users can be processed per bulk request. Each poster
+// is ~3-6 seconds of CPU + Cloudinary upload; Render's free tier kills HTTP
+// requests after ~100 seconds, so we limit batch size to stay under that.
+const MAX_BULK_USERS = 25;
+
+// Default styling for bulk-generated posters. These mirror the
+// `defaultTextLineStyles` and `defaultPosterLayout` constants used by the
+// per-user generation flow on the frontend.
+const BULK_DEFAULT_TEXT_STYLES = [
+  { fontSize: 70, fontFamily: "Helvetica Neue", fontColor: "#1f1f1f", fontWeight: "600" },
+  { fontSize: 45, fontFamily: "Helvetica Neue", fontColor: "#2f2f2f", fontWeight: "500" },
+  { fontSize: 30, fontFamily: "Avenir Next", fontColor: "#3a3a3a", fontWeight: "normal" },
+];
+
+const BULK_DEFAULT_LAYOUT = {
+  insetFromBottom: 150,
+  insetLeft: 40,
+  insetRight: 40,
+  imagePosition: "left",
+  imageWidth: 300,
+  imageHeight: 300,
+  imageShape: "circle",
+  imageGap: 16,
+  imageMaxSize: 350,
+  lineGap: 0,
+  paragraphGap: 8,
+  fontSize: 40,
+  fontColor: "#2a2a2a",
+  fontFamily: "Helvetica Neue",
+  textOpacity: 0.9,
+  textBlendMode: "multiply",
+};
 
 const basePosterUpload = multer({
   storage: multer.memoryStorage(),
@@ -294,6 +329,202 @@ router.post(
         success: false,
         message: "Failed to upload base poster.",
         folder: getBasePosterFolder(),
+        error: getErrorMessage(error),
+      });
+    }
+  }
+);
+
+function isValidObjectId(value) {
+  return typeof value === "string" && /^[a-f\d]{24}$/i.test(value);
+}
+
+function buildTextLinesFromUser(user) {
+  const lines = [];
+
+  if (user.name) {
+    lines.push(String(user.name).trim());
+  }
+
+  let secondLine = "";
+  if (user.occupationType === "Politician") {
+    secondLine = user.post || user.party || "";
+  } else {
+    secondLine = user.address || user.city || "";
+  }
+  if (secondLine) {
+    lines.push(String(secondLine).trim());
+  }
+
+  if (user.mobileNumber) {
+    lines.push(String(user.mobileNumber).trim());
+  }
+
+  return lines.filter(Boolean);
+}
+
+// POST /generate-posters/bulk
+// Body: { userIds: string[], posterSource: string, language?: string }
+// The admin sends one request with selected user IDs + the chosen base
+// poster. The backend fetches each user's saved details from MongoDB,
+// renders a poster image, uploads to Cloudinary, and returns every
+// generated URL in one response. Users are processed sequentially (queue
+// of concurrency 1) to keep the canvas memory footprint predictable.
+router.post(
+  "/generate-posters/bulk",
+  requireAuth,
+  requireDb,
+  async (req, res) => {
+    try {
+      const body =
+        req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
+          ? req.body
+          : {};
+
+      const userIds = Array.isArray(body.userIds) ? body.userIds : [];
+      const posterSource =
+        typeof body.posterSource === "string" ? body.posterSource.trim() : "";
+      const language =
+        typeof body.language === "string" && body.language.trim()
+          ? body.language.trim()
+          : "en";
+
+      if (!posterSource) {
+        return res.status(400).json({
+          success: false,
+          message: "posterSource is required.",
+        });
+      }
+
+      if (!isAllowedBasePosterSource(posterSource)) {
+        return res.status(400).json({
+          success: false,
+          message: `posterSource must be an image from Cloudinary folder "${getBasePosterFolder()}".`,
+          folder: getBasePosterFolder(),
+        });
+      }
+
+      if (userIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "userIds (non-empty array) is required.",
+        });
+      }
+
+      if (userIds.length > MAX_BULK_USERS) {
+        return res.status(400).json({
+          success: false,
+          message: `Up to ${MAX_BULK_USERS} users can be processed per bulk request.`,
+          requested: userIds.length,
+          maxAllowed: MAX_BULK_USERS,
+        });
+      }
+
+      const validIds = userIds.filter(isValidObjectId);
+      const users = validIds.length
+        ? await User.find({ _id: { $in: validIds } }).lean()
+        : [];
+
+      const usersById = new Map(users.map((user) => [String(user._id), user]));
+
+      const results = [];
+
+      for (const userId of userIds) {
+        if (!isValidObjectId(userId)) {
+          results.push({
+            userId,
+            name: null,
+            status: "error",
+            message: "Invalid user id.",
+          });
+          continue;
+        }
+
+        const user = usersById.get(String(userId));
+        if (!user) {
+          results.push({
+            userId,
+            name: null,
+            status: "error",
+            message: "User not found.",
+          });
+          continue;
+        }
+
+        const textLines = buildTextLinesFromUser(user);
+        if (textLines.length === 0) {
+          results.push({
+            userId,
+            name: user.name || null,
+            mobile: user.mobileNumber,
+            status: "error",
+            message: "User has no name or contact info to render.",
+          });
+          continue;
+        }
+
+        try {
+          const posterResult = await generatePosterImage({
+            name: "",
+            textLines,
+            textLineStyles: BULK_DEFAULT_TEXT_STYLES.map((style) => ({ ...style })),
+            userImageSource: user.userImageUrl || undefined,
+            posterSource,
+            language,
+            ...BULK_DEFAULT_LAYOUT,
+          });
+
+          const imageName = getPosterFileName({
+            mobileValue: user.mobileNumber,
+            email: undefined,
+            fallbackName: posterResult.fileName,
+          });
+
+          const uploadResult = await uploadPosterToCloudinary(
+            posterResult.buffer,
+            imageName
+          );
+
+          results.push({
+            userId,
+            name: user.name,
+            mobile: user.mobileNumber,
+            status: "success",
+            imageUrl: uploadResult.imageUrl,
+            cloudinaryPublicId: uploadResult.publicId,
+            imageName,
+          });
+        } catch (error) {
+          results.push({
+            userId,
+            name: user.name,
+            mobile: user.mobileNumber,
+            status: "error",
+            message: getErrorMessage(error),
+          });
+        }
+      }
+
+      const successCount = results.filter((r) => r.status === "success").length;
+      const errorCount = results.length - successCount;
+
+      return res.status(200).json({
+        success: true,
+        message:
+          errorCount === 0
+            ? `Generated ${successCount} poster${successCount === 1 ? "" : "s"}.`
+            : `Generated ${successCount} of ${results.length} posters (${errorCount} failed).`,
+        posterSource,
+        language,
+        requested: userIds.length,
+        successCount,
+        errorCount,
+        results,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to process bulk poster generation.",
         error: getErrorMessage(error),
       });
     }
