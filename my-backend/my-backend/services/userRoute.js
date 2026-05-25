@@ -58,22 +58,24 @@ function applyOccupationFields(payload, body) {
   const address = getFirstValue(body, ["address", "Address", "shopAddress"]);
   const party = getFirstValue(body, ["party", "Party", "politicalParty"]);
 
+  payload.address = address;
+
   if (payload.occupationType === "Politician") {
     payload.post = post;
-    payload.address = "";
     payload.party = party;
     return payload;
   }
 
   if (payload.occupationType === "Shopkeeper") {
-    payload.address = address || post;
+    if (!payload.address) {
+      payload.address = post;
+    }
     payload.post = "";
     payload.party = "";
     return payload;
   }
 
   payload.post = post;
-  payload.address = address;
   payload.party = party;
   return payload;
 }
