@@ -1,15 +1,31 @@
 const express = require("express");
+const multer = require("multer");
 const { generatePosterImage } = require("../utils/posterGenerator");
 const {
   uploadPosterToCloudinary,
+  uploadBufferToCloudinary,
   isAllowedBasePosterSource,
   listBasePostersFromCloudinary,
   getBasePosterFolder,
 } = require("./cloudnaryService");
+const { requireAuth } = require("../middleware/requireAuth");
 const { sendPosterWhatsApp } = require("./whatsappService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
+
+const basePosterUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image files are allowed."));
+    }
+    cb(null, true);
+  },
+});
 
 function getErrorMessage(error) {
   if (error instanceof Error) {
@@ -241,6 +257,48 @@ router.get("/base-posters", async (req, res) => {
     });
   }
 });
+
+router.post(
+  "/base-posters",
+  requireAuth,
+  basePosterUpload.single("poster"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "Poster image file is required (field name: 'poster').",
+        });
+      }
+
+      const fallbackName = `base-poster-${Date.now()}`;
+      const fileName = req.file.originalname || fallbackName;
+
+      const uploadResult = await uploadBufferToCloudinary(
+        req.file.buffer,
+        fileName,
+        { folder: getBasePosterFolder() }
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: "Base poster uploaded successfully.",
+        folder: getBasePosterFolder(),
+        data: {
+          publicId: uploadResult.publicId,
+          imageUrl: uploadResult.imageUrl,
+        },
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload base poster.",
+        folder: getBasePosterFolder(),
+        error: getErrorMessage(error),
+      });
+    }
+  }
+);
 
 module.exports = {
   router,
