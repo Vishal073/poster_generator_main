@@ -4,6 +4,7 @@ const {
   applyLanguageToPosterContent,
   registerPosterFonts,
 } = require("./languageSupport");
+const { applyFooterDecoration } = require("./posterFooterDecoration");
 
 function isUrl(value) {
   return /^https?:\/\//i.test(value);
@@ -557,6 +558,7 @@ async function generatePosterImage({
   textOpacity = 0.9,
   textBlendMode = "multiply",
   language = "en",
+  enhancePriority = "medium",
 }) {
   let canvasApi;
   try {
@@ -641,6 +643,17 @@ async function generatePosterImage({
   ctx.antialias = "subpixel";
 
   ctx.drawImage(posterImage, 0, 0, W, H);
+
+  let footerDecorationInfo = { applied: false, mode: "none" };
+  if (useInsets) {
+    footerDecorationInfo = await applyFooterDecoration(ctx, canvas, {
+      width: W,
+      height: H,
+      footerHeight: insetFromBottom,
+      enhancePriority,
+      loadImage,
+    });
+  }
 
   const textBody = name == null ? "" : String(name).trim();
   let userImage = null;
@@ -727,6 +740,7 @@ async function generatePosterImage({
     buffer: outputBuffer,
     fileName: `poster-${Date.now()}.png`,
     mimeType: "image/png",
+    footerDecoration: footerDecorationInfo,
   };
 }
 

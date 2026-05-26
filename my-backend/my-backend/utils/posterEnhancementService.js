@@ -101,6 +101,39 @@ function buildReplicateInput(imageUrl, modelPath) {
   };
 }
 
+async function waitForReplicatePrediction(prediction, token) {
+  const terminalStatuses = new Set(["succeeded", "failed", "canceled"]);
+  let current = prediction;
+  const maxAttempts = 30;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (terminalStatuses.has(current.status)) {
+      return current;
+    }
+
+    if (!current.urls?.get) {
+      throw new Error("Replicate prediction did not return a polling URL.");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    const pollResponse = await fetch(current.urls.get, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!pollResponse.ok) {
+      const errorText = await pollResponse.text();
+      throw new Error(`Replicate polling error (${pollResponse.status}): ${errorText}`);
+    }
+
+    current = await pollResponse.json();
+  }
+
+  throw new Error("Replicate prediction timed out while waiting for AI enhancement.");
+}
+
 async function applyAiEnhancement(buffer) {
   const token = getReplicateToken();
   if (!token) {
@@ -119,7 +152,7 @@ async function applyAiEnhancement(buffer) {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        Prefer: "wait=120",
+        Prefer: "wait=60",
       },
       body: JSON.stringify({
         input: buildReplicateInput(tempUpload.imageUrl, modelPath),
@@ -131,7 +164,10 @@ async function applyAiEnhancement(buffer) {
       throw new Error(`Replicate API error (${response.status}): ${errorText}`);
     }
 
-    const prediction = await response.json();
+    const prediction = await waitForReplicatePrediction(
+      await response.json(),
+      token
+    );
     if (prediction.status === "failed") {
       throw new Error(prediction.error || "Replicate prediction failed.");
     }
