@@ -32,7 +32,7 @@ const BULK_DEFAULT_TEXT_STYLES = [
 ];
 
 const BULK_DEFAULT_LAYOUT = {
-  insetFromBottom: 150,
+  insetFromBottom: 180,
   insetLeft: 40,
   insetRight: 40,
   imagePosition: "left",
@@ -239,7 +239,6 @@ async function generatePoster(req, res) {
         textBlendMode,
         posterSource: resolvedPosterSource,
         language,
-        enhancePriority: resolvedEnhancePriority,
       });
     } catch (error) {
       return res.status(500).json({
@@ -311,7 +310,6 @@ async function generatePoster(req, res) {
       enhanceApplied: enhancement.enhanceApplied,
       enhanceFallback: enhancement.enhanceFallback,
       enhanceError: enhancement.enhanceError || undefined,
-      footerDecoration: posterResult.footerDecoration,
       whatsapp: whatsappResult,
     });
   } catch (error) {
@@ -569,7 +567,6 @@ router.post(
             userImageSource: user.userImageUrl || undefined,
             posterSource,
             language,
-            enhancePriority: user.enhancePriority || "medium",
             ...resolvedLayout,
           });
 
@@ -601,7 +598,6 @@ router.post(
             enhanceApplied: enhancement.enhanceApplied,
             enhanceFallback: enhancement.enhanceFallback,
             enhanceError: enhancement.enhanceError || undefined,
-            footerDecoration: posterResult.footerDecoration,
           });
         } catch (error) {
           results.push({

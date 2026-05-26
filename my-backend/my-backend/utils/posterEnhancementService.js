@@ -30,8 +30,20 @@ function getReplicateToken() {
   return String(process.env.REPLICATE_API_TOKEN || "").trim();
 }
 
+function getAiModelPath() {
+  return (
+    process.env.POSTER_AI_REPLICATE_MODEL ||
+    process.env.POSTER_AI_MODIFY_MODEL ||
+    "black-forest-labs/flux-kontext-pro"
+  );
+}
+
 function isUpscaleModel(modelPath) {
   return /upscale|esrgan|clarity|swinir|gfpgan/i.test(String(modelPath || ""));
+}
+
+function isKontextModel(modelPath) {
+  return /kontext|flux-kontext/i.test(String(modelPath || ""));
 }
 
 async function applyLocalPolish(buffer, profile = "medium") {
@@ -83,18 +95,29 @@ async function deleteTempImage(publicId) {
 }
 
 function buildReplicateInput(imageUrl, modelPath) {
+  const prompt =
+    process.env.POSTER_AI_ENHANCE_PROMPT ||
+    process.env.POSTER_AI_MODIFY_PROMPT ||
+    "Modify it.";
+
+  if (isKontextModel(modelPath)) {
+    return {
+      prompt,
+      input_image: imageUrl,
+      aspect_ratio: "match_input_image",
+    };
+  }
+
   if (isUpscaleModel(modelPath)) {
     return { image: imageUrl };
   }
 
   return {
     image: imageUrl,
-    prompt:
-      process.env.POSTER_AI_ENHANCE_PROMPT ||
-      "Professional premium political poster. Improve lighting, shadows, contrast, and texture. Sharpen details. Keep all text, layout, and faces exactly the same. Minimal changes only.",
+    prompt,
     negative_prompt:
       process.env.POSTER_AI_ENHANCE_NEGATIVE_PROMPT ||
-      "changed text, misspelling, blurry text, distorted face, moved layout, watermark, low quality",
+      "changed text, misspelling, blurry text, distorted face, watermark, low quality",
     ...(process.env.POSTER_AI_REPLICATE_DENOISE
       ? { denoising_strength: Number(process.env.POSTER_AI_REPLICATE_DENOISE) }
       : {}),
@@ -134,14 +157,13 @@ async function waitForReplicatePrediction(prediction, token) {
   throw new Error("Replicate prediction timed out while waiting for AI enhancement.");
 }
 
-async function applyAiEnhancement(buffer) {
+async function applyAiModification(buffer) {
   const token = getReplicateToken();
   if (!token) {
     throw new Error("REPLICATE_API_TOKEN is not configured on the server.");
   }
 
-  const modelPath =
-    process.env.POSTER_AI_REPLICATE_MODEL || "recraft-ai/recraft-crisp-upscale";
+  const modelPath = getAiModelPath();
   let tempUpload = null;
 
   try {
@@ -164,10 +186,7 @@ async function applyAiEnhancement(buffer) {
       throw new Error(`Replicate API error (${response.status}): ${errorText}`);
     }
 
-    const prediction = await waitForReplicatePrediction(
-      await response.json(),
-      token
-    );
+    const prediction = await waitForReplicatePrediction(await response.json(), token);
     if (prediction.status === "failed") {
       throw new Error(prediction.error || "Replicate prediction failed.");
     }
@@ -235,16 +254,16 @@ async function enhancePosterBuffer(buffer, options = {}) {
   }
 
   try {
-    const aiBuffer = await applyAiEnhancement(buffer);
+    const aiBuffer = await applyAiModification(buffer);
     return {
       buffer: aiBuffer,
       enhancePriority,
-      enhanceApplied: "ai",
+      enhanceApplied: "ai-modify",
       enhanceFallback: false,
       enhanceError: null,
     };
   } catch (error) {
-    console.error("AI poster enhancement failed, using local premium polish:", error.message);
+    console.error("AI poster modification failed, using local premium polish:", error.message);
     const polishedBuffer = await applyLocalPolish(buffer, "high");
     return {
       buffer: polishedBuffer,

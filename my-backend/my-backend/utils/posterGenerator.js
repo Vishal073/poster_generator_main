@@ -4,7 +4,6 @@ const {
   applyLanguageToPosterContent,
   registerPosterFonts,
 } = require("./languageSupport");
-const { applyFooterDecoration } = require("./posterFooterDecoration");
 
 function isUrl(value) {
   return /^https?:\/\//i.test(value);
@@ -85,13 +84,15 @@ function drawImageScaleToFill(ctx, image, targetX, targetY, targetWidth, targetH
   );
 }
 
-function drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, imageShape) {
+function drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, imageShape, options = {}) {
   const shape = imageShape === "circle" ? "circle" : "rectangle";
+  const { circleBorderColor, circleBorderWidth } = options;
 
   if (shape === "circle") {
     const radius = Math.min(imageWidth, imageHeight) / 2;
     const centerX = imageX + imageWidth / 2;
     const centerY = imageY + imageHeight / 2;
+    const borderWidth = circleBorderWidth || 0;
 
     ctx.save();
     ctx.beginPath();
@@ -100,6 +101,16 @@ function drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, 
     ctx.clip();
     drawImageScaleToFill(ctx, userImage, imageX, imageY, imageWidth, imageHeight);
     ctx.restore();
+
+    if (borderWidth > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = circleBorderColor || "#ffffff";
+      ctx.lineWidth = borderWidth;
+      ctx.stroke();
+      ctx.restore();
+    }
     return;
   }
 
@@ -558,7 +569,6 @@ async function generatePosterImage({
   textOpacity = 0.9,
   textBlendMode = "multiply",
   language = "en",
-  enhancePriority = "medium",
 }) {
   let canvasApi;
   try {
@@ -643,17 +653,6 @@ async function generatePosterImage({
   ctx.antialias = "subpixel";
 
   ctx.drawImage(posterImage, 0, 0, W, H);
-
-  let footerDecorationInfo = { applied: false, mode: "none" };
-  if (useInsets) {
-    footerDecorationInfo = await applyFooterDecoration(ctx, canvas, {
-      width: W,
-      height: H,
-      footerHeight: insetFromBottom,
-      enhancePriority,
-      loadImage,
-    });
-  }
 
   const textBody = name == null ? "" : String(name).trim();
   let userImage = null;
@@ -740,7 +739,6 @@ async function generatePosterImage({
     buffer: outputBuffer,
     fileName: `poster-${Date.now()}.png`,
     mimeType: "image/png",
-    footerDecoration: footerDecorationInfo,
   };
 }
 
