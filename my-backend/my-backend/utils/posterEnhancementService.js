@@ -1,4 +1,3 @@
-const { applyLocalPremiumEnhance } = require("./posterLocalEnhanceService");
 const { isAiProviderConfigured, modifyPosterWithAi } = require("./posterAiModifyService");
 
 const VALID_PRIORITIES = new Set(["low", "medium", "high"]);
@@ -25,15 +24,11 @@ function isAiEnhanceEnabled() {
   return !["false", "0", "no", "off"].includes(value);
 }
 
-function shouldUseOptionalAi(enhancePriority) {
-  return enhancePriority === "high" && isAiEnhanceEnabled() && isAiProviderConfigured();
-}
-
-function buildResult(buffer, enhancePriority, enhanceApplied, extra = {}) {
+function passthroughResult(buffer, enhancePriority, extra = {}) {
   return {
     buffer,
     enhancePriority,
-    enhanceApplied,
+    enhanceApplied: "none",
     enhanceFallback: false,
     enhanceError: null,
     aiProvider: null,
@@ -46,30 +41,27 @@ async function enhancePosterBuffer(buffer, options = {}) {
   const defaultPriority = options.defaultPriority || "medium";
   const enhancePriority = normalizeEnhancePriority(options.enhancePriority, defaultPriority);
 
-  // Low: light local polish only — fast and free.
-  if (enhancePriority === "low") {
-    const polishedBuffer = await applyLocalPremiumEnhance(buffer, "low");
-    return buildResult(polishedBuffer, enhancePriority, "local");
-  }
+  const shouldRunAi =
+    enhancePriority === "high" && isAiEnhanceEnabled() && isAiProviderConfigured();
 
-  // Medium + High: full local premium stack (Sharp, SVG overlays, grade, glow).
-  const localProfile = enhancePriority === "high" ? "premium" : "medium";
-  let resultBuffer = await applyLocalPremiumEnhance(buffer, localProfile);
-
-  // Optional AI pass — only for high priority when explicitly enabled.
-  if (!shouldUseOptionalAi(enhancePriority)) {
-    return buildResult(resultBuffer, enhancePriority, "local-premium");
+  if (!shouldRunAi) {
+    return passthroughResult(buffer, enhancePriority);
   }
 
   try {
-    const aiResult = await modifyPosterWithAi(resultBuffer, { enhancePriority });
-    return buildResult(aiResult.buffer, enhancePriority, "local-premium+ai", {
+    const aiResult = await modifyPosterWithAi(buffer, { enhancePriority });
+    return {
+      buffer: aiResult.buffer,
+      enhancePriority,
+      enhanceApplied: "ai-modify",
+      enhanceFallback: false,
+      enhanceError: null,
       aiProvider: aiResult.provider,
       aiModel: aiResult.model,
-    });
+    };
   } catch (error) {
-    console.error(`Optional AI enhancement skipped (${enhancePriority}):`, error.message);
-    return buildResult(resultBuffer, enhancePriority, "local-premium", {
+    console.error(`AI poster modification failed (${enhancePriority}):`, error.message);
+    return passthroughResult(buffer, enhancePriority, {
       enhanceFallback: true,
       enhanceError: error.message,
     });
