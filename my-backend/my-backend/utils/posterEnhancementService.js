@@ -1,12 +1,7 @@
-const sharp = require("sharp");
+const { applyLocalPremiumEnhance } = require("./posterLocalEnhanceService");
 const { isAiProviderConfigured, modifyPosterWithAi } = require("./posterAiModifyService");
 
 const VALID_PRIORITIES = new Set(["low", "medium", "high"]);
-
-const PRIORITY_PROVIDER = {
-  medium: "openai",
-  high: "google",
-};
 
 function normalizeEnhancePriority(value, defaultPriority = "medium") {
   const fallback = VALID_PRIORITIES.has(defaultPriority) ? defaultPriority : "medium";
@@ -26,53 +21,24 @@ function normalizeEnhancePriority(value, defaultPriority = "medium") {
 }
 
 function isAiEnhanceEnabled() {
-  const value = String(process.env.POSTER_AI_ENHANCE_ENABLED ?? "true").trim().toLowerCase();
+  const value = String(process.env.POSTER_AI_ENHANCE_ENABLED ?? "false").trim().toLowerCase();
   return !["false", "0", "no", "off"].includes(value);
 }
 
-function getProviderForPriority(enhancePriority) {
-  return PRIORITY_PROVIDER[enhancePriority] || null;
+function shouldUseOptionalAi(enhancePriority) {
+  return enhancePriority === "high" && isAiEnhanceEnabled() && isAiProviderConfigured();
 }
 
-function getProviderConfigError(provider) {
-  if (provider === "openai") {
-    return "OPENAI_API_KEY is not configured on the server.";
-  }
-  if (provider === "google") {
-    return "GEMINI_API_KEY is not configured on the server.";
-  }
-  return "AI provider is not configured.";
-}
-
-async function applyLocalPolish(buffer, profile = "low") {
-  if (profile === "fallback") {
-    return sharp(buffer)
-      .normalize()
-      .modulate({ brightness: 1.03, saturation: 1.08 })
-      .linear(1.06, -6)
-      .sharpen({ sigma: 1.0, m1: 0.5, m2: 2.2, x1: 2, y2: 10, y3: 20 })
-      .png({ quality: 93, compressionLevel: 8 })
-      .toBuffer();
-  }
-
-  return sharp(buffer)
-    .normalize()
-    .modulate({ brightness: 1.04, saturation: 1.06 })
-    .linear(1.05, -5)
-    .png({ quality: 92, compressionLevel: 8 })
-    .toBuffer();
-}
-
-async function fallbackToLocalPolish(buffer, enhancePriority, provider, errorMessage) {
-  const polishedBuffer = await applyLocalPolish(buffer, "fallback");
+function buildResult(buffer, enhancePriority, enhanceApplied, extra = {}) {
   return {
-    buffer: polishedBuffer,
+    buffer,
     enhancePriority,
-    enhanceApplied: "local-premium",
-    enhanceFallback: true,
-    enhanceError: errorMessage,
-    aiProvider: provider,
+    enhanceApplied,
+    enhanceFallback: false,
+    enhanceError: null,
+    aiProvider: null,
     aiModel: null,
+    ...extra,
   };
 }
 
@@ -80,70 +46,37 @@ async function enhancePosterBuffer(buffer, options = {}) {
   const defaultPriority = options.defaultPriority || "medium";
   const enhancePriority = normalizeEnhancePriority(options.enhancePriority, defaultPriority);
 
+  // Low: light local polish only — fast and free.
   if (enhancePriority === "low") {
-    const polishedBuffer = await applyLocalPolish(buffer, "low");
-    return {
-      buffer: polishedBuffer,
-      enhancePriority,
-      enhanceApplied: "local",
-      enhanceFallback: false,
-      enhanceError: null,
-      aiProvider: null,
-      aiModel: null,
-    };
+    const polishedBuffer = await applyLocalPremiumEnhance(buffer, "low");
+    return buildResult(polishedBuffer, enhancePriority, "local");
   }
 
-  const provider = getProviderForPriority(enhancePriority);
-  if (!provider) {
-    const polishedBuffer = await applyLocalPolish(buffer, "low");
-    return {
-      buffer: polishedBuffer,
-      enhancePriority,
-      enhanceApplied: "local",
-      enhanceFallback: true,
-      enhanceError: "Unknown enhancement priority.",
-      aiProvider: null,
-      aiModel: null,
-    };
-  }
+  // Medium + High: full local premium stack (Sharp, SVG overlays, grade, glow).
+  const localProfile = enhancePriority === "high" ? "premium" : "medium";
+  let resultBuffer = await applyLocalPremiumEnhance(buffer, localProfile);
 
-  if (!isAiEnhanceEnabled()) {
-    return fallbackToLocalPolish(
-      buffer,
-      enhancePriority,
-      provider,
-      "POSTER_AI_ENHANCE_ENABLED is false."
-    );
-  }
-
-  if (!isAiProviderConfigured(provider)) {
-    return fallbackToLocalPolish(
-      buffer,
-      enhancePriority,
-      provider,
-      getProviderConfigError(provider)
-    );
+  // Optional AI pass — only for high priority when explicitly enabled.
+  if (!shouldUseOptionalAi(enhancePriority)) {
+    return buildResult(resultBuffer, enhancePriority, "local-premium");
   }
 
   try {
-    const aiResult = await modifyPosterWithAi(buffer, { provider });
-    return {
-      buffer: aiResult.buffer,
-      enhancePriority,
-      enhanceApplied: "ai-modify",
-      enhanceFallback: false,
-      enhanceError: null,
+    const aiResult = await modifyPosterWithAi(resultBuffer, { enhancePriority });
+    return buildResult(aiResult.buffer, enhancePriority, "local-premium+ai", {
       aiProvider: aiResult.provider,
       aiModel: aiResult.model,
-    };
+    });
   } catch (error) {
-    console.error(`AI poster modification failed (${provider}):`, error.message);
-    return fallbackToLocalPolish(buffer, enhancePriority, provider, error.message);
+    console.error(`Optional AI enhancement skipped (${enhancePriority}):`, error.message);
+    return buildResult(resultBuffer, enhancePriority, "local-premium", {
+      enhanceFallback: true,
+      enhanceError: error.message,
+    });
   }
 }
 
 module.exports = {
   normalizeEnhancePriority,
   enhancePosterBuffer,
-  getProviderForPriority,
 };
