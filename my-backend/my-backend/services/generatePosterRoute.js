@@ -430,6 +430,29 @@ function parseTextLineStyles(input, fallback) {
   });
 }
 
+function resolvePosterSources(body) {
+  const fromArray = Array.isArray(body.posterSources)
+    ? body.posterSources
+        .filter((value) => typeof value === "string" && value.trim())
+        .map((value) => value.trim())
+    : [];
+  const fromSingle =
+    typeof body.posterSource === "string" && body.posterSource.trim()
+      ? [body.posterSource.trim()]
+      : [];
+
+  const combined = fromArray.length > 0 ? fromArray : fromSingle;
+  return [...new Set(combined)];
+}
+
+function pickRandomPosterSource(sources) {
+  if (!sources.length) {
+    return "";
+  }
+  const index = Math.floor(Math.random() * sources.length);
+  return sources[index];
+}
+
 function buildTextLinesFromUser(user) {
   const lines = [];
 
@@ -473,8 +496,7 @@ router.post(
           : {};
 
       const userIds = Array.isArray(body.userIds) ? body.userIds : [];
-      const posterSource =
-        typeof body.posterSource === "string" ? body.posterSource.trim() : "";
+      const posterSources = resolvePosterSources(body);
       const language =
         typeof body.language === "string" && body.language.trim()
           ? body.language.trim()
@@ -528,18 +550,23 @@ router.post(
         BULK_DEFAULT_TEXT_STYLES
       );
 
-      if (!posterSource) {
+      if (posterSources.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "posterSource is required.",
+          message:
+            "posterSources (non-empty array) or posterSource is required.",
         });
       }
 
-      if (!isAllowedBasePosterSource(posterSource)) {
+      const invalidPosterSources = posterSources.filter(
+        (source) => !isAllowedBasePosterSource(source)
+      );
+      if (invalidPosterSources.length > 0) {
         return res.status(400).json({
           success: false,
-          message: `posterSource must be an image from Cloudinary folder "${getBasePosterFolder()}".`,
+          message: `Every poster source must be an image from Cloudinary folder "${getBasePosterFolder()}".`,
           folder: getBasePosterFolder(),
+          invalidCount: invalidPosterSources.length,
         });
       }
 
@@ -603,12 +630,14 @@ router.post(
         }
 
         try {
+          const userPosterSource = pickRandomPosterSource(posterSources);
+
           const posterResult = await generatePosterImage({
             name: "",
             textLines,
             textLineStyles: resolvedTextLineStyles.map((style) => ({ ...style })),
             userImageSource: user.userImageUrl || undefined,
-            posterSource,
+            posterSource: userPosterSource,
             language,
             ...resolvedLayout,
           });
@@ -634,6 +663,7 @@ router.post(
             name: user.name,
             mobile: user.mobileNumber,
             status: "success",
+            posterSource: userPosterSource,
             imageUrl: uploadResult.imageUrl,
             cloudinaryPublicId: uploadResult.publicId,
             imageName,
@@ -664,9 +694,11 @@ router.post(
           errorCount === 0
             ? `Generated ${successCount} poster${successCount === 1 ? "" : "s"}.`
             : `Generated ${successCount} of ${results.length} posters (${errorCount} failed).`,
-        posterSource,
+        posterSources,
+        posterSource: posterSources.length === 1 ? posterSources[0] : undefined,
         language,
         layout: resolvedLayout,
+        textLineStyles: resolvedTextLineStyles,
         requested: userIds.length,
         successCount,
         errorCount,
