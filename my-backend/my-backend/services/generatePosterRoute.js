@@ -111,6 +111,7 @@ async function applyPosterEnhancement(buffer, enhancePriority) {
       enhancePriority: normalizeEnhancePriority(enhancePriority, "medium"),
       enhanceApplied: "none",
       enhanceFallback: true,
+      enhanceError: error.message,
     };
   }
 }
@@ -308,6 +309,7 @@ async function generatePoster(req, res) {
       enhancePriority: enhancement.enhancePriority,
       enhanceApplied: enhancement.enhanceApplied,
       enhanceFallback: enhancement.enhanceFallback,
+      enhanceError: enhancement.enhanceError || undefined,
       whatsapp: whatsappResult,
     });
   } catch (error) {
@@ -570,7 +572,7 @@ router.post(
 
           const enhancement = await applyPosterEnhancement(
             posterResult.buffer,
-            user.enhancePriority
+            user.enhancePriority || "medium"
           );
 
           const imageName = getPosterFileName({
@@ -595,6 +597,7 @@ router.post(
             enhancePriority: enhancement.enhancePriority,
             enhanceApplied: enhancement.enhanceApplied,
             enhanceFallback: enhancement.enhanceFallback,
+            enhanceError: enhancement.enhanceError || undefined,
           });
         } catch (error) {
           results.push({
