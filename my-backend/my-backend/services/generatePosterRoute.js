@@ -394,6 +394,42 @@ function isValidObjectId(value) {
   return typeof value === "string" && /^[a-f\d]{24}$/i.test(value);
 }
 
+function parseTextLineStyles(input, fallback) {
+  const defaults = fallback.map((style) => ({ ...style }));
+
+  if (!Array.isArray(input) || input.length === 0) {
+    return defaults;
+  }
+
+  return [0, 1, 2].map((index) => {
+    const style = input[index];
+    const base = defaults[index] || defaults[defaults.length - 1];
+
+    if (!style || typeof style !== "object") {
+      return { ...base };
+    }
+
+    return {
+      fontSize:
+        typeof style.fontSize === "number" && style.fontSize > 0
+          ? style.fontSize
+          : base.fontSize,
+      fontFamily:
+        typeof style.fontFamily === "string" && style.fontFamily.trim()
+          ? style.fontFamily.trim()
+          : base.fontFamily,
+      fontColor:
+        typeof style.fontColor === "string" && style.fontColor.trim()
+          ? style.fontColor.trim()
+          : base.fontColor,
+      fontWeight:
+        typeof style.fontWeight === "string" && style.fontWeight.trim()
+          ? style.fontWeight.trim()
+          : base.fontWeight,
+    };
+  });
+}
+
 function buildTextLinesFromUser(user) {
   const lines = [];
 
@@ -487,6 +523,11 @@ router.post(
         }
       }
 
+      const resolvedTextLineStyles = parseTextLineStyles(
+        body.textLineStyles,
+        BULK_DEFAULT_TEXT_STYLES
+      );
+
       if (!posterSource) {
         return res.status(400).json({
           success: false,
@@ -565,7 +606,7 @@ router.post(
           const posterResult = await generatePosterImage({
             name: "",
             textLines,
-            textLineStyles: BULK_DEFAULT_TEXT_STYLES.map((style) => ({ ...style })),
+            textLineStyles: resolvedTextLineStyles.map((style) => ({ ...style })),
             userImageSource: user.userImageUrl || undefined,
             posterSource,
             language,
