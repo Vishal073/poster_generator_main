@@ -310,6 +310,8 @@ async function generatePoster(req, res) {
       enhanceApplied: enhancement.enhanceApplied,
       enhanceFallback: enhancement.enhanceFallback,
       enhanceError: enhancement.enhanceError || undefined,
+      aiProvider: enhancement.aiProvider || undefined,
+      aiModel: enhancement.aiModel || undefined,
       whatsapp: whatsappResult,
     });
   } catch (error) {
@@ -598,6 +600,8 @@ router.post(
             enhanceApplied: enhancement.enhanceApplied,
             enhanceFallback: enhancement.enhanceFallback,
             enhanceError: enhancement.enhanceError || undefined,
+            aiProvider: enhancement.aiProvider || undefined,
+            aiModel: enhancement.aiModel || undefined,
           });
         } catch (error) {
           results.push({
