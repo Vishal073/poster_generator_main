@@ -13,6 +13,7 @@ const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const User = require("../models/User");
 const { sendPosterWhatsApp } = require("./whatsappService");
+const { postPosterForUser } = require("./facebookPostService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
@@ -290,18 +291,65 @@ async function generatePoster(req, res) {
       }
     }
 
+    const resolvedUserId =
+      typeof (body.userId || userId) === "string" ? String(body.userId || userId).trim() : "";
+    const shouldUploadFacebook = isTruthyParam(
+      body.uploadToFacebook ?? body.postToFacebook ?? body.facebook,
+    );
+
+    if (shouldUploadFacebook && !resolvedUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "userId is required when uploadToFacebook is true.",
+      });
+    }
+
+    let facebookResult;
+    if (shouldUploadFacebook && resolvedUserId) {
+      try {
+        const posted = await postPosterForUser({
+          userId: resolvedUserId,
+          imageUrl: uploadResult.imageUrl,
+          caption:
+            typeof body.facebookCaption === "string"
+              ? body.facebookCaption
+              : typeof body.caption === "string"
+                ? body.caption
+                : "",
+        });
+        facebookResult = {
+          success: true,
+          ...posted,
+        };
+      } catch (error) {
+        facebookResult = {
+          success: false,
+          message: getErrorMessage(error),
+        };
+      }
+    }
+
     // Gmail send disabled. To re-enable, call sendPosterEmail(...) here.
     // const emailResult = await sendPosterEmail({ toEmail: email, posterBuffer: posterResult.buffer, fileName: imageName });
 
+    let responseMessage = "Poster generated and uploaded to Cloudinary.";
+    if (shouldSendWhatsApp) {
+      responseMessage = "Poster generated, uploaded, and sent to WhatsApp.";
+    }
+    if (shouldUploadFacebook && facebookResult?.success) {
+      responseMessage = shouldSendWhatsApp
+        ? "Poster generated, uploaded, sent to WhatsApp, and posted to Facebook."
+        : "Poster generated, uploaded, and posted to Facebook.";
+    }
+
     return res.status(200).json({
       success: true,
-      message: shouldSendWhatsApp
-        ? "Poster generated, uploaded, and sent to WhatsApp."
-        : "Poster generated and uploaded to Cloudinary.",
+      message: responseMessage,
       username: typeof username === "string" && username.trim() ? username.trim() : name,
       email,
       mobile: hasMobile ? String(mobileValue).trim() : undefined,
       sendWhatsApp: shouldSendWhatsApp,
+      uploadToFacebook: shouldUploadFacebook,
       imageName,
       fileName: imageName,
       imageUrl: uploadResult.imageUrl,
@@ -313,6 +361,7 @@ async function generatePoster(req, res) {
       aiProvider: enhancement.aiProvider || undefined,
       aiModel: enhancement.aiModel || undefined,
       whatsapp: whatsappResult,
+      facebook: facebookResult,
     });
   } catch (error) {
     return res.status(500).json({
@@ -496,6 +545,9 @@ router.post(
           : {};
 
       const userIds = Array.isArray(body.userIds) ? body.userIds : [];
+      const shouldUploadFacebook = isTruthyParam(
+        body.uploadToFacebook ?? body.postToFacebook ?? body.facebook,
+      );
       const posterSources = resolvePosterSources(body);
       const language =
         typeof body.language === "string" && body.language.trim()
@@ -658,6 +710,24 @@ router.post(
             imageName
           );
 
+          let facebookResult;
+          if (shouldUploadFacebook) {
+            try {
+              const posted = await postPosterForUser({
+                userId: String(userId),
+                imageUrl: uploadResult.imageUrl,
+                caption:
+                  typeof body.facebookCaption === "string" ? body.facebookCaption : "",
+              });
+              facebookResult = { success: true, ...posted };
+            } catch (error) {
+              facebookResult = {
+                success: false,
+                message: getErrorMessage(error),
+              };
+            }
+          }
+
           results.push({
             userId,
             name: user.name,
@@ -673,6 +743,7 @@ router.post(
             enhanceError: enhancement.enhanceError || undefined,
             aiProvider: enhancement.aiProvider || undefined,
             aiModel: enhancement.aiModel || undefined,
+            facebook: facebookResult,
           });
         } catch (error) {
           results.push({

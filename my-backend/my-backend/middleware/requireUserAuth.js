@@ -1,8 +1,7 @@
 const jwt = require("jsonwebtoken");
+const { JWT_SECRET } = require("./requireAuth");
 
-const JWT_SECRET = process.env.JWT_SECRET || "poster-code-dev-secret-change-me";
-
-function requireAuth(req, res, next) {
+function requireUserAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ")
     ? authHeader.slice("Bearer ".length).trim()
@@ -18,10 +17,10 @@ function requireAuth(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
 
-    if (decoded.role && decoded.role !== "admin") {
+    if (decoded.role !== "user" || !decoded.userId) {
       return res.status(403).json({
         success: false,
-        message: "Admin access token is required.",
+        message: "User access token is required.",
       });
     }
 
@@ -36,6 +35,5 @@ function requireAuth(req, res, next) {
 }
 
 module.exports = {
-  requireAuth,
-  JWT_SECRET,
+  requireUserAuth,
 };

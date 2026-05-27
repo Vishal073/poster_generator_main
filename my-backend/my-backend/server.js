@@ -9,16 +9,18 @@ if (fs.existsSync(envPath)) {
 }
 
 const { router: authRoute } = require("./services/authRoute");
+const { router: userAuthRoute } = require("./services/userAuthRoute");
 const { router: generatePosterRoute } = require("./services/generatePosterRoute");
 const { router: userRoute } = require("./services/userRoute");
 const { router: whatsappFlowRoute } = require("./services/whatsappFlowRoute");
+const facebookRoutes = require("./routes/facebookRoutes");
 
 const app = express();
 
 app.set("trust proxy", true);
 
 const allowedOrigins = (process.env.CORS_ORIGINS ||
-  "http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174")
+  "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -71,9 +73,11 @@ app.options(/.*/, (req, res) => {
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(authRoute);
+app.use(userAuthRoute);
 app.use(generatePosterRoute);
 app.use(userRoute);
 app.use(whatsappFlowRoute);
+app.use(facebookRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "API is running" });

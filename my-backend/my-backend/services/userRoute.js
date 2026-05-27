@@ -5,6 +5,7 @@ const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
 const { normalizeEnhancePriority } = require("../utils/posterEnhancementService");
+const { getFacebookStatusByUserIds } = require("./facebookPostService");
 
 const router = express.Router();
 const upload = multer({
@@ -332,11 +333,21 @@ router.get("/users", requireAuth, requireDb, async (req, res) => {
       .sort({ createdAt: -1 })
       .select("-__v");
 
+    const facebookByUser = await getFacebookStatusByUserIds(users.map((user) => user._id));
+    const defaultFacebook = {
+      facebookConnected: false,
+      facebookPageSelected: false,
+      facebookPageName: null,
+    };
+
     return res.status(200).json({
       success: true,
       message: "Users fetched successfully.",
       count: users.length,
-      data: users.map(formatUserResponse),
+      data: users.map((user) => ({
+        ...formatUserResponse(user),
+        facebook: facebookByUser.get(String(user._id)) || defaultFacebook,
+      })),
     });
   } catch (error) {
     return res.status(500).json({
@@ -479,10 +490,20 @@ router.get("/users/:id", requireAuth, requireDb, async (req, res) => {
       });
     }
 
+    const facebookByUser = await getFacebookStatusByUserIds([user._id]);
+    const defaultFacebook = {
+      facebookConnected: false,
+      facebookPageSelected: false,
+      facebookPageName: null,
+    };
+
     return res.status(200).json({
       success: true,
       message: "User fetched successfully.",
-      data: formatUserResponse(user),
+      data: {
+        ...formatUserResponse(user),
+        facebook: facebookByUser.get(String(user._id)) || defaultFacebook,
+      },
     });
   } catch (error) {
     return res.status(500).json({
