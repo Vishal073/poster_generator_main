@@ -98,7 +98,13 @@ async function startFacebookAuth(req, res) {
       expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
     });
 
-    const oauthUrl = buildFacebookOAuthUrl(state);
+    const userAgent = String(req.headers["user-agent"] || "");
+    const mobileQuery = String(req.query.mobile || "").trim() === "1";
+    const isMobile =
+      mobileQuery ||
+      /Android|iPhone|iPad|iPod|Mobile|WhatsApp/i.test(userAgent);
+
+    const oauthUrl = buildFacebookOAuthUrl(state, { mobile: isMobile });
     return res.redirect(oauthUrl);
   } catch (error) {
     console.error("[Facebook OAuth] startFacebookAuth failed:", error.message);
@@ -195,8 +201,11 @@ async function handleFacebookCallback(req, res) {
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
 
+    const returnToQuery =
+      oauthStateDoc.returnTo === "portal" ? "&returnTo=portal" : "";
+
     return res.redirect(
-      `${frontendUrl}${pagesPath}?sessionId=${sessionId}&userId=${appUserId}`,
+      `${frontendUrl}${pagesPath}?sessionId=${sessionId}&userId=${appUserId}${returnToQuery}`,
     );
   } catch (error) {
     console.error("[Facebook OAuth] handleFacebookCallback failed:", error.message);

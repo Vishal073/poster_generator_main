@@ -41,9 +41,12 @@ function createSessionId() {
 
 /**
  * Build the Facebook Login URL that sends the user to grant Page permissions.
+ * @param {object} [options]
+ * @param {boolean} [options.mobile] - touch UI + m.facebook.com (better on phones, not WhatsApp WebView)
  */
-function buildFacebookOAuthUrl(state) {
+function buildFacebookOAuthUrl(state, options = {}) {
   const { appId, redirectUri } = getFacebookConfig();
+  const useMobile = Boolean(options.mobile);
 
   const params = new URLSearchParams({
     client_id: appId,
@@ -53,7 +56,12 @@ function buildFacebookOAuthUrl(state) {
     response_type: "code",
   });
 
-  return `https://www.facebook.com/${GRAPH_API_VERSION}/dialog/oauth?${params.toString()}`;
+  if (useMobile) {
+    params.set("display", "touch");
+  }
+
+  const host = useMobile ? "m.facebook.com" : "www.facebook.com";
+  return `https://${host}/${GRAPH_API_VERSION}/dialog/oauth?${params.toString()}`;
 }
 
 /**
