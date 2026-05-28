@@ -4,6 +4,8 @@ const FacebookOAuthState = require("../models/FacebookOAuthState");
 const User = require("../models/User");
 const {
   buildFacebookOAuthUrl,
+  getFacebookConfig,
+  FACEBOOK_SCOPES,
   createOAuthState,
   createSessionId,
   exchangeCodeForShortLivedToken,
@@ -428,6 +430,38 @@ async function postFacebookForUser(req, res) {
  * POST /facebook/post-image
  * Low-level endpoint with explicit pageId + pageAccessToken (testing).
  */
+/**
+ * GET /facebook/oauth-config
+ * Shows the exact redirect URI your backend sends to Meta (for dashboard whitelist).
+ */
+async function getFacebookOAuthConfig(req, res) {
+  try {
+    const { appId, redirectUri } = getFacebookConfig();
+    const maskedAppId =
+      typeof appId === "string" && appId.length > 8
+        ? `${appId.slice(0, 4)}…${appId.slice(-4)}`
+        : "not-set";
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Copy redirectUri into Meta → Facebook Login → Valid OAuth Redirect URIs (exact match).",
+      appId: maskedAppId,
+      redirectUri,
+      scopes: FACEBOOK_SCOPES,
+      metaChecklist: [
+        "Client OAuth Login = ON",
+        "Web OAuth Login = ON",
+        "Valid OAuth Redirect URIs includes redirectUri above (no trailing slash)",
+        "App Domains: backend + admin hostnames (no https://)",
+        "Render FACEBOOK_REDIRECT_URI must equal redirectUri exactly",
+      ],
+    });
+  } catch (error) {
+    return sendError(res, error, "Facebook OAuth is not configured on this server.");
+  }
+}
+
 async function postFacebookImage(req, res) {
   try {
     const body = req.body && typeof req.body === "object" ? req.body : {};
@@ -466,6 +500,7 @@ async function postFacebookImage(req, res) {
 module.exports = {
   startFacebookAuth,
   handleFacebookCallback,
+  getFacebookOAuthConfig,
   getFacebookPages,
   saveSelectedPage,
   getFacebookConnectionByUser,

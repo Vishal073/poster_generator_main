@@ -15,10 +15,25 @@ const FACEBOOK_SCOPES = (
   ].join(",")
 ).trim();
 
+function normalizeRedirectUri(value) {
+  if (!value || typeof value !== "string") {
+    return "";
+  }
+
+  let uri = value.trim();
+
+  // Render mistake: pasting "FACEBOOK_REDIRECT_URI=https://..." into the value field
+  if (/^FACEBOOK_REDIRECT_URI\s*=/i.test(uri)) {
+    uri = uri.replace(/^FACEBOOK_REDIRECT_URI\s*=/i, "").trim();
+  }
+
+  return uri;
+}
+
 function getFacebookConfig() {
   const appId = process.env.FACEBOOK_APP_ID;
   const appSecret = process.env.FACEBOOK_APP_SECRET;
-  const redirectUri = process.env.FACEBOOK_REDIRECT_URI;
+  const redirectUri = normalizeRedirectUri(process.env.FACEBOOK_REDIRECT_URI);
 
   if (!appId || !appSecret || !redirectUri) {
     const error = new Error(
@@ -232,6 +247,7 @@ async function postImageToPage({ pageId, pageAccessToken, imageUrl, caption }) {
 
 module.exports = {
   FACEBOOK_SCOPES,
+  getFacebookConfig,
   buildFacebookOAuthUrl,
   createOAuthState,
   createSessionId,

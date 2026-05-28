@@ -2,6 +2,7 @@ const express = require("express");
 const {
   startFacebookAuth,
   handleFacebookCallback,
+  getFacebookOAuthConfig,
   getFacebookPages,
   saveSelectedPage,
   getFacebookConnectionByUser,
@@ -19,6 +20,8 @@ router.get("/auth/facebook", startFacebookAuth);
 router.get("/auth/facebook/callback", handleFacebookCallback);
 
 // Step 3: Frontend loads Pages for the OAuth session
+router.get("/facebook/oauth-config", getFacebookOAuthConfig);
+
 router.get("/facebook/pages", getFacebookPages);
 
 // Step 4: Persist user's selected Page
