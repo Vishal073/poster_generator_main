@@ -14,6 +14,7 @@ const { router: generatePosterRoute } = require("./services/generatePosterRoute"
 const { router: userRoute } = require("./services/userRoute");
 const { router: whatsappFlowRoute } = require("./services/whatsappFlowRoute");
 const facebookRoutes = require("./routes/facebookRoutes");
+const { router: shareImageRoute } = require("./services/shareImageRoute");
 
 const app = express();
 
@@ -76,6 +77,7 @@ app.use(authRoute);
 app.use(userAuthRoute);
 app.use(generatePosterRoute);
 app.use(userRoute);
+app.use(shareImageRoute);
 app.use(whatsappFlowRoute);
 app.use(facebookRoutes);
 
