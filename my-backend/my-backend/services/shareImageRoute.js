@@ -4,7 +4,7 @@ const User = require("../models/User");
 const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
-const { sendPosterWhatsApp } = require("./whatsappService");
+const { sendWhatsAppTemplateThenImage } = require("./whatsappTemplateService");
 const { postPosterForUser } = require("./facebookPostService");
 
 const router = express.Router();
@@ -135,8 +135,9 @@ router.post(
 
       if (sendWhatsApp) {
         try {
-          whatsappResult = await sendPosterWhatsApp({
+          whatsappResult = await sendWhatsAppTemplateThenImage({
             toMobile: user.mobileNumber,
+            name: user.name,
             imageUrl,
             body: whatsappMessage,
           });
@@ -189,7 +190,8 @@ router.post(
       if (sendWhatsApp && uploadToFacebook && facebookResult?.success) {
         message = "Image sent on WhatsApp and posted to Facebook.";
       } else if (sendWhatsApp) {
-        message = "Image uploaded and sent on WhatsApp.";
+        message =
+          "WhatsApp template sent, then image delivered to the user.";
       } else if (facebookResult?.success) {
         message = "Image uploaded and posted to Facebook.";
       }
