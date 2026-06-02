@@ -106,7 +106,8 @@ async function startFacebookAuth(req, res) {
       mobileQuery ||
       /Android|iPhone|iPad|iPod|Mobile|WhatsApp/i.test(userAgent);
 
-    const oauthUrl = buildFacebookOAuthUrl(state, { mobile: isMobile });
+    const reconnect = String(req.query.reconnect || "").trim() === "1";
+    const oauthUrl = buildFacebookOAuthUrl(state, { mobile: isMobile, reconnect });
     return res.redirect(oauthUrl);
   } catch (error) {
     console.error("[Facebook OAuth] startFacebookAuth failed:", error.message);
@@ -169,8 +170,13 @@ async function handleFacebookCallback(req, res) {
     const pages = await fetchUserPages(longLived.accessToken);
 
     if (!pages.length) {
+      const userIdQuery = appUserId ? `&userId=${appUserId}` : "";
+      const returnToQuery =
+        oauthStateDoc.returnTo === "portal" ? "&returnTo=portal" : "";
       return res.redirect(
-        `${frontendUrl}${pagesPath}?error=${encodeURIComponent("No Facebook Pages found for this account.")}`,
+        `${frontendUrl}${pagesPath}?error=${encodeURIComponent(
+          "No Facebook Pages found. Log in with a Facebook account that manages a Page (Admin/Editor), then try again.",
+        )}${userIdQuery}${returnToQuery}`,
       );
     }
 
@@ -216,42 +222,102 @@ async function handleFacebookCallback(req, res) {
   }
 }
 
+async function syncConnectionPagesFromFacebook(connection) {
+  if (!connection.userAccessToken) {
+    const error = new Error(
+      "Facebook access expired. Tap Connect Facebook again to sign in.",
+    );
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const pages = await fetchUserPages(connection.userAccessToken);
+  connection.pages = pages;
+
+  if (connection.selectedPage?.pageId) {
+    const refreshedSelected = pages.find(
+      (page) => page.pageId === connection.selectedPage.pageId,
+    );
+    if (refreshedSelected) {
+      connection.selectedPage = {
+        pageId: refreshedSelected.pageId,
+        pageName: refreshedSelected.pageName,
+        pageAccessToken: refreshedSelected.pageAccessToken,
+      };
+    }
+  }
+
+  await connection.save();
+  return pages;
+}
+
+function formatPagesResponse(connection) {
+  return {
+    success: true,
+    sessionId: connection.sessionId,
+    userId: connection.userId,
+    facebookUserId: connection.facebookUserId,
+    pages: (connection.pages || []).map((page) => ({
+      pageId: page.pageId,
+      pageName: page.pageName,
+      pageAccessToken: page.pageAccessToken,
+    })),
+    selectedPage: connection.selectedPage || null,
+  };
+}
+
 /**
  * GET /facebook/pages
- * Returns Pages fetched during OAuth for a given session.
+ * Returns Pages for sessionId (after OAuth) or userId (change Page on existing link).
+ * Optional refresh=true refetches /me/accounts from Facebook.
  */
 async function getFacebookPages(req, res) {
   try {
     const sessionId =
       typeof req.query.sessionId === "string" ? req.query.sessionId.trim() : "";
+    const userIdParam =
+      typeof req.query.userId === "string" ? req.query.userId.trim() : "";
+    const shouldRefresh = String(req.query.refresh || "").trim() === "true";
 
-    if (!sessionId) {
+    if (!sessionId && !userIdParam) {
       return res.status(400).json({
         success: false,
-        message: "sessionId query parameter is required.",
+        message: "sessionId or userId query parameter is required.",
       });
     }
 
-    const connection = await FacebookConnection.findOne({ sessionId }).lean();
+    let connection = null;
+    if (sessionId) {
+      connection = await FacebookConnection.findOne({ sessionId });
+    }
+    if (!connection && userIdParam) {
+      if (!isValidObjectId(userIdParam)) {
+        return res.status(400).json({
+          success: false,
+          message: "userId must be a valid MongoDB User _id.",
+        });
+      }
+      connection = await FacebookConnection.findOne({ userId: userIdParam });
+    }
+
     if (!connection) {
       return res.status(404).json({
         success: false,
-        message: "Facebook session not found or expired.",
+        message: sessionId
+          ? "Facebook session not found or expired. Connect Facebook again from the user."
+          : "No Facebook connection for this user. Connect Facebook first.",
       });
     }
 
-    return res.status(200).json({
-      success: true,
-      sessionId: connection.sessionId,
-      userId: connection.userId,
-      facebookUserId: connection.facebookUserId,
-      pages: connection.pages.map((page) => ({
-        pageId: page.pageId,
-        pageName: page.pageName,
-        pageAccessToken: page.pageAccessToken,
-      })),
-      selectedPage: connection.selectedPage || null,
-    });
+    if (shouldRefresh) {
+      try {
+        await syncConnectionPagesFromFacebook(connection);
+      } catch (error) {
+        return sendError(res, error, "Unable to refresh Facebook Pages.");
+      }
+    }
+
+    return res.status(200).json(formatPagesResponse(connection));
   } catch (error) {
     console.error("[Facebook OAuth] getFacebookPages failed:", error.message);
     return sendError(res, error, "Unable to load Facebook Pages.");
@@ -312,6 +378,8 @@ async function saveSelectedPage(req, res) {
       });
     }
 
+    const previousPageId = connection.selectedPage?.pageId || null;
+
     connection.selectedPage = {
       pageId: selectedPage.pageId,
       pageName: selectedPage.pageName,
@@ -322,9 +390,14 @@ async function saveSelectedPage(req, res) {
     connection.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     await connection.save();
 
+    const message =
+      previousPageId && previousPageId !== pageId
+        ? `Facebook Page updated to ${selectedPage.pageName}.`
+        : "Facebook Page saved successfully.";
+
     return res.status(200).json({
       success: true,
-      message: "Facebook Page saved successfully.",
+      message,
       userId: connection.userId,
       selectedPage: {
         pageId: connection.selectedPage.pageId,

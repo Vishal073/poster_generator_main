@@ -12,7 +12,7 @@ const {
 const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const User = require("../models/User");
-const { sendPosterWhatsApp } = require("./whatsappService");
+const { sendWhatsAppImageSmart } = require("./whatsappTemplateService");
 const { postPosterForUser } = require("./facebookPostService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
@@ -117,22 +117,25 @@ async function applyPosterEnhancement(buffer, enhancePriority) {
   }
 }
 
-async function resolveUserEnhancePriority({ userId, mobileNumber }) {
+async function resolveUserByIdOrMobile(userId, mobileNumber, select) {
   let user = null;
 
   if (userId && isValidObjectId(userId)) {
-    user = await User.findById(userId).select("enhancePriority").lean();
+    user = await User.findById(userId).select(select).lean();
   }
 
   if (!user && mobileNumber) {
-    const normalizedMobile = String(mobileNumber).replace(/\D/g, "");
-    if (normalizedMobile) {
-      user = await User.findOne({ mobileNumber: normalizedMobile })
-        .select("enhancePriority")
-        .lean();
+    const normalizedMobile = String(mobileNumber).replace(/\D/g, "").slice(-10);
+    if (/^\d{10}$/.test(normalizedMobile)) {
+      user = await User.findOne({ mobileNumber: normalizedMobile }).select(select).lean();
     }
   }
 
+  return user;
+}
+
+async function resolveUserEnhancePriority({ userId, mobileNumber }) {
+  const user = await resolveUserByIdOrMobile(userId, mobileNumber, "enhancePriority");
   return normalizeEnhancePriority(user?.enhancePriority, "medium");
 }
 
@@ -274,10 +277,17 @@ async function generatePoster(req, res) {
     let whatsappResult;
     if (shouldSendWhatsApp) {
       try {
-        whatsappResult = await sendPosterWhatsApp({
+        const waUser = await resolveUserByIdOrMobile(
+          body.userId || userId,
+          mobileValue,
+          "name whatsappLastInboundAt",
+        );
+        whatsappResult = await sendWhatsAppImageSmart({
           toMobile: mobileValue,
+          name: waUser?.name || name || username || "Customer",
           imageUrl: uploadResult.imageUrl,
           body: "Here is your image",
+          lastInboundAt: waUser?.whatsappLastInboundAt,
         });
       } catch (error) {
         return res.status(502).json({

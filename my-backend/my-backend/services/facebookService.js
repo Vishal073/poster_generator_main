@@ -62,6 +62,7 @@ function createSessionId() {
 function buildFacebookOAuthUrl(state, options = {}) {
   const { appId, redirectUri } = getFacebookConfig();
   const useMobile = Boolean(options.mobile);
+  const reconnect = Boolean(options.reconnect);
 
   const params = new URLSearchParams({
     client_id: appId,
@@ -73,6 +74,11 @@ function buildFacebookOAuthUrl(state, options = {}) {
 
   if (useMobile) {
     params.set("display", "touch");
+  }
+
+  // Ask Facebook to show login/permissions again (switch account or refresh Page list)
+  if (reconnect) {
+    params.set("auth_type", "rerequest");
   }
 
   const host = useMobile ? "m.facebook.com" : "www.facebook.com";
@@ -193,26 +199,46 @@ async function fetchFacebookUserId(userAccessToken) {
   }
 }
 
+function mapGraphPages(rawPages) {
+  return rawPages.map((page) => ({
+    pageId: String(page.id),
+    pageName: page.name || "Unnamed Page",
+    pageAccessToken: page.access_token || "",
+  }));
+}
+
 /**
- * Fetch Pages the user manages. Each Page includes its own page access token.
+ * Fetch all Pages the user manages (follows Graph API paging).
  */
 async function fetchUserPages(userAccessToken) {
+  const allPages = [];
+  let requestUrl = `${GRAPH_BASE_URL}/me/accounts`;
+  let requestParams = {
+    fields: "id,name,access_token",
+    access_token: userAccessToken,
+    limit: 100,
+  };
+
   try {
-    const response = await axios.get(`${GRAPH_BASE_URL}/me/accounts`, {
-      params: {
-        fields: "id,name,access_token",
-        access_token: userAccessToken,
-      },
-      timeout: 15000,
-    });
+    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+      const response = await axios.get(requestUrl, {
+        params: requestParams,
+        timeout: 15000,
+      });
 
-    const rawPages = Array.isArray(response.data?.data) ? response.data.data : [];
+      const rawPages = Array.isArray(response.data?.data) ? response.data.data : [];
+      allPages.push(...mapGraphPages(rawPages));
 
-    return rawPages.map((page) => ({
-      pageId: String(page.id),
-      pageName: page.name || "Unnamed Page",
-      pageAccessToken: page.access_token || "",
-    }));
+      const nextUrl = response.data?.paging?.next;
+      if (!nextUrl || typeof nextUrl !== "string") {
+        break;
+      }
+
+      requestUrl = nextUrl;
+      requestParams = undefined;
+    }
+
+    return allPages;
   } catch (error) {
     throw wrapGraphError(error, "Failed to fetch Facebook Pages.");
   }

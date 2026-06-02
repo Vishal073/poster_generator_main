@@ -95,6 +95,11 @@ const userSchema = new mongoose.Schema(
       enum: ["low", "medium", "high"],
       default: "medium",
     },
+    /** Last inbound WhatsApp message from this user (24h session window). */
+    whatsappLastInboundAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

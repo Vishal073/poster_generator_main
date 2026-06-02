@@ -7,6 +7,7 @@ const {
   sendWhatsAppContentTemplate,
   sendWhatsAppText,
 } = require("./whatsappService");
+const { recordWhatsAppInbound } = require("./whatsappTemplateService");
 
 const router = express.Router();
 const pendingPosterRequests = new Map();
@@ -401,6 +402,8 @@ router.post("/webhook", async (req, res) => {
       buttonText: req.body.ButtonText,
       buttonPayload: req.body.ButtonPayload,
     });
+
+    await recordWhatsAppInbound(normalizedFrom);
 
     if (reply === "download") {
       const pendingRequest = pendingPosterRequests.get(normalizedFrom) || {
