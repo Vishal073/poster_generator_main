@@ -4,6 +4,7 @@ const User = require("../models/User");
 const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
+const { isWhatsAppSessionOpen } = require("./whatsappTemplateService");
 const { normalizeEnhancePriority } = require("../utils/posterEnhancementService");
 const { getFacebookStatusByUserIds } = require("./facebookPostService");
 
@@ -193,6 +194,8 @@ function formatUserResponse(user) {
     userImageUrl: user.userImageUrl || "",
     userImagePublicId: user.userImagePublicId || "",
     enhancePriority: user.enhancePriority || "medium",
+    whatsappLastInboundAt: user.whatsappLastInboundAt || null,
+    whatsappSessionOpen: isWhatsAppSessionOpen(user.whatsappLastInboundAt),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
