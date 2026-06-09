@@ -4,12 +4,59 @@ const crypto = require("crypto");
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
-// Default scopes for Page posting. Override via FACEBOOK_SCOPES in .env if Meta shows "Invalid Scopes".
-// pages_read_engagement is not needed for posting and Meta often rejects it as an invalid scope.
-const FACEBOOK_SCOPES = (
-  process.env.FACEBOOK_SCOPES ||
-  ["pages_show_list", "pages_manage_posts"].join(",")
-).trim();
+const DEFAULT_FACEBOOK_SCOPES = ["pages_show_list", "pages_manage_posts"];
+
+// Meta rejects these for many apps (deprecated or not enabled on the use case).
+const BLOCKED_FACEBOOK_SCOPES = new Set([
+  "pages_read_engagement",
+  "pages_read_user_content",
+  "read_insights",
+  "manage_pages",
+  "publish_pages",
+  "pages_manage_metadata",
+]);
+
+function parseScopeList(value) {
+  return String(value || "")
+    .split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+}
+
+function sanitizeFacebookScopes(rawScopes) {
+  const requested = parseScopeList(rawScopes);
+  const removed = [];
+  const kept = [];
+
+  for (const scope of requested) {
+    if (BLOCKED_FACEBOOK_SCOPES.has(scope)) {
+      removed.push(scope);
+      continue;
+    }
+    if (!kept.includes(scope)) {
+      kept.push(scope);
+    }
+  }
+
+  for (const scope of DEFAULT_FACEBOOK_SCOPES) {
+    if (!kept.includes(scope)) {
+      kept.push(scope);
+    }
+  }
+
+  return {
+    scopes: kept.join(","),
+    removed,
+    requested,
+  };
+}
+
+const scopeResolution = sanitizeFacebookScopes(
+  process.env.FACEBOOK_SCOPES || DEFAULT_FACEBOOK_SCOPES.join(","),
+);
+
+// Override via FACEBOOK_SCOPES in .env only if needed. Invalid scopes are stripped automatically.
+const FACEBOOK_SCOPES = scopeResolution.scopes;
 
 function normalizeRedirectUri(value) {
   if (!value || typeof value !== "string") {
@@ -269,6 +316,10 @@ async function postImageToPage({ pageId, pageAccessToken, imageUrl, caption }) {
 
 module.exports = {
   FACEBOOK_SCOPES,
+  DEFAULT_FACEBOOK_SCOPES,
+  BLOCKED_FACEBOOK_SCOPES,
+  sanitizeFacebookScopes,
+  scopeResolution,
   getFacebookConfig,
   buildFacebookOAuthUrl,
   createOAuthState,
