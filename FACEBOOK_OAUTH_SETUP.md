@@ -153,10 +153,8 @@ Production: `https://your-api.com/auth/facebook/callback`
 
 ### 5. Permissions (already in code)
 
-- `pages_show_list` — list Pages the user manages
-- `pages_manage_posts` — post posters to the selected Page
-
-Do **not** add `pages_read_engagement` unless Meta explicitly approves it for your app; it often shows **Invalid Scopes** during login.
+- `pages_show_list`
+- `pages_manage_posts`
 
 ### 6. Verify
 

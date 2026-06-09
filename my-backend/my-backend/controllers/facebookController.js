@@ -6,7 +6,6 @@ const {
   buildFacebookOAuthUrl,
   getFacebookConfig,
   FACEBOOK_SCOPES,
-  scopeResolution,
   createOAuthState,
   createSessionId,
   exchangeCodeForShortLivedToken,
@@ -523,16 +522,12 @@ async function getFacebookOAuthConfig(req, res) {
       appId: maskedAppId,
       redirectUri,
       scopes: FACEBOOK_SCOPES,
-      requestedScopes: scopeResolution.requested,
-      removedScopes: scopeResolution.removed,
       metaChecklist: [
         "Client OAuth Login = ON",
         "Web OAuth Login = ON",
         "Valid OAuth Redirect URIs includes redirectUri above (no trailing slash)",
-        "App Domains: poster-generator-admin-portal.onrender.com + poster-generator-main.onrender.com (no https://)",
+        "App Domains: backend + admin hostnames (no https://)",
         "Render FACEBOOK_REDIRECT_URI must equal redirectUri exactly",
-        "Use cases → Manage your Pages → Permissions: only pages_show_list + pages_manage_posts (remove pages_read_engagement)",
-        "If Invalid Scopes persists after code deploy: Meta dashboard still has old permission on the use case — remove it there",
       ],
     });
   } catch (error) {
