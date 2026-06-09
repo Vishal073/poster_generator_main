@@ -5,14 +5,10 @@ const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
 // Default scopes for Page posting. Override via FACEBOOK_SCOPES in .env if Meta shows "Invalid Scopes".
-// Dev test example: FACEBOOK_SCOPES=pages_show_list
+// pages_read_engagement is not needed for posting and Meta often rejects it as an invalid scope.
 const FACEBOOK_SCOPES = (
   process.env.FACEBOOK_SCOPES ||
-  [
-    "pages_show_list",
-    "pages_manage_posts",
-    "pages_read_engagement",
-  ].join(",")
+  ["pages_show_list", "pages_manage_posts"].join(",")
 ).trim();
 
 function normalizeRedirectUri(value) {
