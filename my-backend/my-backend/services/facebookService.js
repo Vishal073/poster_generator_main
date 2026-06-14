@@ -5,9 +5,10 @@ const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
 // Default scopes for Page posting. Override via FACEBOOK_SCOPES in .env if needed.
+// pages_read_engagement is required by Meta for /photos and App Review with pages_manage_posts.
 const FACEBOOK_SCOPES = (
   process.env.FACEBOOK_SCOPES ||
-  ["pages_show_list", "pages_manage_posts"].join(",")
+  ["pages_show_list", "pages_read_engagement", "pages_manage_posts"].join(",")
 ).trim();
 
 function normalizeRedirectUri(value) {
@@ -266,6 +267,59 @@ async function postImageToPage({ pageId, pageAccessToken, imageUrl, caption }) {
   }
 }
 
+/**
+ * List recent posts on a Facebook Page (requires pages_read_engagement on token).
+ */
+async function listPagePosts({ pageId, pageAccessToken, limit = 25 }) {
+  try {
+    const response = await axios.get(`${GRAPH_BASE_URL}/${pageId}/posts`, {
+      params: {
+        fields: "id,message,created_time,full_picture,permalink_url,status_type",
+        access_token: pageAccessToken,
+        limit: Math.min(Math.max(Number(limit) || 25, 1), 50),
+      },
+      timeout: 30000,
+    });
+
+    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+
+    return {
+      posts: rows.map((row) => ({
+        id: String(row.id || ""),
+        message: typeof row.message === "string" ? row.message : "",
+        createdTime: row.created_time || null,
+        imageUrl: typeof row.full_picture === "string" ? row.full_picture : null,
+        permalinkUrl: typeof row.permalink_url === "string" ? row.permalink_url : null,
+        statusType: typeof row.status_type === "string" ? row.status_type : null,
+      })),
+      paging: response.data?.paging || null,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to list Facebook Page posts.");
+  }
+}
+
+/**
+ * Delete a post from a Facebook Page (requires pages_manage_posts on token).
+ */
+async function deletePagePost({ postId, pageAccessToken }) {
+  try {
+    const response = await axios.delete(`${GRAPH_BASE_URL}/${postId}`, {
+      params: {
+        access_token: pageAccessToken,
+      },
+      timeout: 30000,
+    });
+
+    return {
+      deleted: response.data?.success === true,
+      raw: response.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to delete Facebook Page post.");
+  }
+}
+
 module.exports = {
   FACEBOOK_SCOPES,
   getFacebookConfig,
@@ -277,4 +331,6 @@ module.exports = {
   fetchFacebookUserId,
   fetchUserPages,
   postImageToPage,
+  listPagePosts,
+  deletePagePost,
 };

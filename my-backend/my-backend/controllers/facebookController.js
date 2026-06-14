@@ -16,6 +16,8 @@ const {
 } = require("../services/facebookService");
 const {
   postPosterForUser,
+  listPostsForUser,
+  deletePostForUser,
   buildFacebookConnectUrl,
 } = require("../services/facebookPostService");
 
@@ -500,6 +502,60 @@ async function postFacebookForUser(req, res) {
 }
 
 /**
+ * GET /facebook/posts/:userId
+ * List recent posts on the user's selected Facebook Page.
+ */
+async function listFacebookPostsForUser(req, res) {
+  try {
+    const userId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
+    const limitRaw =
+      typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : 25;
+
+    await resolveAppUserId(userId);
+
+    const result = await listPostsForUser({
+      userId,
+      limit: Number.isFinite(limitRaw) ? limitRaw : 25,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Facebook Page posts fetched successfully.",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Facebook OAuth] listFacebookPostsForUser failed:", error.message);
+    return sendError(res, error, "Unable to list Facebook Page posts for this user.");
+  }
+}
+
+/**
+ * DELETE /facebook/posts/:userId/:postId
+ * Delete a post from the user's selected Facebook Page.
+ */
+async function deleteFacebookPostForUser(req, res) {
+  try {
+    const userId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
+    const postId = typeof req.params.postId === "string" ? req.params.postId.trim() : "";
+
+    await resolveAppUserId(userId);
+
+    const result = await deletePostForUser({ userId, postId });
+
+    return res.status(200).json({
+      success: true,
+      message: result.deleted
+        ? "Facebook post deleted successfully."
+        : "Delete request sent to Facebook.",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Facebook OAuth] deleteFacebookPostForUser failed:", error.message);
+    return sendError(res, error, "Unable to delete Facebook post for this user.");
+  }
+}
+
+/**
  * POST /facebook/post-image
  * Low-level endpoint with explicit pageId + pageAccessToken (testing).
  */
@@ -579,5 +635,7 @@ module.exports = {
   getFacebookConnectionByUser,
   getFacebookConnectUrl,
   postFacebookForUser,
+  listFacebookPostsForUser,
+  deleteFacebookPostForUser,
   postFacebookImage,
 };

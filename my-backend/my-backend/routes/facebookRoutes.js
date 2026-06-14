@@ -8,6 +8,8 @@ const {
   getFacebookConnectionByUser,
   getFacebookConnectUrl,
   postFacebookForUser,
+  listFacebookPostsForUser,
+  deleteFacebookPostForUser,
   postFacebookImage,
 } = require("../controllers/facebookController");
 
@@ -35,6 +37,10 @@ router.get("/facebook/connect-url/:userId", getFacebookConnectUrl);
 
 // One-click post using saved tokens for app user
 router.post("/facebook/post-for-user", postFacebookForUser);
+
+// List / delete posts on the user's selected Page
+router.get("/facebook/posts/:userId", listFacebookPostsForUser);
+router.delete("/facebook/posts/:userId/:postId", deleteFacebookPostForUser);
 
 // Low-level post with explicit page tokens (testing)
 router.post("/facebook/post-image", postFacebookImage);

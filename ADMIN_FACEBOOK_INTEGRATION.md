@@ -148,6 +148,8 @@ POST /facebook/post-for-user
 | GET | `/facebook/connection/:userId` | Check if user linked |
 | GET | `/facebook/pages?sessionId=` | List pages after OAuth |
 | POST | `/facebook/save-page` | Save selected Page |
+| GET | `/facebook/posts/:userId` | List recent posts on saved Page |
+| DELETE | `/facebook/posts/:userId/:postId` | Delete a post from saved Page |
 | POST | `/facebook/post-for-user` | One-click post by userId |
 | POST | `/generate-poster` | `uploadToFacebook: true` |
 

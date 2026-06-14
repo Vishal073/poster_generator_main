@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 const FacebookConnection = require("../models/FacebookConnection");
-const { postImageToPage } = require("./facebookService");
+const { postImageToPage, listPagePosts, deletePagePost } = require("./facebookService");
 
 function isValidObjectId(value) {
   if (typeof value !== "string" || !mongoose.Types.ObjectId.isValid(value)) {
@@ -10,18 +10,9 @@ function isValidObjectId(value) {
   return String(new mongoose.Types.ObjectId(value)) === value;
 }
 
-/**
- * Post a public image URL to the Facebook Page saved for this app user.
- */
-async function postPosterForUser({ userId, imageUrl, caption = "" }) {
+async function getFacebookConnectionForUser(userId) {
   if (!isValidObjectId(userId)) {
     const error = new Error("userId must be a valid MongoDB User _id.");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  if (!imageUrl || typeof imageUrl !== "string" || !imageUrl.trim()) {
-    const error = new Error("imageUrl is required.");
     error.statusCode = 400;
     throw error;
   }
@@ -41,6 +32,27 @@ async function postPosterForUser({ userId, imageUrl, caption = "" }) {
     throw error;
   }
 
+  return connection;
+}
+
+/**
+ * Post a public image URL to the Facebook Page saved for this app user.
+ */
+async function postPosterForUser({ userId, imageUrl, caption = "" }) {
+  if (!isValidObjectId(userId)) {
+    const error = new Error("userId must be a valid MongoDB User _id.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!imageUrl || typeof imageUrl !== "string" || !imageUrl.trim()) {
+    const error = new Error("imageUrl is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+
   const result = await postImageToPage({
     pageId: connection.selectedPage.pageId,
     pageAccessToken: connection.selectedPage.pageAccessToken,
@@ -53,6 +65,47 @@ async function postPosterForUser({ userId, imageUrl, caption = "" }) {
     pageId: connection.selectedPage.pageId,
     pageName: connection.selectedPage.pageName,
     postId: result.postId,
+  };
+}
+
+async function listPostsForUser({ userId, limit = 25 }) {
+  const connection = await getFacebookConnectionForUser(userId);
+
+  const result = await listPagePosts({
+    pageId: connection.selectedPage.pageId,
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+    limit,
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    posts: result.posts,
+    paging: result.paging,
+  };
+}
+
+async function deletePostForUser({ userId, postId }) {
+  if (!postId || typeof postId !== "string" || !postId.trim()) {
+    const error = new Error("postId is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+
+  const result = await deletePagePost({
+    postId: postId.trim(),
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    postId: postId.trim(),
+    deleted: result.deleted,
   };
 }
 
@@ -92,6 +145,8 @@ function buildFacebookConnectUrl(userId, apiBaseUrl) {
 
 module.exports = {
   postPosterForUser,
+  listPostsForUser,
+  deletePostForUser,
   getFacebookStatusByUserIds,
   buildFacebookConnectUrl,
   isValidObjectId,
