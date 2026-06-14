@@ -155,59 +155,102 @@ function buildFacebookConnectUrl(userId, apiBaseUrl) {
 
 /**
  * Run the Graph API calls Meta App Review expects for Page permissions.
+ * POST /photos runs first so pages_manage_posts is recorded even if list/read fails.
  */
 async function runMetaReviewTestForUser({ userId }) {
   const connection = await getFacebookConnectionForUser(userId);
   const pageId = connection.selectedPage.pageId;
   const pageAccessToken = connection.selectedPage.pageAccessToken;
   const pageName = connection.selectedPage.pageName;
+  const configuredScopes =
+    (process.env.FACEBOOK_SCOPES || "").trim() ||
+    "pages_show_list,pages_read_engagement,pages_manage_posts";
 
   const tokenDebug = await debugAccessToken(pageAccessToken);
 
-  const engagement = await readPageEngagement({ pageId, pageAccessToken });
+  const calls = {
+    pages_manage_posts_create: {
+      endpoint: `POST /${pageId}/photos`,
+      success: false,
+      postId: null,
+      error: null,
+    },
+    pages_read_engagement: {
+      endpoint: `GET /${pageId}?fields=name,fan_count`,
+      success: false,
+      pageName: null,
+      fanCount: null,
+      error: null,
+    },
+    pages_manage_posts_list: {
+      endpoint: `GET /${pageId}/posts`,
+      success: false,
+      count: 0,
+      error: null,
+    },
+  };
 
-  const listed = await listPagePosts({
-    pageId,
-    pageAccessToken,
-    limit: 5,
-  });
+  // Most important for Meta App Review — run first.
+  try {
+    const posted = await postImageToPage({
+      pageId,
+      pageAccessToken,
+      imageUrl: META_REVIEW_TEST_IMAGE_URL,
+      caption: "GCR Graphix — Meta App Review API test",
+    });
+    calls.pages_manage_posts_create.success = true;
+    calls.pages_manage_posts_create.postId = posted.postId;
+  } catch (error) {
+    calls.pages_manage_posts_create.error = error?.message || "POST /photos failed.";
+    const wrapped = new Error(calls.pages_manage_posts_create.error);
+    wrapped.statusCode = error?.statusCode || 502;
+    wrapped.details = { tokenDebug, calls, configuredScopes };
+    throw wrapped;
+  }
 
-  const posted = await postImageToPage({
-    pageId,
-    pageAccessToken,
-    imageUrl: META_REVIEW_TEST_IMAGE_URL,
-    caption: "GCR Graphix — Meta App Review API test",
-  });
+  try {
+    const engagement = await readPageEngagement({ pageId, pageAccessToken });
+    calls.pages_read_engagement.success = true;
+    calls.pages_read_engagement.pageName = engagement.name;
+    calls.pages_read_engagement.fanCount = engagement.fanCount;
+  } catch (error) {
+    calls.pages_read_engagement.error = error?.message || "Read engagement failed.";
+  }
+
+  try {
+    const listed = await listPagePosts({ pageId, pageAccessToken, limit: 5 });
+    calls.pages_manage_posts_list.success = true;
+    calls.pages_manage_posts_list.count = listed.posts.length;
+  } catch (error) {
+    calls.pages_manage_posts_list.error = error?.message || "List posts failed.";
+  }
+
+  const missingScopes = ["pages_read_engagement", "pages_manage_posts"].filter(
+    (scope) => !tokenDebug.scopes.includes(scope),
+  );
 
   return {
     userId: String(connection.userId),
     pageId,
     pageName,
-    configuredScopes: (process.env.FACEBOOK_SCOPES || "").trim() || null,
+    configuredScopes,
     tokenDebug,
-    calls: {
-      pages_read_engagement: {
-        endpoint: `GET /${pageId}?fields=name,fan_count`,
-        success: true,
-        pageName: engagement.name,
-        fanCount: engagement.fanCount,
-      },
-      pages_manage_posts_list: {
-        endpoint: `GET /${pageId}/posts`,
-        success: true,
-        count: listed.posts.length,
-      },
-      pages_manage_posts_create: {
-        endpoint: `POST /${pageId}/photos`,
-        success: true,
-        postId: posted.postId,
-      },
-    },
+    calls,
+    warnings:
+      missingScopes.length > 0
+        ? [
+            `Token is missing scopes: ${missingScopes.join(", ")}. Reconnect Facebook after updating FACEBOOK_SCOPES on Render.`,
+          ]
+        : configuredScopes.includes("pages_read_engagement")
+          ? []
+          : [
+              "Render FACEBOOK_SCOPES is missing pages_read_engagement. Add it and reconnect Facebook.",
+            ],
     nextSteps: [
-      "Wait 15–30 minutes, then refresh Meta App Review → Permissions.",
+      "POST /photos succeeded — wait 15–30 minutes, then refresh Meta App Review → Permissions.",
       "pages_manage_posts should show 1 of 1 API test call(s).",
-      "Ensure tokenDebug.appId matches your Meta Developer App ID.",
-      "If scopes are missing, reconnect Facebook after updating FACEBOOK_SCOPES on Render.",
+      `tokenDebug.appId (${tokenDebug.appId}) must match your Meta Developer App ID.`,
+      "If still 0, your Facebook account must be App Admin/Developer/Tester in Meta dashboard.",
     ],
   };
 }
