@@ -10,6 +10,7 @@ const {
   postFacebookForUser,
   listFacebookPostsForUser,
   deleteFacebookPostForUser,
+  runMetaReviewTest,
   postFacebookImage,
 } = require("../controllers/facebookController");
 
@@ -41,6 +42,9 @@ router.post("/facebook/post-for-user", postFacebookForUser);
 // List / delete posts on the user's selected Page
 router.get("/facebook/posts/:userId", listFacebookPostsForUser);
 router.delete("/facebook/posts/:userId/:postId", deleteFacebookPostForUser);
+
+// Run all Graph API calls needed for Meta App Review (one click)
+router.post("/facebook/meta-review-test/:userId", runMetaReviewTest);
 
 // Low-level post with explicit page tokens (testing)
 router.post("/facebook/post-image", postFacebookImage);

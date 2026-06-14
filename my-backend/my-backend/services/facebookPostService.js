@@ -1,6 +1,16 @@
 const mongoose = require("mongoose");
 const FacebookConnection = require("../models/FacebookConnection");
-const { postImageToPage, listPagePosts, deletePagePost } = require("./facebookService");
+const {
+  postImageToPage,
+  listPagePosts,
+  deletePagePost,
+  readPageEngagement,
+  debugAccessToken,
+} = require("./facebookService");
+
+const META_REVIEW_TEST_IMAGE_URL =
+  process.env.META_REVIEW_TEST_IMAGE_URL ||
+  "https://res.cloudinary.com/di5yny8zy/image/upload/v1777641545/resized_1080x1350_u3t3fv.jpg";
 
 function isValidObjectId(value) {
   if (typeof value !== "string" || !mongoose.Types.ObjectId.isValid(value)) {
@@ -143,10 +153,70 @@ function buildFacebookConnectUrl(userId, apiBaseUrl) {
   return `${base}/auth/facebook?userId=${encodeURIComponent(userId)}`;
 }
 
+/**
+ * Run the Graph API calls Meta App Review expects for Page permissions.
+ */
+async function runMetaReviewTestForUser({ userId }) {
+  const connection = await getFacebookConnectionForUser(userId);
+  const pageId = connection.selectedPage.pageId;
+  const pageAccessToken = connection.selectedPage.pageAccessToken;
+  const pageName = connection.selectedPage.pageName;
+
+  const tokenDebug = await debugAccessToken(pageAccessToken);
+
+  const engagement = await readPageEngagement({ pageId, pageAccessToken });
+
+  const listed = await listPagePosts({
+    pageId,
+    pageAccessToken,
+    limit: 5,
+  });
+
+  const posted = await postImageToPage({
+    pageId,
+    pageAccessToken,
+    imageUrl: META_REVIEW_TEST_IMAGE_URL,
+    caption: "GCR Graphix — Meta App Review API test",
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId,
+    pageName,
+    configuredScopes: (process.env.FACEBOOK_SCOPES || "").trim() || null,
+    tokenDebug,
+    calls: {
+      pages_read_engagement: {
+        endpoint: `GET /${pageId}?fields=name,fan_count`,
+        success: true,
+        pageName: engagement.name,
+        fanCount: engagement.fanCount,
+      },
+      pages_manage_posts_list: {
+        endpoint: `GET /${pageId}/posts`,
+        success: true,
+        count: listed.posts.length,
+      },
+      pages_manage_posts_create: {
+        endpoint: `POST /${pageId}/photos`,
+        success: true,
+        postId: posted.postId,
+      },
+    },
+    nextSteps: [
+      "Wait 15–30 minutes, then refresh Meta App Review → Permissions.",
+      "pages_manage_posts should show 1 of 1 API test call(s).",
+      "Ensure tokenDebug.appId matches your Meta Developer App ID.",
+      "If scopes are missing, reconnect Facebook after updating FACEBOOK_SCOPES on Render.",
+    ],
+  };
+}
+
 module.exports = {
   postPosterForUser,
   listPostsForUser,
   deletePostForUser,
+  runMetaReviewTestForUser,
   getFacebookStatusByUserIds,
   buildFacebookConnectUrl,
   isValidObjectId,
