@@ -320,57 +320,6 @@ async function deletePagePost({ postId, pageAccessToken }) {
   }
 }
 
-/**
- * Read basic Page fields (pages_read_engagement).
- */
-async function readPageEngagement({ pageId, pageAccessToken }) {
-  try {
-    const response = await axios.get(`${GRAPH_BASE_URL}/${pageId}`, {
-      params: {
-        fields: "id,name,fan_count",
-        access_token: pageAccessToken,
-      },
-      timeout: 30000,
-    });
-
-    return {
-      pageId: String(response.data?.id || pageId),
-      name: response.data?.name || null,
-      fanCount: response.data?.fan_count ?? null,
-    };
-  } catch (error) {
-    throw wrapGraphError(error, "Failed to read Facebook Page engagement fields.");
-  }
-}
-
-/**
- * Inspect token scopes + app id (for Meta App Review debugging).
- */
-async function debugAccessToken(accessToken) {
-  const { appId, appSecret } = getFacebookConfig();
-
-  try {
-    const response = await axios.get(`${GRAPH_BASE_URL}/debug_token`, {
-      params: {
-        input_token: accessToken,
-        access_token: `${appId}|${appSecret}`,
-      },
-      timeout: 15000,
-    });
-
-    const data = response.data?.data || {};
-    return {
-      appId: data.app_id ? String(data.app_id) : null,
-      isValid: Boolean(data.is_valid),
-      scopes: Array.isArray(data.scopes) ? data.scopes : [],
-      userId: data.user_id ? String(data.user_id) : null,
-      expiresAt: data.expires_at || null,
-    };
-  } catch (error) {
-    throw wrapGraphError(error, "Failed to debug Facebook access token.");
-  }
-}
-
 module.exports = {
   FACEBOOK_SCOPES,
   getFacebookConfig,
@@ -384,6 +333,4 @@ module.exports = {
   postImageToPage,
   listPagePosts,
   deletePagePost,
-  readPageEngagement,
-  debugAccessToken,
 };

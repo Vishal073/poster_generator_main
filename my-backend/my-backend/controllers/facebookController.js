@@ -18,7 +18,7 @@ const {
   postPosterForUser,
   listPostsForUser,
   deletePostForUser,
-  runMetaReviewTestForUser,
+  getFacebookStatusByUserIds,
   buildFacebookConnectUrl,
 } = require("../services/facebookPostService");
 
@@ -585,26 +585,6 @@ async function deleteFacebookPostForUser(req, res) {
   }
 }
 
-async function runMetaReviewTest(req, res) {
-  try {
-    const userId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
-
-    await resolveAppUserId(userId);
-
-    const result = await runMetaReviewTestForUser({ userId });
-
-    return res.status(200).json({
-      success: true,
-      message:
-        "Meta App Review API test calls completed. Wait 15–30 minutes, then check Meta dashboard.",
-      ...result,
-    });
-  } catch (error) {
-    console.error("[Facebook OAuth] runMetaReviewTest failed:", error.message);
-    return sendError(res, error, "Unable to run Meta App Review API test for this user.");
-  }
-}
-
 /**
  * POST /facebook/post-image
  * Low-level endpoint with explicit pageId + pageAccessToken (testing).
@@ -688,6 +668,5 @@ module.exports = {
   postFacebookForUser,
   listFacebookPostsForUser,
   deleteFacebookPostForUser,
-  runMetaReviewTest,
   postFacebookImage,
 };
