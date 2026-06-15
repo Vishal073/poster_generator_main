@@ -212,46 +212,97 @@ function mapGraphPages(rawPages) {
 
 /**
  * Instagram Business account linked to a Facebook Page (if any).
+ * Tries Page token first, then user token — some linked Pages only resolve with user token.
  */
-async function fetchInstagramAccountForPage({ pageId, pageAccessToken }) {
-  if (!pageId || !pageAccessToken) {
+async function fetchInstagramAccountForPage({ pageId, pageAccessToken, userAccessToken }) {
+  if (!pageId) {
     return null;
   }
 
-  try {
-    const response = await axios.get(`${GRAPH_BASE_URL}/${pageId}`, {
-      params: {
-        fields: "instagram_business_account{id,username,name}",
-        access_token: pageAccessToken,
-      },
-      timeout: 15000,
-    });
+  const accessTokens = [pageAccessToken, userAccessToken]
+    .filter((token) => typeof token === "string" && token.trim())
+    .map((token) => token.trim())
+    .filter((token, index, list) => list.indexOf(token) === index);
 
-    const ig = response.data?.instagram_business_account;
-    if (!ig?.id) {
-      return null;
+  if (!accessTokens.length) {
+    return null;
+  }
+
+  let lastErrorMessage = null;
+
+  for (const accessToken of accessTokens) {
+    try {
+      const response = await axios.get(`${GRAPH_BASE_URL}/${pageId}`, {
+        params: {
+          fields: "instagram_business_account{id,username,name}",
+          access_token: accessToken,
+        },
+        timeout: 15000,
+      });
+
+      const ig = response.data?.instagram_business_account;
+      if (!ig?.id) {
+        continue;
+      }
+
+      let username = typeof ig.username === "string" ? ig.username : "";
+      let name = typeof ig.name === "string" ? ig.name : "";
+
+      if (!username) {
+        try {
+          const profileResponse = await axios.get(`${GRAPH_BASE_URL}/${ig.id}`, {
+            params: {
+              fields: "username,name",
+              access_token: accessToken,
+            },
+            timeout: 15000,
+          });
+          username =
+            typeof profileResponse.data?.username === "string"
+              ? profileResponse.data.username
+              : username;
+          name =
+            typeof profileResponse.data?.name === "string"
+              ? profileResponse.data.name
+              : name;
+        } catch (profileError) {
+          console.warn(
+            `[Instagram] Loaded ig id for Page ${pageId} but username fetch failed:`,
+            getGraphErrorMessage(profileError),
+          );
+        }
+      }
+
+      return {
+        igUserId: String(ig.id),
+        username,
+        name: name || username || "",
+      };
+    } catch (error) {
+      lastErrorMessage = getGraphErrorMessage(error);
+      console.warn(
+        `[Instagram] Could not load linked account for Page ${pageId}:`,
+        lastErrorMessage,
+      );
     }
-
-    return {
-      igUserId: String(ig.id),
-      username: typeof ig.username === "string" ? ig.username : "",
-      name: typeof ig.name === "string" ? ig.name : ig.username || "",
-    };
-  } catch (error) {
-    console.warn(
-      `[Instagram] No linked account for Page ${pageId}:`,
-      getGraphErrorMessage(error),
-    );
-    return null;
   }
+
+  if (lastErrorMessage) {
+    console.warn(
+      `[Instagram] No linked account for Page ${pageId} after token attempts. Last error: ${lastErrorMessage}`,
+    );
+  }
+
+  return null;
 }
 
-async function enrichPagesWithInstagram(pages) {
+async function enrichPagesWithInstagram(pages, userAccessToken) {
   return Promise.all(
     pages.map(async (page) => {
       const instagramAccount = await fetchInstagramAccountForPage({
         pageId: page.pageId,
         pageAccessToken: page.pageAccessToken,
+        userAccessToken,
       });
       return {
         ...page,

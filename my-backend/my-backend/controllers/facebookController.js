@@ -173,7 +173,8 @@ async function handleFacebookCallback(req, res) {
     const longLived = await exchangeForLongLivedToken(shortLived.accessToken);
 
     const facebookUser = await fetchFacebookUserId(longLived.accessToken);
-    const pages = await enrichPagesWithInstagram(await fetchUserPages(longLived.accessToken));
+    const rawPages = await fetchUserPages(longLived.accessToken);
+    const pages = await enrichPagesWithInstagram(rawPages, longLived.accessToken);
 
     if (!pages.length) {
       const userIdQuery = appUserId ? `&userId=${appUserId}` : "";
@@ -231,7 +232,8 @@ async function syncConnectionPagesFromFacebook(connection) {
     throw error;
   }
 
-  const pages = await enrichPagesWithInstagram(await fetchUserPages(connection.userAccessToken));
+  const rawPages = await fetchUserPages(connection.userAccessToken);
+  const pages = await enrichPagesWithInstagram(rawPages, connection.userAccessToken);
   connection.pages = pages;
 
   if (connection.selectedPage?.pageId) {

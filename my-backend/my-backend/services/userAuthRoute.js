@@ -84,8 +84,8 @@ router.post("/auth/user/login-link", requireAuth, requireDb, async (req, res) =>
     if (sendWhatsApp) {
       const message =
         `Hi ${user.name},\n\n` +
-        `Apna poster account kholo (password nahi chahiye):\n${loginUrl}\n\n` +
-        `Facebook connect ke liye: link ko pehle Chrome/Safari mein kholo (WhatsApp mein ⋮ → Browser mein open karo), phir Connect Facebook dabao — tab Facebook app / saved login use hogi.`;
+        `Open your poster account (no password needed):\n${loginUrl}\n\n` +
+        `To connect Facebook: open this link in Chrome or Safari first (in WhatsApp, tap ⋮ → Open in browser), then tap Connect Facebook so your phone can use the Facebook app or saved login.`;
 
       whatsappResult = await sendWhatsAppText({
         toMobile: user.mobileNumber,
