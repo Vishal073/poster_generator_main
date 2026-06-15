@@ -47,6 +47,44 @@ function resolveReturnTo(value) {
   return value === "portal" ? "portal" : "admin";
 }
 
+function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}) {
+  const apiBase =
+    typeof process.env.API_BASE_URL === "string" && process.env.API_BASE_URL.trim()
+      ? process.env.API_BASE_URL.trim()
+      : undefined;
+  const params = new URLSearchParams({
+    userId: String(userId),
+    returnTo: resolveReturnTo(returnTo),
+  });
+  if (options.reconnect) {
+    params.set("reconnect", "1");
+  }
+  if (options.mobile) {
+    params.set("mobile", "1");
+  }
+  const base = buildFacebookConnectUrl(String(userId), apiBase).split("?")[0];
+  return `${base}?${params.toString()}`;
+}
+
+function sanitizePagesForStorage(pages) {
+  return (Array.isArray(pages) ? pages : []).map((page) => ({
+    pageId: String(page.pageId || ""),
+    pageName: typeof page.pageName === "string" ? page.pageName : "Unnamed Page",
+    pageAccessToken: typeof page.pageAccessToken === "string" ? page.pageAccessToken : "",
+    instagramAccount: page.instagramAccount?.igUserId
+      ? {
+          igUserId: String(page.instagramAccount.igUserId),
+          username:
+            typeof page.instagramAccount.username === "string"
+              ? page.instagramAccount.username
+              : "",
+          name:
+            typeof page.instagramAccount.name === "string" ? page.instagramAccount.name : "",
+        }
+      : null,
+  }));
+}
+
 function isValidObjectId(value) {
   if (typeof value !== "string" || !mongoose.Types.ObjectId.isValid(value)) {
     return false;
@@ -216,20 +254,35 @@ async function handleFacebookCallback(req, res) {
       ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       : new Date(Date.now() + CONNECTION_TTL_MS);
 
-    // One Facebook connection per app user — reconnecting updates the same document
-    await FacebookConnection.findOneAndUpdate(
-      { userId: oauthStateDoc.userId },
-      {
-        sessionId,
-        userId: oauthStateDoc.userId,
-        facebookUserId: facebookUser.id,
-        userAccessToken: longLived.accessToken,
-        pages,
-        selectedPage: autoSelectedPage ? buildSelectedPageSnapshot(autoSelectedPage) : null,
-        expiresAt: connectionExpiresAt,
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
+    const storedPages = sanitizePagesForStorage(pages);
+    const storedSelectedPage = autoSelectedPage
+      ? buildSelectedPageSnapshot(sanitizePagesForStorage([autoSelectedPage])[0])
+      : null;
+
+    try {
+      await FacebookConnection.findOneAndUpdate(
+        { userId: oauthStateDoc.userId },
+        {
+          sessionId,
+          userId: oauthStateDoc.userId,
+          facebookUserId: facebookUser.id,
+          userAccessToken: longLived.accessToken,
+          pages: storedPages,
+          selectedPage: storedSelectedPage,
+          expiresAt: connectionExpiresAt,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
+      );
+    } catch (saveError) {
+      console.error("[Facebook OAuth] Failed to save FacebookConnection:", saveError.message);
+      const returnToQuery =
+        oauthStateDoc.returnTo === "portal" ? "&returnTo=portal" : "";
+      return res.redirect(
+        `${frontendUrl}${pagesPath}?error=${encodeURIComponent(
+          "Could not save Facebook connection. Try Connect Facebook again.",
+        )}&userId=${appUserId}${returnToQuery}`,
+      );
+    }
 
     const returnToQuery =
       oauthStateDoc.returnTo === "portal" ? "&returnTo=portal" : "";
@@ -311,6 +364,8 @@ async function getFacebookPages(req, res) {
       typeof req.query.sessionId === "string" ? req.query.sessionId.trim() : "";
     const userIdParam =
       typeof req.query.userId === "string" ? req.query.userId.trim() : "";
+    const returnToParam =
+      typeof req.query.returnTo === "string" ? req.query.returnTo.trim() : "";
     const shouldRefresh = String(req.query.refresh || "").trim() === "true";
 
     if (!sessionId && !userIdParam) {
@@ -335,11 +390,19 @@ async function getFacebookPages(req, res) {
     }
 
     if (!connection) {
+      const returnTo = resolveReturnTo(returnToParam);
+      const connectUrl =
+        userIdParam && isValidObjectId(userIdParam)
+          ? buildOAuthConnectUrl(userIdParam, returnTo, { reconnect: true })
+          : undefined;
+
       return res.status(404).json({
         success: false,
         message: sessionId
           ? "Facebook session not found or expired. Tap Connect Facebook again in the same browser tab."
           : "No Facebook connection for this user. Tap Connect Facebook first — do not open the page picker directly.",
+        connectUrl,
+        userId: userIdParam || undefined,
       });
     }
 
