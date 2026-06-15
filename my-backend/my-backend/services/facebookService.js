@@ -17,6 +17,11 @@ const FACEBOOK_SCOPES = (
   ].join(",")
 ).trim();
 
+function getFacebookLoginConfigId() {
+  const raw = process.env.FACEBOOK_LOGIN_CONFIG_ID;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
 function normalizeRedirectUri(value) {
   if (!value || typeof value !== "string") {
     return "";
@@ -65,14 +70,22 @@ function buildFacebookOAuthUrl(state, options = {}) {
   const { appId, redirectUri } = getFacebookConfig();
   const useMobile = Boolean(options.mobile);
   const reconnect = Boolean(options.reconnect);
+  const configId = getFacebookLoginConfigId();
 
   const params = new URLSearchParams({
     client_id: appId,
     redirect_uri: redirectUri,
     state,
-    scope: FACEBOOK_SCOPES,
     response_type: "code",
   });
+
+  // Business-type Meta apps often require Facebook Login for Business (config_id).
+  // When set, Meta shows Page/asset picker — required or /me/accounts returns empty.
+  if (configId) {
+    params.set("config_id", configId);
+  } else {
+    params.set("scope", FACEBOOK_SCOPES);
+  }
 
   if (useMobile) {
     params.set("display", "touch");
@@ -313,36 +326,118 @@ async function enrichPagesWithInstagram(pages, userAccessToken) {
 }
 
 /**
+ * Inspect granted scopes (and which Pages were selected on the OAuth screen).
+ */
+async function debugAccessToken(inputToken) {
+  try {
+    const { appId, appSecret } = getFacebookConfig();
+    const response = await axios.get(`${GRAPH_BASE_URL}/debug_token`, {
+      params: {
+        input_token: inputToken,
+        access_token: `${appId}|${appSecret}`,
+      },
+      timeout: 15000,
+    });
+
+    const data = response.data?.data;
+    return {
+      isValid: Boolean(data?.is_valid),
+      userId: data?.user_id ? String(data.user_id) : null,
+      scopes: Array.isArray(data?.scopes) ? data.scopes : [],
+      granularScopes: Array.isArray(data?.granular_scopes) ? data.granular_scopes : [],
+    };
+  } catch (error) {
+    console.warn("[Facebook OAuth] debug_token failed:", getGraphErrorMessage(error));
+    return null;
+  }
+}
+
+function buildEmptyPagesHelpMessage({ facebookUser, debugInfo }) {
+  const parts = [
+    "No Facebook Pages were returned for this login.",
+    facebookUser?.name
+      ? `Facebook account: ${facebookUser.name}.`
+      : "Use the Facebook profile that is Admin or Editor on your Page (not Instagram login).",
+    "During Connect Facebook, on Meta's screen you must select which Page(s) to allow — check your Page and tap Continue.",
+    "Confirm you are Admin on the Page at facebook.com/pages.",
+  ];
+
+  if (debugInfo) {
+    if (!debugInfo.scopes.includes("pages_show_list")) {
+      parts.push("Missing pages_show_list permission — reconnect and approve all permissions.");
+    }
+
+    const pagesScope = debugInfo.granularScopes.find(
+      (entry) =>
+        typeof entry?.scope === "string" &&
+        (entry.scope === "pages_show_list" || entry.scope.startsWith("pages_")),
+    );
+    const targetIds = Array.isArray(pagesScope?.target_ids) ? pagesScope.target_ids : null;
+    if (pagesScope && targetIds && targetIds.length === 0) {
+      parts.push("You skipped Page selection on the Facebook permission screen. Reconnect and select your Page.");
+    }
+  }
+
+  return parts.join(" ");
+}
+
+/**
  * Fetch all Pages the user manages (follows Graph API paging).
  */
-async function fetchUserPages(userAccessToken) {
+async function fetchUserPagesFromAccountsEndpoint(userAccessToken) {
   const allPages = [];
   let requestUrl = `${GRAPH_BASE_URL}/me/accounts`;
   let requestParams = {
-    fields: "id,name,access_token",
+    fields: "id,name,access_token,tasks",
     access_token: userAccessToken,
     limit: 100,
   };
 
-  try {
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-      const response = await axios.get(requestUrl, {
-        params: requestParams,
-        timeout: 15000,
-      });
+  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    const response = await axios.get(requestUrl, {
+      params: requestParams,
+      timeout: 15000,
+    });
 
-      const rawPages = Array.isArray(response.data?.data) ? response.data.data : [];
-      allPages.push(...mapGraphPages(rawPages));
+    const rawPages = Array.isArray(response.data?.data) ? response.data.data : [];
+    allPages.push(...mapGraphPages(rawPages));
 
-      const nextUrl = response.data?.paging?.next;
-      if (!nextUrl || typeof nextUrl !== "string") {
-        break;
-      }
-
-      requestUrl = nextUrl;
-      requestParams = undefined;
+    const nextUrl = response.data?.paging?.next;
+    if (!nextUrl || typeof nextUrl !== "string") {
+      break;
     }
 
+    requestUrl = nextUrl;
+    requestParams = undefined;
+  }
+
+  return allPages;
+}
+
+async function fetchUserPagesFromMeField(userAccessToken) {
+  const response = await axios.get(`${GRAPH_BASE_URL}/me`, {
+    params: {
+      fields: "accounts.limit(100){id,name,access_token}",
+      access_token: userAccessToken,
+    },
+    timeout: 15000,
+  });
+
+  const rawPages = Array.isArray(response.data?.accounts?.data)
+    ? response.data.accounts.data
+    : [];
+  return mapGraphPages(rawPages);
+}
+
+/**
+ * Fetch all Pages the user manages (follows Graph API paging).
+ */
+async function fetchUserPages(userAccessToken) {
+  try {
+    let allPages = await fetchUserPagesFromAccountsEndpoint(userAccessToken);
+    if (!allPages.length) {
+      allPages = await fetchUserPagesFromMeField(userAccessToken);
+    }
     return allPages;
   } catch (error) {
     throw wrapGraphError(error, "Failed to fetch Facebook Pages.");
@@ -485,6 +580,7 @@ async function postImageToInstagram({ igUserId, pageAccessToken, imageUrl, capti
 
 module.exports = {
   FACEBOOK_SCOPES,
+  getFacebookLoginConfigId,
   getFacebookConfig,
   buildFacebookOAuthUrl,
   createOAuthState,
@@ -499,4 +595,6 @@ module.exports = {
   postImageToInstagram,
   listPagePosts,
   deletePagePost,
+  debugAccessToken,
+  buildEmptyPagesHelpMessage,
 };

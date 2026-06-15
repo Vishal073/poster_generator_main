@@ -5,6 +5,7 @@ const User = require("../models/User");
 const {
   buildFacebookOAuthUrl,
   getFacebookConfig,
+  getFacebookLoginConfigId,
   FACEBOOK_SCOPES,
   createOAuthState,
   createSessionId,
@@ -15,6 +16,8 @@ const {
   enrichPagesWithInstagram,
   fetchInstagramAccountForPage,
   postImageToPage,
+  debugAccessToken,
+  buildEmptyPagesHelpMessage,
 } = require("../services/facebookService");
 const {
   postPosterForUser,
@@ -24,6 +27,7 @@ const {
   deletePostForUser,
   getFacebookStatusByUserIds,
   buildFacebookConnectUrl,
+  resolvePublicApiBaseUrl,
 } = require("../services/facebookPostService");
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -47,11 +51,7 @@ function resolveReturnTo(value) {
   return value === "portal" ? "portal" : "admin";
 }
 
-function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}) {
-  const apiBase =
-    typeof process.env.API_BASE_URL === "string" && process.env.API_BASE_URL.trim()
-      ? process.env.API_BASE_URL.trim()
-      : undefined;
+function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}, req = null) {
   const params = new URLSearchParams({
     userId: String(userId),
     returnTo: resolveReturnTo(returnTo),
@@ -62,7 +62,7 @@ function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}) {
   if (options.mobile) {
     params.set("mobile", "1");
   }
-  const base = buildFacebookConnectUrl(String(userId), apiBase).split("?")[0];
+  const base = buildFacebookConnectUrl(String(userId), undefined, req).split("?")[0];
   return `${base}?${params.toString()}`;
 }
 
@@ -169,9 +169,43 @@ async function startFacebookAuth(req, res) {
  * GET /auth/facebook/callback
  * Handles Facebook redirect, exchanges tokens, loads Pages, then sends user to frontend.
  */
+async function persistFacebookConnection({
+  userId,
+  facebookUserId,
+  userAccessToken,
+  pages,
+  selectedPage,
+  expiresAt,
+}) {
+  const sessionId = createSessionId();
+  const storedPages = sanitizePagesForStorage(pages || []);
+  const storedSelectedPage = selectedPage
+    ? buildSelectedPageSnapshot(
+        sanitizePagesForStorage([selectedPage])[0] || selectedPage,
+      )
+    : null;
+
+  await FacebookConnection.findOneAndUpdate(
+    { userId },
+    {
+      sessionId,
+      userId,
+      facebookUserId,
+      userAccessToken,
+      pages: storedPages,
+      selectedPage: storedSelectedPage,
+      expiresAt,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
+  );
+
+  return sessionId;
+}
+
 async function handleFacebookCallback(req, res) {
-  const frontendUrl = getFrontendUrl();
+  let frontendUrl = getFrontendUrl();
   let pagesPath = "/facebook/pages";
+  let appUserId = "";
 
   try {
     const oauthError = typeof req.query.error === "string" ? req.query.error : "";
@@ -203,7 +237,7 @@ async function handleFacebookCallback(req, res) {
     }
 
     pagesPath = getFacebookPagesPath(oauthStateDoc.returnTo);
-    const frontendUrl = getFrontendUrl(oauthStateDoc.returnTo);
+    frontendUrl = getFrontendUrl(oauthStateDoc.returnTo);
 
     if (!oauthStateDoc.userId) {
       return res.redirect(
@@ -211,7 +245,7 @@ async function handleFacebookCallback(req, res) {
       );
     }
 
-    const appUserId = String(oauthStateDoc.userId);
+    appUserId = String(oauthStateDoc.userId);
 
     // Exchange authorization code -> short-lived token -> long-lived token
     const shortLived = await exchangeCodeForShortLivedToken(code);
@@ -222,17 +256,42 @@ async function handleFacebookCallback(req, res) {
     const pages = await enrichPagesWithInstagram(rawPages, longLived.accessToken);
 
     if (!pages.length) {
-      const userIdQuery = appUserId ? `&userId=${appUserId}` : "";
+      const debugInfo = await debugAccessToken(longLived.accessToken);
+      console.warn("[Facebook OAuth] No pages for user", {
+        facebookUserId: facebookUser.id,
+        facebookUserName: facebookUser.name,
+        scopes: debugInfo?.scopes || [],
+        granularScopes: debugInfo?.granularScopes || [],
+      });
+
+      const helpMessage = buildEmptyPagesHelpMessage({ facebookUser, debugInfo });
       const returnToQuery =
         oauthStateDoc.returnTo === "portal" ? "&returnTo=portal" : "";
+
+      let emptyPagesSessionId = "";
+      try {
+        emptyPagesSessionId = await persistFacebookConnection({
+          userId: oauthStateDoc.userId,
+          facebookUserId: facebookUser.id,
+          userAccessToken: longLived.accessToken,
+          pages: [],
+          selectedPage: null,
+          expiresAt: new Date(Date.now() + CONNECTION_TTL_MS),
+        });
+      } catch (saveError) {
+        console.error(
+          "[Facebook OAuth] Failed to save empty-pages connection:",
+          saveError.message,
+        );
+      }
+
+      const sessionQuery = emptyPagesSessionId
+        ? `sessionId=${emptyPagesSessionId}&`
+        : "";
       return res.redirect(
-        `${frontendUrl}${pagesPath}?error=${encodeURIComponent(
-          "No Facebook Pages found. Log in with a Facebook account that manages a Page (Admin/Editor), then try again.",
-        )}${userIdQuery}${returnToQuery}`,
+        `${frontendUrl}${pagesPath}?${sessionQuery}userId=${appUserId}&error=${encodeURIComponent(helpMessage)}${returnToQuery}`,
       );
     }
-
-    const sessionId = createSessionId();
 
     // If user has only one Page, auto-select it (no extra click on /facebook/pages)
     let autoSelectedPage = pages.length === 1 ? pages[0] : null;
@@ -254,25 +313,16 @@ async function handleFacebookCallback(req, res) {
       ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       : new Date(Date.now() + CONNECTION_TTL_MS);
 
-    const storedPages = sanitizePagesForStorage(pages);
-    const storedSelectedPage = autoSelectedPage
-      ? buildSelectedPageSnapshot(sanitizePagesForStorage([autoSelectedPage])[0])
-      : null;
-
+    let sessionId = "";
     try {
-      await FacebookConnection.findOneAndUpdate(
-        { userId: oauthStateDoc.userId },
-        {
-          sessionId,
-          userId: oauthStateDoc.userId,
-          facebookUserId: facebookUser.id,
-          userAccessToken: longLived.accessToken,
-          pages: storedPages,
-          selectedPage: storedSelectedPage,
-          expiresAt: connectionExpiresAt,
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
-      );
+      sessionId = await persistFacebookConnection({
+        userId: oauthStateDoc.userId,
+        facebookUserId: facebookUser.id,
+        userAccessToken: longLived.accessToken,
+        pages,
+        selectedPage: autoSelectedPage,
+        expiresAt: connectionExpiresAt,
+      });
     } catch (saveError) {
       console.error("[Facebook OAuth] Failed to save FacebookConnection:", saveError.message);
       const returnToQuery =
@@ -293,7 +343,8 @@ async function handleFacebookCallback(req, res) {
   } catch (error) {
     console.error("[Facebook OAuth] handleFacebookCallback failed:", error.message);
     const message = encodeURIComponent(error.message || "Facebook authentication failed.");
-    return res.redirect(`${frontendUrl}${pagesPath}?error=${message}`);
+    const userIdQuery = appUserId ? `&userId=${appUserId}` : "";
+    return res.redirect(`${frontendUrl}${pagesPath}?error=${message}${userIdQuery}`);
   }
 }
 
@@ -393,14 +444,14 @@ async function getFacebookPages(req, res) {
       const returnTo = resolveReturnTo(returnToParam);
       const connectUrl =
         userIdParam && isValidObjectId(userIdParam)
-          ? buildOAuthConnectUrl(userIdParam, returnTo, { reconnect: true })
+          ? buildOAuthConnectUrl(userIdParam, returnTo, { reconnect: true }, req)
           : undefined;
 
       return res.status(404).json({
         success: false,
         message: sessionId
           ? "Facebook session not found or expired. Tap Connect Facebook again in the same browser tab."
-          : "No Facebook connection for this user. Tap Connect Facebook first — do not open the page picker directly.",
+          : "No Facebook connection yet. Go to your account and tap Connect Facebook — do not open the page picker URL directly.",
         connectUrl,
         userId: userIdParam || undefined,
       });
@@ -620,7 +671,7 @@ async function getFacebookConnectUrl(req, res) {
     return res.status(200).json({
       success: true,
       userId: user._id,
-      connectUrl: buildFacebookConnectUrl(String(user._id), apiBase),
+      connectUrl: buildFacebookConnectUrl(String(user._id), apiBase, req),
     });
   } catch (error) {
     console.error("[Facebook OAuth] getFacebookConnectUrl failed:", error.message);
@@ -724,22 +775,50 @@ async function getFacebookOAuthConfig(req, res) {
         ? `${appId.slice(0, 4)}…${appId.slice(-4)}`
         : "not-set";
 
+    const configId = getFacebookLoginConfigId();
+    const maskedConfigId =
+      configId && configId.length > 6
+        ? `${configId.slice(0, 3)}…${configId.slice(-3)}`
+        : configId || null;
+    const apiBaseUrl = resolvePublicApiBaseUrl(req);
+    const adminFrontendUrl = getFrontendUrl("admin");
+    const portalFrontendUrl = getFrontendUrl("portal");
+    const warnings = [];
+
+    if (!configId) {
+      warnings.push("FACEBOOK_LOGIN_CONFIG_ID is missing — Meta may return zero Pages for Business apps.");
+    }
+    if (adminFrontendUrl.includes("localhost")) {
+      warnings.push("FRONTEND_URL points to localhost — OAuth will redirect users to localhost after login.");
+    }
+    if (!process.env.API_BASE_URL?.trim() && apiBaseUrl.includes("localhost")) {
+      warnings.push("API_BASE_URL is unset and request host could not be detected — connectUrl may point to localhost.");
+    }
+
     return res.status(200).json({
       success: true,
-      message:
-        "Copy redirectUri into Meta → Facebook Login → Valid OAuth Redirect URIs (exact match).",
+      message: configId
+        ? "Using Facebook Login for Business (config_id). Pages should appear after user selects them on Meta's screen."
+        : "No FACEBOOK_LOGIN_CONFIG_ID set — using scope-based login. Business apps: create a Login for Business configuration in Meta.",
       appId: maskedAppId,
       redirectUri,
-      scopes: FACEBOOK_SCOPES,
+      apiBaseUrl,
+      adminFrontendUrl,
+      portalFrontendUrl,
+      loginConfigId: maskedConfigId,
+      usesLoginForBusiness: Boolean(configId),
+      scopes: configId ? null : FACEBOOK_SCOPES,
+      warnings,
       metaChecklist: [
         "Client OAuth Login = ON",
         "Web OAuth Login = ON",
         "Valid OAuth Redirect URIs includes redirectUri above (no trailing slash)",
         "App Domains: backend + admin hostnames (no https://)",
-        "instagram_basic",
-        "instagram_content_publish",
-        "Render FACEBOOK_REDIRECT_URI must equal redirectUri exactly",
-        "Reconnect Facebook after adding Instagram permissions",
+        "Facebook Login for Business → Configurations → User token → select Pages asset",
+        "Permissions: pages_show_list, pages_manage_posts, pages_read_engagement, instagram_basic, instagram_content_publish",
+        "Copy Configuration ID → Render env FACEBOOK_LOGIN_CONFIG_ID",
+        "During login user MUST tick their Page on Meta's screen",
+        "Reconnect Facebook after env changes",
       ],
     });
   } catch (error) {

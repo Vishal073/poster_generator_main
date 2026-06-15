@@ -200,11 +200,34 @@ async function getFacebookStatusByUserIds(userIds) {
   return map;
 }
 
-function buildFacebookConnectUrl(userId, apiBaseUrl) {
-  const base = (apiBaseUrl || process.env.API_BASE_URL || "http://localhost:5000").replace(
-    /\/$/,
-    "",
-  );
+function resolvePublicApiBaseUrl(req) {
+  const fromEnv =
+    typeof process.env.API_BASE_URL === "string" ? process.env.API_BASE_URL.trim() : "";
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, "");
+  }
+
+  if (req && typeof req.get === "function") {
+    const forwardedHost = req.get("x-forwarded-host");
+    const forwardedProto = req.get("x-forwarded-proto");
+    if (forwardedHost) {
+      const host = forwardedHost.split(",")[0].trim();
+      const proto = (forwardedProto || "https").split(",")[0].trim();
+      return `${proto}://${host}`.replace(/\/$/, "");
+    }
+
+    const host = req.get("host");
+    if (host) {
+      const proto = req.protocol || "http";
+      return `${proto}://${host}`.replace(/\/$/, "");
+    }
+  }
+
+  return "http://localhost:5000";
+}
+
+function buildFacebookConnectUrl(userId, apiBaseUrl, req) {
+  const base = (apiBaseUrl || resolvePublicApiBaseUrl(req)).replace(/\/$/, "");
   return `${base}/auth/facebook?userId=${encodeURIComponent(userId)}`;
 }
 
@@ -216,5 +239,6 @@ module.exports = {
   deletePostForUser,
   getFacebookStatusByUserIds,
   buildFacebookConnectUrl,
+  resolvePublicApiBaseUrl,
   isValidObjectId,
 };
