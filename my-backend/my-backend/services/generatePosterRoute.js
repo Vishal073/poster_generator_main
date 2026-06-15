@@ -13,7 +13,7 @@ const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const User = require("../models/User");
 const { sendWhatsAppImageSmart } = require("./whatsappTemplateService");
-const { postPosterForUser } = require("./facebookPostService");
+const { postPosterForUser, postPosterToInstagramForUser } = require("./facebookPostService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
@@ -306,11 +306,21 @@ async function generatePoster(req, res) {
     const shouldUploadFacebook = isTruthyParam(
       body.uploadToFacebook ?? body.postToFacebook ?? body.facebook,
     );
+    const shouldUploadInstagram = isTruthyParam(
+      body.uploadToInstagram ?? body.postToInstagram ?? body.instagram,
+    );
 
     if (shouldUploadFacebook && !resolvedUserId) {
       return res.status(400).json({
         success: false,
         message: "userId is required when uploadToFacebook is true.",
+      });
+    }
+
+    if (shouldUploadInstagram && !resolvedUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "userId is required when uploadToInstagram is true.",
       });
     }
 
@@ -339,6 +349,33 @@ async function generatePoster(req, res) {
       }
     }
 
+    let instagramResult;
+    if (shouldUploadInstagram && resolvedUserId) {
+      try {
+        const posted = await postPosterToInstagramForUser({
+          userId: resolvedUserId,
+          imageUrl: uploadResult.imageUrl,
+          caption:
+            typeof body.instagramCaption === "string"
+              ? body.instagramCaption
+              : typeof body.facebookCaption === "string"
+                ? body.facebookCaption
+                : typeof body.caption === "string"
+                  ? body.caption
+                  : "",
+        });
+        instagramResult = {
+          success: true,
+          ...posted,
+        };
+      } catch (error) {
+        instagramResult = {
+          success: false,
+          message: getErrorMessage(error),
+        };
+      }
+    }
+
     // Gmail send disabled. To re-enable, call sendPosterEmail(...) here.
     // const emailResult = await sendPosterEmail({ toEmail: email, posterBuffer: posterResult.buffer, fileName: imageName });
 
@@ -351,6 +388,9 @@ async function generatePoster(req, res) {
         ? "Poster generated, uploaded, sent to WhatsApp, and posted to Facebook."
         : "Poster generated, uploaded, and posted to Facebook.";
     }
+    if (shouldUploadInstagram && instagramResult?.success) {
+      responseMessage = `${responseMessage.replace(/\.$/, "")} and posted to Instagram.`;
+    }
 
     return res.status(200).json({
       success: true,
@@ -360,6 +400,7 @@ async function generatePoster(req, res) {
       mobile: hasMobile ? String(mobileValue).trim() : undefined,
       sendWhatsApp: shouldSendWhatsApp,
       uploadToFacebook: shouldUploadFacebook,
+      uploadToInstagram: shouldUploadInstagram,
       imageName,
       fileName: imageName,
       imageUrl: uploadResult.imageUrl,
@@ -372,6 +413,7 @@ async function generatePoster(req, res) {
       aiModel: enhancement.aiModel || undefined,
       whatsapp: whatsappResult,
       facebook: facebookResult,
+      instagram: instagramResult,
     });
   } catch (error) {
     return res.status(500).json({
@@ -558,6 +600,9 @@ router.post(
       const shouldUploadFacebook = isTruthyParam(
         body.uploadToFacebook ?? body.postToFacebook ?? body.facebook,
       );
+      const shouldUploadInstagram = isTruthyParam(
+        body.uploadToInstagram ?? body.postToInstagram ?? body.instagram,
+      );
       const posterSources = resolvePosterSources(body);
       const language =
         typeof body.language === "string" && body.language.trim()
@@ -738,6 +783,28 @@ router.post(
             }
           }
 
+          let instagramResult;
+          if (shouldUploadInstagram) {
+            try {
+              const posted = await postPosterToInstagramForUser({
+                userId: String(userId),
+                imageUrl: uploadResult.imageUrl,
+                caption:
+                  typeof body.instagramCaption === "string"
+                    ? body.instagramCaption
+                    : typeof body.facebookCaption === "string"
+                      ? body.facebookCaption
+                      : "",
+              });
+              instagramResult = { success: true, ...posted };
+            } catch (error) {
+              instagramResult = {
+                success: false,
+                message: getErrorMessage(error),
+              };
+            }
+          }
+
           results.push({
             userId,
             name: user.name,
@@ -754,6 +821,7 @@ router.post(
             aiProvider: enhancement.aiProvider || undefined,
             aiModel: enhancement.aiModel || undefined,
             facebook: facebookResult,
+            instagram: instagramResult,
           });
         } catch (error) {
           results.push({

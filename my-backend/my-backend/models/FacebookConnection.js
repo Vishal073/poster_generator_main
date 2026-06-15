@@ -9,6 +9,17 @@ const facebookPageSchema = new mongoose.Schema(
     pageId: { type: String, required: true, trim: true },
     pageName: { type: String, required: true, trim: true },
     pageAccessToken: { type: String, required: true, trim: true },
+    instagramAccount: {
+      type: new mongoose.Schema(
+        {
+          igUserId: { type: String, required: true, trim: true },
+          username: { type: String, trim: true, default: "" },
+          name: { type: String, trim: true, default: "" },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
   },
   { _id: false },
 );

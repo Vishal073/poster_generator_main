@@ -12,10 +12,13 @@ const {
   exchangeForLongLivedToken,
   fetchFacebookUserId,
   fetchUserPages,
+  enrichPagesWithInstagram,
   postImageToPage,
 } = require("../services/facebookService");
 const {
   postPosterForUser,
+  postPosterToInstagramForUser,
+  buildSelectedPageSnapshot,
   listPostsForUser,
   deletePostForUser,
   getFacebookStatusByUserIds,
@@ -170,7 +173,7 @@ async function handleFacebookCallback(req, res) {
     const longLived = await exchangeForLongLivedToken(shortLived.accessToken);
 
     const facebookUser = await fetchFacebookUserId(longLived.accessToken);
-    const pages = await fetchUserPages(longLived.accessToken);
+    const pages = await enrichPagesWithInstagram(await fetchUserPages(longLived.accessToken));
 
     if (!pages.length) {
       const userIdQuery = appUserId ? `&userId=${appUserId}` : "";
@@ -200,13 +203,7 @@ async function handleFacebookCallback(req, res) {
         facebookUserId: facebookUser.id,
         userAccessToken: longLived.accessToken,
         pages,
-        selectedPage: autoSelectedPage
-          ? {
-              pageId: autoSelectedPage.pageId,
-              pageName: autoSelectedPage.pageName,
-              pageAccessToken: autoSelectedPage.pageAccessToken,
-            }
-          : null,
+        selectedPage: autoSelectedPage ? buildSelectedPageSnapshot(autoSelectedPage) : null,
         expiresAt: connectionExpiresAt,
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
@@ -234,7 +231,7 @@ async function syncConnectionPagesFromFacebook(connection) {
     throw error;
   }
 
-  const pages = await fetchUserPages(connection.userAccessToken);
+  const pages = await enrichPagesWithInstagram(await fetchUserPages(connection.userAccessToken));
   connection.pages = pages;
 
   if (connection.selectedPage?.pageId) {
@@ -242,16 +239,31 @@ async function syncConnectionPagesFromFacebook(connection) {
       (page) => page.pageId === connection.selectedPage.pageId,
     );
     if (refreshedSelected) {
-      connection.selectedPage = {
-        pageId: refreshedSelected.pageId,
-        pageName: refreshedSelected.pageName,
-        pageAccessToken: refreshedSelected.pageAccessToken,
-      };
+      connection.selectedPage = buildSelectedPageSnapshot(refreshedSelected);
     }
   }
 
   await connection.save();
   return pages;
+}
+
+function formatPageForApi(page) {
+  if (!page) {
+    return null;
+  }
+
+  return {
+    pageId: page.pageId,
+    pageName: page.pageName,
+    pageAccessToken: page.pageAccessToken,
+    instagramAccount: page.instagramAccount?.igUserId
+      ? {
+          igUserId: page.instagramAccount.igUserId,
+          username: page.instagramAccount.username || "",
+          name: page.instagramAccount.name || "",
+        }
+      : null,
+  };
 }
 
 function formatPagesResponse(connection) {
@@ -260,12 +272,8 @@ function formatPagesResponse(connection) {
     sessionId: connection.sessionId,
     userId: connection.userId,
     facebookUserId: connection.facebookUserId,
-    pages: (connection.pages || []).map((page) => ({
-      pageId: page.pageId,
-      pageName: page.pageName,
-      pageAccessToken: page.pageAccessToken,
-    })),
-    selectedPage: connection.selectedPage || null,
+    pages: (connection.pages || []).map((page) => formatPageForApi(page)),
+    selectedPage: formatPageForApi(connection.selectedPage),
   };
 }
 
@@ -383,11 +391,7 @@ async function saveSelectedPage(req, res) {
 
     const previousPageId = connection.selectedPage?.pageId || null;
 
-    connection.selectedPage = {
-      pageId: selectedPage.pageId,
-      pageName: selectedPage.pageName,
-      pageAccessToken: selectedPage.pageAccessToken,
-    };
+    connection.selectedPage = buildSelectedPageSnapshot(selectedPage);
 
     // Keep saved connections longer once a Page is chosen
     connection.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -398,14 +402,15 @@ async function saveSelectedPage(req, res) {
         ? `Facebook Page updated to ${selectedPage.pageName}.`
         : "Facebook Page saved successfully.";
 
+    const instagramNote = connection.selectedPage?.instagramAccount?.username
+      ? ` Instagram @${connection.selectedPage.instagramAccount.username} linked.`
+      : " No Instagram Business account linked to this Page.";
+
     return res.status(200).json({
       success: true,
-      message,
+      message: `${message}${instagramNote}`,
       userId: connection.userId,
-      selectedPage: {
-        pageId: connection.selectedPage.pageId,
-        pageName: connection.selectedPage.pageName,
-      },
+      selectedPage: formatPageForApi(connection.selectedPage),
     });
   } catch (error) {
     console.error("[Facebook OAuth] saveSelectedPage failed:", error.message);
@@ -420,14 +425,23 @@ async function saveSelectedPage(req, res) {
 async function getFacebookConnectionByUser(req, res) {
   try {
     const user = await resolveAppUserId(req.params.userId);
+    const shouldRefresh = String(req.query.refresh || "").trim() === "true";
 
-    const connection = await FacebookConnection.findOne({ userId: user._id }).lean();
+    let connection = await FacebookConnection.findOne({ userId: user._id });
     if (!connection) {
       return res.status(404).json({
         success: false,
         message: "No Facebook connection found for this user.",
         userId: user._id,
       });
+    }
+
+    if (shouldRefresh) {
+      try {
+        await syncConnectionPagesFromFacebook(connection);
+      } catch (error) {
+        return sendError(res, error, "Unable to refresh Facebook / Instagram connection.");
+      }
     }
 
     return res.status(200).json({
@@ -438,14 +452,12 @@ async function getFacebookConnectionByUser(req, res) {
       sessionId: connection.sessionId,
       facebookUserId: connection.facebookUserId,
       pagesCount: connection.pages?.length || 0,
-      selectedPage: connection.selectedPage
-        ? {
-            pageId: connection.selectedPage.pageId,
-            pageName: connection.selectedPage.pageName,
-          }
-        : null,
+      selectedPage: formatPageForApi(connection.selectedPage),
+      instagramConnected: Boolean(connection.selectedPage?.instagramAccount?.igUserId),
+      instagramUsername: connection.selectedPage?.instagramAccount?.username || null,
       connectedAt: connection.updatedAt,
       expiresAt: connection.expiresAt,
+      refreshed: shouldRefresh,
     });
   } catch (error) {
     console.error("[Facebook OAuth] getFacebookConnectionByUser failed:", error.message);
@@ -613,11 +625,36 @@ async function getFacebookOAuthConfig(req, res) {
         "Web OAuth Login = ON",
         "Valid OAuth Redirect URIs includes redirectUri above (no trailing slash)",
         "App Domains: backend + admin hostnames (no https://)",
+        "instagram_basic",
+        "instagram_content_publish",
         "Render FACEBOOK_REDIRECT_URI must equal redirectUri exactly",
+        "Reconnect Facebook after adding Instagram permissions",
       ],
     });
   } catch (error) {
     return sendError(res, error, "Facebook OAuth is not configured on this server.");
+  }
+}
+
+async function postInstagramForUser(req, res) {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const userId = typeof body.userId === "string" ? body.userId.trim() : "";
+    const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl.trim() : "";
+    const caption = typeof body.caption === "string" ? body.caption.trim() : "";
+
+    await resolveAppUserId(userId);
+
+    const result = await postPosterToInstagramForUser({ userId, imageUrl, caption });
+
+    return res.status(200).json({
+      success: true,
+      message: "Poster uploaded to Instagram successfully.",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Instagram] postInstagramForUser failed:", error.message);
+    return sendError(res, error, "Unable to post poster to Instagram for this user.");
   }
 }
 
@@ -666,6 +703,7 @@ module.exports = {
   deleteFacebookConnectionByUser,
   getFacebookConnectUrl,
   postFacebookForUser,
+  postInstagramForUser,
   listFacebookPostsForUser,
   deleteFacebookPostForUser,
   postFacebookImage,

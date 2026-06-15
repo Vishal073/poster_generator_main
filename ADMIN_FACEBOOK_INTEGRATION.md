@@ -27,10 +27,20 @@ Generate poster → uploadToFacebook: true → auto post to saved Page
   "facebook": {
     "facebookConnected": true,
     "facebookPageSelected": true,
-    "facebookPageName": "ScoobyDooby"
+    "facebookPageName": "ScoobyDooby",
+    "instagramConnected": true,
+    "instagramUsername": "vishal.scoobydooby"
   }
 }
 ```
+
+When the user links Instagram to their Facebook Page **after** connecting Facebook, refresh without full OAuth:
+
+```js
+GET /facebook/connection/:userId?refresh=true
+```
+
+Returns updated `instagramConnected` and `instagramUsername`.
 
 ### Button in each row
 
@@ -91,7 +101,9 @@ POST /generate-poster
   "posterSource": "https://res.cloudinary.com/.../base.jpg",
   "textLines": ["..."],
   "uploadToFacebook": true,
-  "facebookCaption": "Optional caption"
+  "uploadToInstagram": true,
+  "facebookCaption": "Optional caption",
+  "instagramCaption": "Optional IG caption (falls back to facebookCaption)"
 }
 ```
 
@@ -105,9 +117,16 @@ Response includes:
     "success": true,
     "postId": "...",
     "pageName": "ScoobyDooby"
+  },
+  "instagram": {
+    "success": true,
+    "username": "vishal.scoobydooby",
+    "mediaId": "..."
   }
 }
 ```
+
+Instagram posting requires `instagramConnected: true` on the user (IG Business/Creator linked to the saved Page). It is **not** automatic when `uploadToFacebook` is true — pass `uploadToInstagram: true` separately.
 
 If user not connected:
 
@@ -122,11 +141,12 @@ POST /generate-posters/bulk
 {
   "userIds": ["id1", "id2"],
   "posterSource": "...",
-  "uploadToFacebook": true
+  "uploadToFacebook": true,
+  "uploadToInstagram": true
 }
 ```
 
-Each success result may include `facebook: { success, postId, ... }`.
+Each success result may include `facebook: { ... }` and `instagram: { success, username, mediaId, ... }`.
 
 ## 4. Post existing image (without regenerate)
 
@@ -151,7 +171,9 @@ POST /facebook/post-for-user
 | GET | `/facebook/posts/:userId` | List recent posts on saved Page |
 | DELETE | `/facebook/posts/:userId/:postId` | Delete a post from saved Page |
 | POST | `/facebook/post-for-user` | One-click post by userId |
-| POST | `/generate-poster` | `uploadToFacebook: true` |
+| POST | `/instagram/post-for-user` | One-click Instagram post by userId |
+| GET | `/facebook/connection/:userId?refresh=true` | Refresh linked Instagram after Page connect |
+| POST | `/generate-poster` | `uploadToFacebook: true`, `uploadToInstagram: true` |
 
 ## Env (admin portal)
 

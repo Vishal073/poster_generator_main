@@ -8,7 +8,13 @@ const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 // pages_read_engagement is required by Meta for /photos and App Review with pages_manage_posts.
 const FACEBOOK_SCOPES = (
   process.env.FACEBOOK_SCOPES ||
-  ["pages_show_list", "pages_read_engagement", "pages_manage_posts"].join(",")
+  [
+    "pages_show_list",
+    "pages_read_engagement",
+    "pages_manage_posts",
+    "instagram_basic",
+    "instagram_content_publish",
+  ].join(",")
 ).trim();
 
 function normalizeRedirectUri(value) {
@@ -200,7 +206,59 @@ function mapGraphPages(rawPages) {
     pageId: String(page.id),
     pageName: page.name || "Unnamed Page",
     pageAccessToken: page.access_token || "",
+    instagramAccount: null,
   }));
+}
+
+/**
+ * Instagram Business account linked to a Facebook Page (if any).
+ */
+async function fetchInstagramAccountForPage({ pageId, pageAccessToken }) {
+  if (!pageId || !pageAccessToken) {
+    return null;
+  }
+
+  try {
+    const response = await axios.get(`${GRAPH_BASE_URL}/${pageId}`, {
+      params: {
+        fields: "instagram_business_account{id,username,name}",
+        access_token: pageAccessToken,
+      },
+      timeout: 15000,
+    });
+
+    const ig = response.data?.instagram_business_account;
+    if (!ig?.id) {
+      return null;
+    }
+
+    return {
+      igUserId: String(ig.id),
+      username: typeof ig.username === "string" ? ig.username : "",
+      name: typeof ig.name === "string" ? ig.name : ig.username || "",
+    };
+  } catch (error) {
+    console.warn(
+      `[Instagram] No linked account for Page ${pageId}:`,
+      getGraphErrorMessage(error),
+    );
+    return null;
+  }
+}
+
+async function enrichPagesWithInstagram(pages) {
+  return Promise.all(
+    pages.map(async (page) => {
+      const instagramAccount = await fetchInstagramAccountForPage({
+        pageId: page.pageId,
+        pageAccessToken: page.pageAccessToken,
+      });
+      return {
+        ...page,
+        instagramAccount,
+      };
+    }),
+  );
 }
 
 /**
@@ -320,6 +378,60 @@ async function deletePagePost({ postId, pageAccessToken }) {
   }
 }
 
+/**
+ * Publish an image to Instagram (Business/Creator linked to the Facebook Page).
+ * Uses the Page access token.
+ */
+async function postImageToInstagram({ igUserId, pageAccessToken, imageUrl, caption }) {
+  if (!igUserId || !pageAccessToken || !imageUrl) {
+    const error = new Error("igUserId, pageAccessToken, and imageUrl are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const createResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media`,
+      null,
+      {
+        params: {
+          image_url: imageUrl,
+          caption: caption || "",
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    const creationId = createResponse.data?.id;
+    if (!creationId) {
+      const error = new Error("Instagram did not return a media container id.");
+      error.statusCode = 502;
+      throw error;
+    }
+
+    const publishResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media_publish`,
+      null,
+      {
+        params: {
+          creation_id: creationId,
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    return {
+      mediaId: publishResponse.data?.id || null,
+      creationId: String(creationId),
+      raw: publishResponse.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post image to Instagram.");
+  }
+}
+
 module.exports = {
   FACEBOOK_SCOPES,
   getFacebookConfig,
@@ -330,7 +442,10 @@ module.exports = {
   exchangeForLongLivedToken,
   fetchFacebookUserId,
   fetchUserPages,
+  enrichPagesWithInstagram,
+  fetchInstagramAccountForPage,
   postImageToPage,
+  postImageToInstagram,
   listPagePosts,
   deletePagePost,
 };

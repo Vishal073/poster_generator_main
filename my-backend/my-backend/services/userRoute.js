@@ -341,6 +341,8 @@ router.get("/users", requireAuth, requireDb, async (req, res) => {
       facebookConnected: false,
       facebookPageSelected: false,
       facebookPageName: null,
+      instagramConnected: false,
+      instagramUsername: null,
     };
 
     return res.status(200).json({
@@ -498,6 +500,8 @@ router.get("/users/:id", requireAuth, requireDb, async (req, res) => {
       facebookConnected: false,
       facebookPageSelected: false,
       facebookPageName: null,
+      instagramConnected: false,
+      instagramUsername: null,
     };
 
     return res.status(200).json({

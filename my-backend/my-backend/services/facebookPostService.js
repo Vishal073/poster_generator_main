@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const FacebookConnection = require("../models/FacebookConnection");
 const {
   postImageToPage,
+  postImageToInstagram,
   listPagePosts,
   deletePagePost,
 } = require("./facebookService");
@@ -42,6 +43,63 @@ async function getFacebookConnectionForUser(userId) {
 /**
  * Post a public image URL to the Facebook Page saved for this app user.
  */
+function buildSelectedPageSnapshot(page) {
+  if (!page) {
+    return null;
+  }
+
+  return {
+    pageId: page.pageId,
+    pageName: page.pageName,
+    pageAccessToken: page.pageAccessToken,
+    instagramAccount: page.instagramAccount?.igUserId ? page.instagramAccount : null,
+  };
+}
+
+/**
+ * Post a public image URL to Instagram linked to the user's selected Facebook Page.
+ */
+async function postPosterToInstagramForUser({ userId, imageUrl, caption = "" }) {
+  if (!isValidObjectId(userId)) {
+    const error = new Error("userId must be a valid MongoDB User _id.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!imageUrl || typeof imageUrl !== "string" || !imageUrl.trim()) {
+    const error = new Error("imageUrl is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+  const instagramAccount = connection.selectedPage?.instagramAccount;
+
+  if (!instagramAccount?.igUserId) {
+    const error = new Error(
+      "No Instagram Business account is linked to this user's Facebook Page. Link Instagram to the Page in Meta, then reconnect Facebook.",
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const result = await postImageToInstagram({
+    igUserId: instagramAccount.igUserId,
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+    imageUrl: imageUrl.trim(),
+    caption: typeof caption === "string" ? caption.trim() : "",
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    igUserId: instagramAccount.igUserId,
+    username: instagramAccount.username || null,
+    mediaId: result.mediaId,
+  };
+}
+
 async function postPosterForUser({ userId, imageUrl, caption = "" }) {
   if (!isValidObjectId(userId)) {
     const error = new Error("userId must be a valid MongoDB User _id.");
@@ -129,10 +187,13 @@ async function getFacebookStatusByUserIds(userIds) {
     .lean();
 
   for (const connection of connections) {
+    const instagramAccount = connection.selectedPage?.instagramAccount;
     map.set(String(connection.userId), {
       facebookConnected: true,
       facebookPageSelected: Boolean(connection.selectedPage?.pageId),
       facebookPageName: connection.selectedPage?.pageName || null,
+      instagramConnected: Boolean(instagramAccount?.igUserId),
+      instagramUsername: instagramAccount?.username || null,
     });
   }
 
@@ -149,6 +210,8 @@ function buildFacebookConnectUrl(userId, apiBaseUrl) {
 
 module.exports = {
   postPosterForUser,
+  postPosterToInstagramForUser,
+  buildSelectedPageSnapshot,
   listPostsForUser,
   deletePostForUser,
   getFacebookStatusByUserIds,
