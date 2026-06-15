@@ -13,6 +13,7 @@ const {
   fetchFacebookUserId,
   fetchUserPages,
   enrichPagesWithInstagram,
+  fetchInstagramAccountForPage,
   postImageToPage,
 } = require("../services/facebookService");
 const {
@@ -28,9 +29,14 @@ const {
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const CONNECTION_TTL_MS = 24 * 60 * 60 * 1000;
 
-function getFrontendUrl() {
-  // Admin portal URL — OAuth callback redirects here after Facebook login
-  return (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+function getFrontendUrl(returnTo = "admin") {
+  const portalUrl =
+    typeof process.env.USER_FRONTEND_URL === "string"
+      ? process.env.USER_FRONTEND_URL.trim()
+      : "";
+  const adminUrl = (process.env.FRONTEND_URL || "http://localhost:5173").trim();
+  const base = returnTo === "portal" && portalUrl ? portalUrl : adminUrl;
+  return base.replace(/\/$/, "");
 }
 
 function getFacebookPagesPath(returnTo) {
@@ -159,6 +165,7 @@ async function handleFacebookCallback(req, res) {
     }
 
     pagesPath = getFacebookPagesPath(oauthStateDoc.returnTo);
+    const frontendUrl = getFrontendUrl(oauthStateDoc.returnTo);
 
     if (!oauthStateDoc.userId) {
       return res.redirect(
@@ -190,7 +197,21 @@ async function handleFacebookCallback(req, res) {
     const sessionId = createSessionId();
 
     // If user has only one Page, auto-select it (no extra click on /facebook/pages)
-    const autoSelectedPage = pages.length === 1 ? pages[0] : null;
+    let autoSelectedPage = pages.length === 1 ? pages[0] : null;
+    if (autoSelectedPage) {
+      const freshInstagram = await fetchInstagramAccountForPage({
+        pageId: autoSelectedPage.pageId,
+        pageAccessToken: autoSelectedPage.pageAccessToken,
+        userAccessToken: longLived.accessToken,
+      });
+      autoSelectedPage = {
+        ...autoSelectedPage,
+        instagramAccount: freshInstagram,
+      };
+      if (pages.length === 1) {
+        pages[0] = autoSelectedPage;
+      }
+    }
     const connectionExpiresAt = autoSelectedPage
       ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
       : new Date(Date.now() + CONNECTION_TTL_MS);
@@ -317,8 +338,8 @@ async function getFacebookPages(req, res) {
       return res.status(404).json({
         success: false,
         message: sessionId
-          ? "Facebook session not found or expired. Connect Facebook again from the user."
-          : "No Facebook connection for this user. Connect Facebook first.",
+          ? "Facebook session not found or expired. Tap Connect Facebook again in the same browser tab."
+          : "No Facebook connection for this user. Tap Connect Facebook first — do not open the page picker directly.",
       });
     }
 
@@ -379,11 +400,21 @@ async function saveSelectedPage(req, res) {
     if (!connection) {
       return res.status(404).json({
         success: false,
-        message: "Facebook session not found or expired.",
+        message:
+          "Facebook session not found or expired. Tap Connect Facebook again in the same browser tab.",
       });
     }
 
-    const selectedPage = connection.pages.find((page) => page.pageId === pageId);
+    let selectedPage = connection.pages.find((page) => page.pageId === pageId);
+    if (!selectedPage) {
+      try {
+        await syncConnectionPagesFromFacebook(connection);
+        selectedPage = connection.pages.find((page) => page.pageId === pageId);
+      } catch (syncError) {
+        console.warn("[Facebook OAuth] save-page page sync failed:", syncError.message);
+      }
+    }
+
     if (!selectedPage) {
       return res.status(404).json({
         success: false,
@@ -391,9 +422,24 @@ async function saveSelectedPage(req, res) {
       });
     }
 
+    const freshInstagram = await fetchInstagramAccountForPage({
+      pageId: selectedPage.pageId,
+      pageAccessToken: selectedPage.pageAccessToken,
+      userAccessToken: connection.userAccessToken,
+    });
+
+    const pageIndex = connection.pages.findIndex((page) => page.pageId === pageId);
+    if (pageIndex >= 0) {
+      connection.pages[pageIndex].instagramAccount = freshInstagram;
+      selectedPage = connection.pages[pageIndex];
+    }
+
     const previousPageId = connection.selectedPage?.pageId || null;
 
-    connection.selectedPage = buildSelectedPageSnapshot(selectedPage);
+    connection.selectedPage = buildSelectedPageSnapshot({
+      ...selectedPage,
+      instagramAccount: freshInstagram,
+    });
 
     // Keep saved connections longer once a Page is chosen
     connection.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
