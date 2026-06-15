@@ -6,6 +6,7 @@ const {
   getFacebookPages,
   saveSelectedPage,
   getFacebookConnectionByUser,
+  deleteFacebookConnectionByUser,
   getFacebookConnectUrl,
   postFacebookForUser,
   listFacebookPostsForUser,
@@ -30,8 +31,9 @@ router.get("/facebook/pages", getFacebookPages);
 // Step 4: Persist user's selected Page
 router.post("/facebook/save-page", saveSelectedPage);
 
-// Look up Facebook connection by app User _id
+// Look up / remove Facebook connection by app User _id
 router.get("/facebook/connection/:userId", getFacebookConnectionByUser);
+router.delete("/facebook/connection/:userId", deleteFacebookConnectionByUser);
 
 // Connect URL for admin user list button
 router.get("/facebook/connect-url/:userId", getFacebookConnectUrl);

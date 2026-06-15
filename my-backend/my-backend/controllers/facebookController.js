@@ -454,6 +454,35 @@ async function getFacebookConnectionByUser(req, res) {
 }
 
 /**
+ * DELETE /facebook/connection/:userId
+ * Removes saved Facebook tokens and Page selection for this app user.
+ */
+async function deleteFacebookConnectionByUser(req, res) {
+  try {
+    const user = await resolveAppUserId(req.params.userId);
+
+    const connection = await FacebookConnection.findOneAndDelete({ userId: user._id }).lean();
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        message: "No Facebook connection found for this user.",
+        userId: user._id,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Facebook link removed. Connect again to post to a Page.",
+      userId: user._id,
+      removedPageName: connection.selectedPage?.pageName || null,
+    });
+  } catch (error) {
+    console.error("[Facebook OAuth] deleteFacebookConnectionByUser failed:", error.message);
+    return sendError(res, error, "Unable to remove Facebook connection for user.");
+  }
+}
+
+/**
  * GET /facebook/connect-url/:userId
  * Returns OAuth start URL for admin portal "Connect Facebook" button per user row.
  */
@@ -654,6 +683,7 @@ module.exports = {
   getFacebookPages,
   saveSelectedPage,
   getFacebookConnectionByUser,
+  deleteFacebookConnectionByUser,
   getFacebookConnectUrl,
   postFacebookForUser,
   listFacebookPostsForUser,
