@@ -1,4 +1,12 @@
 const mongoose = require("mongoose");
+const {
+  logFb,
+  logFbWarn,
+  logFbError,
+  maskToken,
+  summarizePages,
+  summarizeGranularScopes,
+} = require("../services/facebookDebugLog");
 const FacebookConnection = require("../models/FacebookConnection");
 const FacebookOAuthState = require("../models/FacebookOAuthState");
 const User = require("../models/User");
@@ -18,6 +26,7 @@ const {
   postImageToPage,
   debugAccessToken,
   buildEmptyPagesHelpMessage,
+  extractPageIdsFromGranularScopes,
 } = require("../services/facebookService");
 const {
   postPosterForUser,
@@ -158,6 +167,16 @@ async function startFacebookAuth(req, res) {
 
     const reconnect = String(req.query.reconnect || "").trim() === "1";
     const oauthUrl = buildFacebookOAuthUrl(state, { mobile: isMobile, reconnect });
+
+    logFb("oauth.start", {
+      appUserId: String(user._id),
+      appUserName: user.name || null,
+      returnTo,
+      reconnect,
+      mobile: isMobile,
+      userAgent: userAgent.slice(0, 120),
+    });
+
     return res.redirect(oauthUrl);
   } catch (error) {
     console.error("[Facebook OAuth] startFacebookAuth failed:", error.message);
@@ -247,21 +266,60 @@ async function handleFacebookCallback(req, res) {
 
     appUserId = String(oauthStateDoc.userId);
 
+    logFb("oauth.callback_start", {
+      appUserId,
+      returnTo: oauthStateDoc.returnTo,
+      frontendUrl,
+      pagesPath,
+    });
+
     // Exchange authorization code -> short-lived token -> long-lived token
     const shortLived = await exchangeCodeForShortLivedToken(code);
+    logFb("oauth.token_short_lived", {
+      appUserId,
+      expiresIn: shortLived.expiresIn,
+      token: maskToken(shortLived.accessToken),
+    });
+
     const longLived = await exchangeForLongLivedToken(shortLived.accessToken);
+    logFb("oauth.token_long_lived", {
+      appUserId,
+      expiresIn: longLived.expiresIn,
+      token: maskToken(longLived.accessToken),
+    });
 
     const facebookUser = await fetchFacebookUserId(longLived.accessToken);
+    logFb("oauth.facebook_user", {
+      appUserId,
+      facebookUserId: facebookUser.id,
+      facebookUserName: facebookUser.name,
+    });
+
     const rawPages = await fetchUserPages(longLived.accessToken);
+    logFb("oauth.raw_pages", {
+      appUserId,
+      count: rawPages.length,
+      pages: summarizePages(rawPages),
+    });
+
     const pages = await enrichPagesWithInstagram(rawPages, longLived.accessToken);
+    logFb("oauth.enriched_pages", {
+      appUserId,
+      count: pages.length,
+      pages: summarizePages(pages),
+    });
 
     if (!pages.length) {
       const debugInfo = await debugAccessToken(longLived.accessToken);
-      console.warn("[Facebook OAuth] No pages for user", {
+      logFbWarn("oauth.no_pages", {
+        appUserId,
         facebookUserId: facebookUser.id,
         facebookUserName: facebookUser.name,
         scopes: debugInfo?.scopes || [],
-        granularScopes: debugInfo?.granularScopes || [],
+        granularScopes: summarizeGranularScopes(debugInfo?.granularScopes),
+        pageIdsFromGranular: debugInfo
+          ? extractPageIdsFromGranularScopes(debugInfo.granularScopes)
+          : [],
       });
 
       const helpMessage = buildEmptyPagesHelpMessage({ facebookUser, debugInfo });
@@ -334,6 +392,15 @@ async function handleFacebookCallback(req, res) {
       );
     }
 
+    logFb("oauth.success", {
+      appUserId,
+      sessionId: `${sessionId.slice(0, 8)}…`,
+      pageCount: pages.length,
+      autoSelectedPageId: autoSelectedPage?.pageId || null,
+      autoSelectedPageName: autoSelectedPage?.pageName || null,
+      autoSelectedInstagram: autoSelectedPage?.instagramAccount?.username || null,
+    });
+
     const returnToQuery =
       oauthStateDoc.returnTo === "portal" ? "&returnTo=portal" : "";
 
@@ -341,7 +408,7 @@ async function handleFacebookCallback(req, res) {
       `${frontendUrl}${pagesPath}?sessionId=${sessionId}&userId=${appUserId}${returnToQuery}`,
     );
   } catch (error) {
-    console.error("[Facebook OAuth] handleFacebookCallback failed:", error.message);
+    logFbError("oauth.callback_failed", error, { appUserId });
     const message = encodeURIComponent(error.message || "Facebook authentication failed.");
     const userIdQuery = appUserId ? `&userId=${appUserId}` : "";
     return res.redirect(`${frontendUrl}${pagesPath}?error=${message}${userIdQuery}`);
@@ -357,9 +424,21 @@ async function syncConnectionPagesFromFacebook(connection) {
     throw error;
   }
 
+  logFb("pages.sync_start", {
+    userId: String(connection.userId),
+    facebookUserId: connection.facebookUserId || null,
+    selectedPageId: connection.selectedPage?.pageId || null,
+  });
+
   const rawPages = await fetchUserPages(connection.userAccessToken);
   const pages = await enrichPagesWithInstagram(rawPages, connection.userAccessToken);
   connection.pages = pages;
+
+  logFb("pages.sync_done", {
+    userId: String(connection.userId),
+    count: pages.length,
+    pages: summarizePages(pages),
+  });
 
   if (connection.selectedPage?.pageId) {
     const refreshedSelected = pages.find(
@@ -419,6 +498,13 @@ async function getFacebookPages(req, res) {
       typeof req.query.returnTo === "string" ? req.query.returnTo.trim() : "";
     const shouldRefresh = String(req.query.refresh || "").trim() === "true";
 
+    logFb("pages.api_request", {
+      sessionId: sessionId ? `${sessionId.slice(0, 8)}…` : null,
+      userId: userIdParam || null,
+      returnTo: returnToParam || null,
+      refresh: shouldRefresh,
+    });
+
     if (!sessionId && !userIdParam) {
       return res.status(400).json({
         success: false,
@@ -441,6 +527,11 @@ async function getFacebookPages(req, res) {
     }
 
     if (!connection) {
+      logFbWarn("pages.api_no_connection", {
+        sessionId: sessionId ? `${sessionId.slice(0, 8)}…` : null,
+        userId: userIdParam || null,
+      });
+
       const returnTo = resolveReturnTo(returnToParam);
       const connectUrl =
         userIdParam && isValidObjectId(userIdParam)
@@ -465,9 +556,17 @@ async function getFacebookPages(req, res) {
       }
     }
 
+    logFb("pages.api_response", {
+      userId: String(connection.userId),
+      sessionId: `${connection.sessionId.slice(0, 8)}…`,
+      pageCount: (connection.pages || []).length,
+      selectedPageId: connection.selectedPage?.pageId || null,
+      pages: summarizePages(connection.pages),
+    });
+
     return res.status(200).json(formatPagesResponse(connection));
   } catch (error) {
-    console.error("[Facebook OAuth] getFacebookPages failed:", error.message);
+    logFbError("pages.api_failed", error);
     return sendError(res, error, "Unable to load Facebook Pages.");
   }
 }
@@ -482,6 +581,12 @@ async function saveSelectedPage(req, res) {
     const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
     const userIdParam = typeof body.userId === "string" ? body.userId.trim() : "";
     const pageId = typeof body.pageId === "string" ? body.pageId.trim() : "";
+
+    logFb("pages.save_request", {
+      sessionId: sessionId ? `${sessionId.slice(0, 8)}…` : null,
+      userId: userIdParam || null,
+      pageId,
+    });
 
     if (!pageId) {
       return res.status(400).json({
@@ -525,11 +630,20 @@ async function saveSelectedPage(req, res) {
         await syncConnectionPagesFromFacebook(connection);
         selectedPage = connection.pages.find((page) => page.pageId === pageId);
       } catch (syncError) {
-        console.warn("[Facebook OAuth] save-page page sync failed:", syncError.message);
+        logFbWarn("pages.save_sync_failed", {
+          userId: String(connection.userId),
+          pageId,
+          error: syncError.message,
+        });
       }
     }
 
     if (!selectedPage) {
+      logFbWarn("pages.save_not_found", {
+        userId: String(connection.userId),
+        pageId,
+        availablePageIds: (connection.pages || []).map((p) => p.pageId),
+      });
       return res.status(404).json({
         success: false,
         message: "Selected page was not found in this Facebook session.",
@@ -568,6 +682,14 @@ async function saveSelectedPage(req, res) {
       ? ` Instagram @${connection.selectedPage.instagramAccount.username} linked.`
       : " No Instagram Business account linked to this Page.";
 
+    logFb("pages.save_success", {
+      userId: String(connection.userId),
+      pageId,
+      pageName: selectedPage.pageName,
+      previousPageId,
+      instagramUsername: connection.selectedPage?.instagramAccount?.username || null,
+    });
+
     return res.status(200).json({
       success: true,
       message: `${message}${instagramNote}`,
@@ -575,7 +697,7 @@ async function saveSelectedPage(req, res) {
       selectedPage: formatPageForApi(connection.selectedPage),
     });
   } catch (error) {
-    console.error("[Facebook OAuth] saveSelectedPage failed:", error.message);
+    logFbError("pages.save_failed", error);
     return sendError(res, error, "Unable to save selected Facebook Page.");
   }
 }
@@ -794,6 +916,15 @@ async function getFacebookOAuthConfig(req, res) {
     if (!process.env.API_BASE_URL?.trim() && apiBaseUrl.includes("localhost")) {
       warnings.push("API_BASE_URL is unset and request host could not be detected — connectUrl may point to localhost.");
     }
+
+    logFb("oauth.config_check", {
+      usesLoginForBusiness: Boolean(configId),
+      loginConfigId: maskedConfigId,
+      apiBaseUrl,
+      adminFrontendUrl,
+      portalFrontendUrl,
+      warnings,
+    });
 
     return res.status(200).json({
       success: true,

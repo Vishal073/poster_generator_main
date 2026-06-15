@@ -1,5 +1,13 @@
 const axios = require("axios");
 const crypto = require("crypto");
+const {
+  logFb,
+  logFbWarn,
+  logFbError,
+  maskToken,
+  summarizePages,
+  summarizeGranularScopes,
+} = require("./facebookDebugLog");
 
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -97,7 +105,19 @@ function buildFacebookOAuthUrl(state, options = {}) {
   }
 
   const host = useMobile ? "m.facebook.com" : "www.facebook.com";
-  return `https://${host}/${GRAPH_API_VERSION}/dialog/oauth?${params.toString()}`;
+  const oauthUrl = `https://${host}/${GRAPH_API_VERSION}/dialog/oauth?${params.toString()}`;
+
+  logFb("oauth.build_url", {
+    host,
+    useMobile,
+    reconnect,
+    authMode: configId ? "config_id" : "scope",
+    configId: configId ? `${configId.slice(0, 3)}…` : null,
+    scopes: configId ? null : FACEBOOK_SCOPES,
+    redirectUri,
+  });
+
+  return oauthUrl;
 }
 
 /**
@@ -293,29 +313,124 @@ async function fetchInstagramAccountForPage({ pageId, pageAccessToken, userAcces
       };
     } catch (error) {
       lastErrorMessage = getGraphErrorMessage(error);
-      console.warn(
-        `[Instagram] Could not load linked account for Page ${pageId}:`,
-        lastErrorMessage,
-      );
+      logFbWarn("instagram.fetch_page_failed", {
+        pageId,
+        token: maskToken(accessToken),
+        error: lastErrorMessage,
+      });
     }
   }
 
   if (lastErrorMessage) {
-    console.warn(
-      `[Instagram] No linked account for Page ${pageId} after token attempts. Last error: ${lastErrorMessage}`,
-    );
+    logFbWarn("instagram.fetch_page_exhausted", {
+      pageId,
+      lastError: lastErrorMessage,
+    });
   }
 
   return null;
 }
 
+function extractPageIdsFromGranularScopes(granularScopes) {
+  const pageIds = new Set();
+
+  for (const entry of Array.isArray(granularScopes) ? granularScopes : []) {
+    if (typeof entry?.scope !== "string" || !entry.scope.startsWith("pages_")) {
+      continue;
+    }
+
+    for (const rawId of Array.isArray(entry.target_ids) ? entry.target_ids : []) {
+      if (rawId !== null && rawId !== undefined && String(rawId).trim()) {
+        pageIds.add(String(rawId).trim());
+      }
+    }
+  }
+
+  return [...pageIds];
+}
+
+async function fetchPageById(pageId, userAccessToken) {
+  try {
+    const response = await axios.get(`${GRAPH_BASE_URL}/${pageId}`, {
+      params: {
+        fields: "id,name,access_token",
+        access_token: userAccessToken,
+      },
+      timeout: 15000,
+    });
+
+    const data = response.data;
+    if (!data?.id || !data?.access_token) {
+      return null;
+    }
+
+    return {
+      pageId: String(data.id),
+      pageName: data.name || "Unnamed Page",
+      pageAccessToken: data.access_token,
+      instagramAccount: null,
+    };
+  } catch (error) {
+    logFbWarn("pages.fetch_by_id_failed", {
+      pageId,
+      error: getGraphErrorMessage(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * When /me/accounts is empty but the user selected Pages on Meta's OAuth screen,
+ * granular_scopes still lists Page IDs — fetch each Page directly (common for IG-linked Pages).
+ */
+async function fetchUserPagesFromGranularScopes(userAccessToken, debugInfo) {
+  const pageIds = extractPageIdsFromGranularScopes(debugInfo?.granularScopes);
+  if (!pageIds.length) {
+    return [];
+  }
+
+  logFb("pages.granular_fallback_start", { pageIds });
+
+  const pages = [];
+  for (const pageId of pageIds) {
+    const page = await fetchPageById(pageId, userAccessToken);
+    if (page) {
+      pages.push(page);
+      logFb("pages.granular_fallback_hit", {
+        pageId,
+        pageName: page.pageName,
+        hasPageToken: Boolean(page.pageAccessToken),
+      });
+    }
+  }
+
+  logFb("pages.granular_fallback_done", {
+    requested: pageIds.length,
+    loaded: pages.length,
+    pages: summarizePages(pages),
+  });
+
+  return pages;
+}
+
 async function enrichPagesWithInstagram(pages, userAccessToken) {
-  return Promise.all(
+  logFb("instagram.enrich_start", {
+    pageCount: pages.length,
+    pages: summarizePages(pages),
+  });
+
+  const enriched = await Promise.all(
     pages.map(async (page) => {
       const instagramAccount = await fetchInstagramAccountForPage({
         pageId: page.pageId,
         pageAccessToken: page.pageAccessToken,
         userAccessToken,
+      });
+      logFb("instagram.enrich_page", {
+        pageId: page.pageId,
+        pageName: page.pageName,
+        linked: Boolean(instagramAccount?.igUserId),
+        username: instagramAccount?.username || null,
       });
       return {
         ...page,
@@ -323,6 +438,13 @@ async function enrichPagesWithInstagram(pages, userAccessToken) {
       };
     }),
   );
+
+  logFb("instagram.enrich_done", {
+    pageCount: enriched.length,
+    withInstagram: enriched.filter((p) => p.instagramAccount?.igUserId).length,
+  });
+
+  return enriched;
 }
 
 /**
@@ -340,14 +462,27 @@ async function debugAccessToken(inputToken) {
     });
 
     const data = response.data?.data;
-    return {
+    const debugInfo = {
       isValid: Boolean(data?.is_valid),
       userId: data?.user_id ? String(data.user_id) : null,
       scopes: Array.isArray(data?.scopes) ? data.scopes : [],
       granularScopes: Array.isArray(data?.granular_scopes) ? data.granular_scopes : [],
     };
+
+    logFb("token.debug", {
+      isValid: debugInfo.isValid,
+      userId: debugInfo.userId,
+      scopes: debugInfo.scopes,
+      granularScopes: summarizeGranularScopes(debugInfo.granularScopes),
+      pageIdsFromGranular: extractPageIdsFromGranularScopes(debugInfo.granularScopes),
+      hasInstagramScopes:
+        debugInfo.scopes.includes("instagram_basic") &&
+        debugInfo.scopes.includes("instagram_content_publish"),
+    });
+
+    return debugInfo;
   } catch (error) {
-    console.warn("[Facebook OAuth] debug_token failed:", getGraphErrorMessage(error));
+    logFbWarn("token.debug_failed", { error: getGraphErrorMessage(error) });
     return null;
   }
 }
@@ -363,18 +498,34 @@ function buildEmptyPagesHelpMessage({ facebookUser, debugInfo }) {
   ];
 
   if (debugInfo) {
-    if (!debugInfo.scopes.includes("pages_show_list")) {
+    const scopes = Array.isArray(debugInfo.scopes) ? debugInfo.scopes : [];
+    const hasInstagramScopes =
+      scopes.includes("instagram_basic") && scopes.includes("instagram_content_publish");
+
+    if (!hasInstagramScopes) {
+      parts.push(
+        "If you selected a Page linked to Instagram, add instagram_basic and instagram_content_publish to Meta → Facebook Login for Business → your Configuration, then reconnect.",
+      );
+    }
+
+    if (!scopes.includes("pages_show_list")) {
       parts.push("Missing pages_show_list permission — reconnect and approve all permissions.");
     }
 
+    const pageIds = extractPageIdsFromGranularScopes(debugInfo.granularScopes);
     const pagesScope = debugInfo.granularScopes.find(
       (entry) =>
         typeof entry?.scope === "string" &&
         (entry.scope === "pages_show_list" || entry.scope.startsWith("pages_")),
     );
     const targetIds = Array.isArray(pagesScope?.target_ids) ? pagesScope.target_ids : null;
+
     if (pagesScope && targetIds && targetIds.length === 0) {
       parts.push("You skipped Page selection on the Facebook permission screen. Reconnect and select your Page.");
+    } else if (pageIds.length > 0) {
+      parts.push(
+        `Meta shows you selected Page ID(s) ${pageIds.join(", ")} but Page tokens could not be loaded. For Instagram-linked Pages, ensure Instagram permissions are in your Meta app configuration.`,
+      );
     }
   }
 
@@ -400,6 +551,11 @@ async function fetchUserPagesFromAccountsEndpoint(userAccessToken) {
     });
 
     const rawPages = Array.isArray(response.data?.data) ? response.data.data : [];
+    logFb("pages.me_accounts_page", {
+      pageIndex,
+      rawCount: rawPages.length,
+      rawPageIds: rawPages.map((p) => String(p.id)),
+    });
     allPages.push(...mapGraphPages(rawPages));
 
     const nextUrl = response.data?.paging?.next;
@@ -411,6 +567,7 @@ async function fetchUserPagesFromAccountsEndpoint(userAccessToken) {
     requestParams = undefined;
   }
 
+  logFb("pages.me_accounts_done", { total: allPages.length, pages: summarizePages(allPages) });
   return allPages;
 }
 
@@ -426,7 +583,12 @@ async function fetchUserPagesFromMeField(userAccessToken) {
   const rawPages = Array.isArray(response.data?.accounts?.data)
     ? response.data.accounts.data
     : [];
-  return mapGraphPages(rawPages);
+  const pages = mapGraphPages(rawPages);
+  logFb("pages.me_field_done", {
+    total: pages.length,
+    pages: summarizePages(pages),
+  });
+  return pages;
 }
 
 /**
@@ -434,12 +596,33 @@ async function fetchUserPagesFromMeField(userAccessToken) {
  */
 async function fetchUserPages(userAccessToken) {
   try {
+    logFb("pages.fetch_start", { userToken: maskToken(userAccessToken) });
+
     let allPages = await fetchUserPagesFromAccountsEndpoint(userAccessToken);
+    let source = "me/accounts";
+
     if (!allPages.length) {
+      logFbWarn("pages.me_accounts_empty", { trying: "me?fields=accounts" });
       allPages = await fetchUserPagesFromMeField(userAccessToken);
+      source = "me.accounts";
     }
+
+    if (!allPages.length) {
+      logFbWarn("pages.me_field_empty", { trying: "granular_scopes" });
+      const debugInfo = await debugAccessToken(userAccessToken);
+      allPages = await fetchUserPagesFromGranularScopes(userAccessToken, debugInfo);
+      source = "granular_scopes";
+    }
+
+    logFb("pages.fetch_done", {
+      source,
+      total: allPages.length,
+      pages: summarizePages(allPages),
+    });
+
     return allPages;
   } catch (error) {
+    logFbError("pages.fetch_failed", error);
     throw wrapGraphError(error, "Failed to fetch Facebook Pages.");
   }
 }
@@ -597,4 +780,5 @@ module.exports = {
   deletePagePost,
   debugAccessToken,
   buildEmptyPagesHelpMessage,
+  extractPageIdsFromGranularScopes,
 };
