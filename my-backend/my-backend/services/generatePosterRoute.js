@@ -15,7 +15,11 @@ const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const User = require("../models/User");
 const { queueReadyPosterForDownload } = require("./whatsappPosterDelivery");
-const { postPosterForUser, postPosterToInstagramForUser } = require("./facebookPostService");
+const {
+  postPosterForUser,
+  postPosterToInstagramForUser,
+  getUserSocialApproveEligibility,
+} = require("./facebookPostService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
@@ -277,6 +281,9 @@ async function generatePoster(req, res) {
       });
     }
 
+    const resolvedUserId =
+      typeof (body.userId || userId) === "string" ? String(body.userId || userId).trim() : "";
+
     let whatsappResult;
     if (shouldSendWhatsApp) {
       try {
@@ -285,6 +292,15 @@ async function generatePoster(req, res) {
           mobileValue,
           "name whatsappLastInboundAt",
         );
+        const socialEligibility = resolvedUserId
+          ? await getUserSocialApproveEligibility(resolvedUserId)
+          : { canApprove: false };
+        const posterCaption =
+          typeof body.facebookCaption === "string"
+            ? body.facebookCaption
+            : typeof body.caption === "string"
+              ? body.caption
+              : "";
         whatsappResult = await queueReadyPosterForDownload({
           toMobile: mobileValue,
           name: waUser?.name || name || username || "Customer",
@@ -294,6 +310,9 @@ async function generatePoster(req, res) {
             imageUrl: uploadResult.imageUrl,
             cloudinaryPublicId: uploadResult.publicId,
           },
+          userId: resolvedUserId || undefined,
+          caption: posterCaption,
+          canApproveSocial: socialEligibility.canApprove,
         });
       } catch (error) {
         return res.status(502).json({
@@ -306,8 +325,6 @@ async function generatePoster(req, res) {
       }
     }
 
-    const resolvedUserId =
-      typeof (body.userId || userId) === "string" ? String(body.userId || userId).trim() : "";
     const shouldUploadFacebook = isTruthyParam(
       body.uploadToFacebook ?? body.postToFacebook ?? body.facebook,
     );
@@ -386,8 +403,7 @@ async function generatePoster(req, res) {
 
     let responseMessage = "Poster generated and uploaded to Cloudinary.";
     if (shouldSendWhatsApp) {
-      responseMessage =
-        "Poster generated and uploaded. WhatsApp download button sent — user taps Download to receive the image.";
+      responseMessage = "Poster generated, uploaded, and sent to WhatsApp.";
     }
     if (shouldUploadFacebook && facebookResult?.success) {
       responseMessage = shouldSendWhatsApp

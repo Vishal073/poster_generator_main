@@ -11,6 +11,10 @@ function getDownloadTemplateContentSid() {
   return String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim();
 }
 
+function getDownloadApproveTemplateContentSid() {
+  return String(process.env.TWILIO_DOWNLOAD_APPROVE_TEMPLATE_CONTENT_SID || "").trim();
+}
+
 function getDownloadTemplateContentVariables({ name }) {
   return {
     "1": String(name || "Customer"),
@@ -153,8 +157,15 @@ async function sendWhatsAppLoginLink({ toMobile, name, token, loginUrl }) {
   });
 }
 
-async function sendWhatsAppDownloadTemplate({ toMobile, name }) {
-  const contentSid = getDownloadTemplateContentSid();
+async function sendWhatsAppDownloadTemplate({ toMobile, name, withApprove = false }) {
+  let contentSid = getDownloadTemplateContentSid();
+  if (withApprove) {
+    const approveSid = getDownloadApproveTemplateContentSid();
+    if (approveSid) {
+      contentSid = approveSid;
+    }
+  }
+
   if (!contentSid) {
     throw new Error(
       "Twilio button template is not configured. Set TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID in .env.",

@@ -3,14 +3,25 @@ const { uploadPosterToCloudinary } = require("./cloudnaryService");
 const {
   formatWhatsAppNumber,
   sendPosterWhatsApp,
+  sendWhatsAppText,
 } = require("./whatsappService");
 const { sendWhatsAppDownloadTemplate } = require("./whatsappTemplateService");
+const { approvePosterForUser } = require("./facebookPostService");
+const { findUserByMobile } = require("../utils/portalAuth");
 
 const pendingPosterRequests = new Map();
 
 function getPosterFileName(mobileValue) {
   const normalizedMobile = String(mobileValue || "").replace(/\D/g, "");
   return `${normalizedMobile || `poster-${Date.now()}`}.png`;
+}
+
+function toTenDigitMobile(value) {
+  const digits = String(value || "").replace(/^whatsapp:/i, "").replace(/\D/g, "");
+  if (digits.length >= 10) {
+    return digits.slice(-10);
+  }
+  return digits;
 }
 
 function updatePendingRequest(to, updates) {
@@ -109,7 +120,9 @@ async function sendReadyPoster({ to, name, mobile, posterPayload }) {
     imageUrl: posterResult.imageUrl,
   });
 
-  pendingPosterRequests.delete(to);
+  updatePendingRequest(to, {
+    downloadedAt: new Date().toISOString(),
+  });
 
   return {
     mobile: pendingRequest.mobile,
@@ -120,10 +133,89 @@ async function sendReadyPoster({ to, name, mobile, posterPayload }) {
   };
 }
 
+function buildApproveConfirmationMessage(result) {
+  const pageName = result?.facebook?.pageName || "your Facebook Page";
+  let message = `Done! Your poster was posted to Facebook (${pageName}).`;
+
+  if (result?.instagram?.mediaId) {
+    const handle = result.instagram.username ? `@${result.instagram.username}` : "Instagram";
+    message += ` Posted to ${handle} too.`;
+  } else if (result?.instagram?.message) {
+    message += ` Instagram could not be updated: ${result.instagram.message}`;
+  }
+
+  return message;
+}
+
+async function resolvePendingUserId(pendingRequest, mobile) {
+  if (pendingRequest?.userId) {
+    return String(pendingRequest.userId);
+  }
+
+  const user = await findUserByMobile(mobile);
+  if (!user?._id) {
+    throw new Error("Could not find your account for Facebook posting.");
+  }
+
+  return String(user._id);
+}
+
 /**
- * Poster already generated — send "ready" template with Download button; image on tap.
+ * User tapped Approve — post to Facebook Page (+ Instagram when linked). Download still available until Skip.
  */
-async function queueReadyPosterForDownload({ toMobile, name, mobile, posterResult, posterPayload }) {
+async function approveReadyPoster({ to, mobile }) {
+  const pendingRequest = pendingPosterRequests.get(to);
+  if (!pendingRequest) {
+    throw new Error("No pending poster found. Please ask admin to send a new poster.");
+  }
+
+  const { posterResult } = await getOrCreatePosterResult({
+    to,
+    name: pendingRequest.name,
+    mobile: pendingRequest.mobile || mobile,
+    posterPayload: pendingRequest.posterPayload,
+  });
+
+  if (!posterResult?.imageUrl) {
+    throw new Error("Poster is not ready yet. Please try again in a moment.");
+  }
+
+  const userId = await resolvePendingUserId(pendingRequest, mobile || pendingRequest.mobile);
+  const result = await approvePosterForUser({
+    userId,
+    imageUrl: posterResult.imageUrl,
+    caption: pendingRequest.caption || "",
+  });
+
+  updatePendingRequest(to, {
+    userId,
+    approvedAt: new Date().toISOString(),
+    lastApproveResult: result,
+  });
+
+  return result;
+}
+
+async function sendApproveConfirmation({ toMobile, result }) {
+  return sendWhatsAppText({
+    toMobile,
+    body: buildApproveConfirmationMessage(result),
+  });
+}
+
+/**
+ * Poster already generated — send "ready" template with Download button; Approve when Facebook connected.
+ */
+async function queueReadyPosterForDownload({
+  toMobile,
+  name,
+  mobile,
+  posterResult,
+  posterPayload,
+  userId,
+  caption,
+  canApproveSocial = false,
+}) {
   const to = formatWhatsAppNumber(toMobile);
 
   pendingPosterRequests.set(to, {
@@ -132,18 +224,23 @@ async function queueReadyPosterForDownload({ toMobile, name, mobile, posterResul
     posterPayload: posterPayload || null,
     posterResult,
     posterStatus: "ready",
+    userId: userId ? String(userId) : null,
+    caption: typeof caption === "string" ? caption.trim() : "",
+    canApproveSocial: Boolean(canApproveSocial),
     createdAt: new Date().toISOString(),
   });
 
   const templateResult = await sendWhatsAppDownloadTemplate({
     toMobile: mobile || toMobile,
     name,
+    withApprove: Boolean(canApproveSocial),
   });
 
   return {
-    mode: "download_button",
+    mode: canApproveSocial ? "download_and_approve" : "download_button",
     template: templateResult,
     posterStatus: "ready",
+    canApproveSocial: Boolean(canApproveSocial),
   };
 }
 
@@ -157,5 +254,8 @@ module.exports = {
   preparePosterInBackground,
   queueReadyPosterForDownload,
   sendReadyPoster,
+  approveReadyPoster,
+  sendApproveConfirmation,
   getPendingPosterRequest,
+  toTenDigitMobile,
 };

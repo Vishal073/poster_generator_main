@@ -1,18 +1,22 @@
 const express = require("express");
 const {
   formatWhatsAppNumber,
-  sendWhatsAppContentTemplate,
+  sendWhatsAppText,
 } = require("./whatsappService");
-const { recordWhatsAppInbound } = require("./whatsappTemplateService");
+const { recordWhatsAppInbound, sendWhatsAppDownloadTemplate } = require("./whatsappTemplateService");
 const {
   handleGcrGraphixGreeting,
   isGcrGraphixGreeting,
+  findUserByMobile,
 } = require("../utils/portalAuth");
 const {
   pendingPosterRequests,
   preparePosterInBackground,
   sendReadyPoster,
+  approveReadyPoster,
+  sendApproveConfirmation,
 } = require("./whatsappPosterDelivery");
+const { getUserSocialApproveEligibility } = require("./facebookPostService");
 
 const router = express.Router();
 
@@ -181,28 +185,31 @@ router.post("/send-whatsapp-template", async (req, res) => {
       name,
       mobile: String(mobile).trim(),
     });
+
+    let canApproveSocial = false;
+    let resolvedUserId = null;
+    const matchedUser = await findUserByMobile(String(mobile).trim());
+    if (matchedUser?._id) {
+      resolvedUserId = String(matchedUser._id);
+      const eligibility = await getUserSocialApproveEligibility(resolvedUserId);
+      canApproveSocial = eligibility.canApprove;
+    }
+
     pendingPosterRequests.set(to, {
       name,
       mobile: String(mobile).trim(),
       posterPayload,
       posterStatus: "queued",
+      userId: resolvedUserId,
+      canApproveSocial,
+      caption: "",
       createdAt: new Date().toISOString(),
     });
 
-    const contentSid = String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim();
-    if (!contentSid || !contentSid.trim()) {
-      return res.status(500).json({
-        success: false,
-        message: "Twilio button template is not configured.",
-        error: "Set TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID in .env.",
-      });
-    }
-    const contentVariables = getContentVariables({ name });
-
-    const templateResult = await sendWhatsAppContentTemplate({
+    const templateResult = await sendWhatsAppDownloadTemplate({
       toMobile: to,
-      contentSid,
-      contentVariables,
+      name,
+      withApprove: canApproveSocial,
     });
     preparePosterInBackground({
       to,
@@ -272,6 +279,9 @@ router.post("/webhook", async (req, res) => {
   const skipPayload = String(process.env.TWILIO_SKIP_BUTTON_PAYLOAD || "skip")
     .trim()
     .toLowerCase();
+  const approvePayload = String(process.env.TWILIO_APPROVE_BUTTON_PAYLOAD || "approve")
+    .trim()
+    .toLowerCase();
 
   try {
     if (!from) {
@@ -301,6 +311,34 @@ router.post("/webhook", async (req, res) => {
       }).catch((error) => {
         console.error("Background poster WhatsApp send failed:", getErrorMessage(error));
       });
+      return res.status(204).end();
+    }
+
+    if (reply === "approve" || reply === approvePayload) {
+      const pendingRequest = pendingPosterRequests.get(normalizedFrom);
+      if (!pendingRequest?.canApproveSocial) {
+        return res.status(204).end();
+      }
+
+      approveReadyPoster({
+        to: normalizedFrom,
+        mobile: pendingRequest?.mobile || getMobileFromWhatsAppNumber(normalizedFrom),
+      })
+        .then((result) =>
+          sendApproveConfirmation({
+            toMobile: normalizedFrom,
+            result,
+          }),
+        )
+        .catch((error) => {
+          console.error("WhatsApp approve poster failed:", getErrorMessage(error));
+          return sendWhatsAppText({
+            toMobile: normalizedFrom,
+            body: `Could not post your poster: ${getErrorMessage(error)}`,
+          }).catch((sendError) => {
+            console.error("WhatsApp approve error reply failed:", getErrorMessage(sendError));
+          });
+        });
       return res.status(204).end();
     }
 
