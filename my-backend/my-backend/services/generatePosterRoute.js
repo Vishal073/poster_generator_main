@@ -250,6 +250,7 @@ async function generatePoster(req, res) {
         textBlendMode,
         posterSource: resolvedPosterSource,
         language,
+        addWatermark: body.addWatermark,
       });
     } catch (error) {
       return res.status(500).json({
@@ -771,6 +772,7 @@ router.post(
             posterSource: userPosterSource,
             language,
             ...resolvedLayout,
+            addWatermark: body.addWatermark,
           });
 
           const enhancement = await applyPosterEnhancement(

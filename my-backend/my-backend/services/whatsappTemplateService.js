@@ -48,7 +48,7 @@ function getApproveAfterImageDelayMs() {
     return raw;
   }
   // Default pause so WhatsApp shows the image before the Approve template.
-  return 4000;
+  return 3000;
 }
 
 function delay(ms) {

@@ -106,6 +106,7 @@ function getDefaultPosterPayload({ name, mobile }) {
     fontFamily: "Helvetica Neue",
     textOpacity: 0.9,
     textBlendMode: "multiply",
+    addWatermark: true,
   };
 }
 
@@ -137,6 +138,7 @@ function pickPosterOverrides(body) {
     "textOpacity",
     "textBlendMode",
     "language",
+    "addWatermark",
   ];
 
   return allowedFields.reduce((overrides, field) => {

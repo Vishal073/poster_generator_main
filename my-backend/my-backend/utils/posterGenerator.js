@@ -1,9 +1,26 @@
 const fs = require("fs/promises");
+const fsSync = require("fs");
 const path = require("path");
 const {
   applyLanguageToPosterContent,
   registerPosterFonts,
 } = require("./languageSupport");
+
+const DEFAULT_POSTER_WATERMARK_PATH = path.join(
+  __dirname,
+  "../assets/gcr-graphix-watermark.png"
+);
+
+function getDefaultPosterWatermarkSource() {
+  const envUrl = (process.env.POSTER_WATERMARK_URL || "").trim();
+  if (envUrl) {
+    return envUrl;
+  }
+  if (fsSync.existsSync(DEFAULT_POSTER_WATERMARK_PATH)) {
+    return DEFAULT_POSTER_WATERMARK_PATH;
+  }
+  return "";
+}
 
 function isUrl(value) {
   return /^https?:\/\//i.test(value);
@@ -82,6 +99,103 @@ function drawImageScaleToFill(ctx, image, targetX, targetY, targetWidth, targetH
     targetWidth,
     targetHeight
   );
+}
+
+function shouldAddPosterWatermark(value) {
+  if (value === false || value === 0) {
+    return false;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["false", "0", "no", "n"].includes(normalized)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function resolvePosterWatermarkOptions(options = {}) {
+  const addWatermark = shouldAddPosterWatermark(options.addWatermark);
+  const watermarkSource =
+    (typeof options.watermarkSource === "string" && options.watermarkSource.trim()) ||
+    getDefaultPosterWatermarkSource();
+
+  if (!addWatermark || !watermarkSource) {
+    return { addWatermark: false };
+  }
+
+  const pickPositiveNumber = (value, fallback) =>
+    typeof value === "number" && value > 0 ? value : fallback;
+
+  const allowedPositions = ["top-right", "bottom-right"];
+  const requestedPosition =
+    typeof options.watermarkPosition === "string"
+      ? options.watermarkPosition.trim().toLowerCase()
+      : "";
+  const watermarkPosition = allowedPositions.includes(requestedPosition)
+    ? requestedPosition
+    : "top-right";
+
+  return {
+    addWatermark: true,
+    watermarkSource,
+    watermarkWidth: pickPositiveNumber(options.watermarkWidth, 50),
+    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 50),
+    watermarkCornerRadius: pickPositiveNumber(options.watermarkCornerRadius, 12),
+    watermarkPadding: pickPositiveNumber(options.watermarkPadding, 16),
+    watermarkPosition,
+  };
+}
+
+function resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark) {
+  const x = canvasWidth - watermark.watermarkPadding - watermark.watermarkWidth;
+  const y =
+    watermark.watermarkPosition === "bottom-right"
+      ? canvasHeight - watermark.watermarkPadding - watermark.watermarkHeight
+      : watermark.watermarkPadding;
+
+  return { x, y };
+}
+
+function drawRoundedRectPath(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawRoundedRectImage(ctx, image, x, y, width, height, cornerRadius) {
+  ctx.save();
+  drawRoundedRectPath(ctx, x, y, width, height, cornerRadius);
+  ctx.clip();
+  drawImageScaleToFill(ctx, image, x, y, width, height);
+  ctx.restore();
+}
+
+async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
+  try {
+    const watermarkImage = await loadPosterImage(watermark.watermarkSource, loadImage);
+    const { x, y } = resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark);
+    drawRoundedRectImage(
+      ctx,
+      watermarkImage,
+      x,
+      y,
+      watermark.watermarkWidth,
+      watermark.watermarkHeight,
+      watermark.watermarkCornerRadius
+    );
+  } catch (error) {
+    console.warn("Poster watermark skipped:", error.message);
+  }
 }
 
 function drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, imageShape, options = {}) {
@@ -569,6 +683,13 @@ async function generatePosterImage({
   textOpacity = 0.9,
   textBlendMode = "multiply",
   language = "en",
+  addWatermark = true,
+  watermarkSource,
+  watermarkWidth = 50,
+  watermarkHeight = 50,
+  watermarkCornerRadius = 12,
+  watermarkPadding = 16,
+  watermarkPosition = "top-right",
 }) {
   let canvasApi;
   try {
@@ -594,6 +715,15 @@ async function generatePosterImage({
   fontFamily = localizedContent.fontFamily;
 
   const { createCanvas, loadImage } = canvasApi;
+  const watermark = resolvePosterWatermarkOptions({
+    addWatermark,
+    watermarkSource,
+    watermarkWidth,
+    watermarkHeight,
+    watermarkCornerRadius,
+    watermarkPadding,
+    watermarkPosition,
+  });
   const useInsets = isInsetLayout(insetFromBottom, insetLeft, insetRight);
 
   const hasName = name != null && String(name).trim().length > 0;
@@ -733,6 +863,10 @@ async function generatePosterImage({
     });
   }
 
+  if (watermark.addWatermark) {
+    await drawPosterWatermark(ctx, W, H, watermark, loadImage);
+  }
+
   const outputBuffer = canvas.toBuffer("image/png");
 
   return {
@@ -744,4 +878,6 @@ async function generatePosterImage({
 
 module.exports = {
   generatePosterImage,
+  resolvePosterWatermarkOptions,
+  shouldAddPosterWatermark,
 };
