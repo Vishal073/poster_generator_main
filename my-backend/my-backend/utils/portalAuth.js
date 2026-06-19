@@ -3,6 +3,7 @@ const LoginToken = require("../models/LoginToken");
 const RegistrationToken = require("../models/RegistrationToken");
 const User = require("../models/User");
 const { sendWhatsAppText } = require("../services/whatsappService");
+const { sendWhatsAppRegisterLink } = require("../services/whatsappTemplateService");
 
 const LOGIN_TOKEN_TTL_MS =
   Number(process.env.LOGIN_TOKEN_TTL_HOURS || 48) * 60 * 60 * 1000;
@@ -142,12 +143,11 @@ async function handleGcrGraphixGreeting(fromWhatsAppNumber) {
     return { handled: true, type: "existing_user", mobileNumber, name: user.name };
   }
 
-  const { registerUrl } = await createRegistrationToken(mobileNumber);
-  await sendWhatsAppText({
+  const { token, registerUrl } = await createRegistrationToken(mobileNumber);
+  await sendWhatsAppRegisterLink({
     toMobile: mobileNumber,
-    body:
-      `Hi! You're not registered with GCR Graphix yet.\n\n` +
-      `Complete your registration here:\n${registerUrl}`,
+    token,
+    registerUrl,
   });
   return { handled: true, type: "registration_link", mobileNumber, registerUrl };
 }

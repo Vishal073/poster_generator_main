@@ -2,6 +2,7 @@ const User = require("../models/User");
 const {
   sendPosterWhatsApp,
   sendWhatsAppContentTemplate,
+  sendWhatsAppText,
 } = require("./whatsappService");
 
 const WHATSAPP_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -75,6 +76,81 @@ async function recordWhatsAppInbound(fromWhatsAppNumber) {
   );
 
   return { mobileNumber, whatsappLastInboundAt: now };
+}
+
+function getRegisterTemplateContentSid() {
+  return String(process.env.TWILIO_REGISTER_TEMPLATE_CONTENT_SID || "").trim();
+}
+
+function getLoginTemplateContentSid() {
+  return String(process.env.TWILIO_LOGIN_TEMPLATE_CONTENT_SID || "").trim();
+}
+
+/**
+ * Send a WhatsApp Content template with a URL button, or fall back to plain text.
+ */
+async function sendWhatsAppPortalLink({
+  toMobile,
+  contentSid,
+  contentVariables,
+  fallbackBody,
+}) {
+  if (contentSid) {
+    try {
+      return await sendWhatsAppContentTemplate({
+        toMobile,
+        contentSid,
+        contentVariables,
+      });
+    } catch (error) {
+      console.error("WhatsApp portal link template failed, falling back to text:", {
+        code: error.code,
+        message: error.message,
+      });
+    }
+  }
+
+  return sendWhatsAppText({
+    toMobile,
+    body: fallbackBody,
+  });
+}
+
+/**
+ * Registration link — template URL should end with /portal/register?token={{1}}.
+ */
+async function sendWhatsAppRegisterLink({ toMobile, token, registerUrl }) {
+  const contentSid = getRegisterTemplateContentSid();
+
+  return sendWhatsAppPortalLink({
+    toMobile,
+    contentSid,
+    contentVariables: {
+      "1": String(token),
+    },
+    fallbackBody:
+      `Hi! You're not registered with GCR Graphix yet.\n\n` +
+      `Tap to register (opens in browser):\n${registerUrl}`,
+  });
+}
+
+/**
+ * Login link — static template body; URL button ends with /portal/login?token={{1}}.
+ */
+async function sendWhatsAppLoginLink({ toMobile, name, token, loginUrl }) {
+  const contentSid = getLoginTemplateContentSid();
+
+  return sendWhatsAppPortalLink({
+    toMobile,
+    contentSid,
+    contentVariables: {
+      "1": String(token),
+    },
+    fallbackBody:
+      `Hi ${name},\n\n` +
+      `Tap to open your poster account (opens in browser):\n${loginUrl}\n\n` +
+      `To connect Facebook: open in Chrome or Safari (in WhatsApp, tap ⋮ → Open in browser), then tap Connect Facebook.`,
+  });
 }
 
 async function sendWhatsAppDownloadTemplate({ toMobile, name }) {
@@ -166,6 +242,9 @@ module.exports = {
   isWhatsAppSessionOpen,
   recordWhatsAppInbound,
   sendWhatsAppDownloadTemplate,
+  sendWhatsAppLoginLink,
+  sendWhatsAppPortalLink,
+  sendWhatsAppRegisterLink,
   sendWhatsAppTemplateThenImage,
   sendWhatsAppImageSmart,
   resolveLastInboundAt,

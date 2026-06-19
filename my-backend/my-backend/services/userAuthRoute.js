@@ -8,7 +8,7 @@ const { requireAuth, JWT_SECRET } = require("../middleware/requireAuth");
 const { requireUserAuth } = require("../middleware/requireUserAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { getFacebookStatusByUserIds } = require("./facebookPostService");
-const { sendWhatsAppText } = require("./whatsappService");
+const { sendWhatsAppLoginLink } = require("./whatsappTemplateService");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
 const {
   buildUserPayload,
@@ -102,14 +102,11 @@ router.post("/auth/user/login-link", requireAuth, requireDb, async (req, res) =>
     let whatsappResult = null;
 
     if (sendWhatsApp) {
-      const message =
-        `Hi ${user.name},\n\n` +
-        `Open your poster account (no password needed):\n${loginUrl}\n\n` +
-        `To connect Facebook: open this link in Chrome or Safari first (in WhatsApp, tap ⋮ → Open in browser), then tap Connect Facebook so your phone can use the Facebook app or saved login.`;
-
-      whatsappResult = await sendWhatsAppText({
+      whatsappResult = await sendWhatsAppLoginLink({
         toMobile: user.mobileNumber,
-        body: message,
+        name: user.name,
+        token,
+        loginUrl,
       });
     }
 
