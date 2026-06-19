@@ -6,6 +6,8 @@ const {
   uploadPosterToCloudinary,
   uploadBufferToCloudinary,
   isAllowedBasePosterSource,
+  isAllowedPosterSource,
+  getEventPosterRootFolder,
   listBasePostersFromCloudinary,
   getBasePosterFolder,
 } = require("./cloudnaryService");
@@ -188,11 +190,12 @@ async function generatePoster(req, res) {
       });
     }
 
-    if (!isAllowedBasePosterSource(resolvedPosterSource)) {
+    if (!isAllowedPosterSource(resolvedPosterSource)) {
       return res.status(400).json({
         success: false,
-        message: `posterSource must be an image from Cloudinary folder "${getBasePosterFolder()}".`,
+        message: `posterSource must be an image from Cloudinary folders "${getBasePosterFolder()}" or "${getEventPosterRootFolder()}".`,
         folder: getBasePosterFolder(),
+        eventPosterFolder: getEventPosterRootFolder(),
       });
     }
 
@@ -666,13 +669,14 @@ router.post(
       }
 
       const invalidPosterSources = posterSources.filter(
-        (source) => !isAllowedBasePosterSource(source)
+        (source) => !isAllowedPosterSource(source)
       );
       if (invalidPosterSources.length > 0) {
         return res.status(400).json({
           success: false,
-          message: `Every poster source must be an image from Cloudinary folder "${getBasePosterFolder()}".`,
+          message: `Every poster source must be an image from Cloudinary folders "${getBasePosterFolder()}" or "${getEventPosterRootFolder()}".`,
           folder: getBasePosterFolder(),
+          eventPosterFolder: getEventPosterRootFolder(),
           invalidCount: invalidPosterSources.length,
         });
       }
