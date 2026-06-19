@@ -1,20 +1,20 @@
 const express = require("express");
-const { generatePosterImage } = require("../utils/posterGenerator");
-const { uploadPosterToCloudinary } = require("./cloudnaryService");
 const {
   formatWhatsAppNumber,
-  sendPosterWhatsApp,
   sendWhatsAppContentTemplate,
-  sendWhatsAppText,
 } = require("./whatsappService");
 const { recordWhatsAppInbound } = require("./whatsappTemplateService");
 const {
   handleGcrGraphixGreeting,
   isGcrGraphixGreeting,
 } = require("../utils/portalAuth");
+const {
+  pendingPosterRequests,
+  preparePosterInBackground,
+  sendReadyPoster,
+} = require("./whatsappPosterDelivery");
 
 const router = express.Router();
-const pendingPosterRequests = new Map();
 
 function getErrorMessage(error) {
   if (error instanceof Error) {
@@ -49,11 +49,6 @@ function maskValue(value) {
   }
 
   return `${rawValue.slice(0, 4)}...${rawValue.slice(-4)}`;
-}
-
-function getPosterFileName(mobileValue) {
-  const normalizedMobile = String(mobileValue || "").replace(/\D/g, "");
-  return `${normalizedMobile || `poster-${Date.now()}`}.png`;
 }
 
 function getMobileFromWhatsAppNumber(value) {
@@ -155,125 +150,9 @@ function buildPosterRequest(body, { name, mobile }) {
   };
 }
 
-function updatePendingRequest(to, updates) {
-  const existingRequest = pendingPosterRequests.get(to);
-  if (!existingRequest) {
-    return;
-  }
-
-  pendingPosterRequests.set(to, {
-    ...existingRequest,
-    ...updates,
-  });
-}
-
 function getContentVariables({ name }) {
   return {
     "1": String(name || "Customer"),
-  };
-}
-
-async function generateAndUploadPoster({ mobile, posterPayload }) {
-  console.log("Poster generation started:", { mobile });
-  const posterResult = await generatePosterImage(posterPayload);
-  const imageName = getPosterFileName(mobile);
-  const uploadResult = await uploadPosterToCloudinary(posterResult.buffer, imageName);
-  console.log("Poster uploaded to Cloudinary:", {
-    mobile,
-    imageName,
-    imageUrl: uploadResult.imageUrl,
-  });
-
-  return {
-    imageName,
-    imageUrl: uploadResult.imageUrl,
-    cloudinaryPublicId: uploadResult.publicId,
-  };
-}
-
-function preparePosterInBackground({ to, mobile, posterPayload }) {
-  const posterPromise = generateAndUploadPoster({ mobile, posterPayload })
-    .then((posterResult) => {
-      if (!posterResult) {
-        return null;
-      }
-
-      updatePendingRequest(to, {
-        posterResult,
-        posterStatus: "ready",
-      });
-      return posterResult;
-    })
-    .catch((error) => {
-      updatePendingRequest(to, {
-        posterError: getErrorMessage(error),
-        posterStatus: "failed",
-      });
-      console.error("Poster pre-generation failed:", getErrorMessage(error));
-      return null;
-    });
-
-  updatePendingRequest(to, {
-    posterPromise,
-    posterStatus: "generating",
-  });
-}
-
-async function getOrCreatePosterResult({ to, name, mobile, posterPayload }) {
-  const pendingRequest = pendingPosterRequests.get(to) || {
-    name,
-    mobile,
-    posterPayload,
-  };
-  const resolvedPosterPayload =
-    pendingRequest.posterPayload ||
-    posterPayload ||
-    getDefaultPosterPayload({
-      name: pendingRequest.name,
-      mobile: pendingRequest.mobile,
-    });
-  let posterResult = pendingRequest.posterResult ||
-    (pendingRequest.posterPromise ? await pendingRequest.posterPromise : null);
-
-  if (!posterResult) {
-    posterResult = await generateAndUploadPoster({
-      mobile: pendingRequest.mobile,
-      posterPayload: resolvedPosterPayload,
-    });
-  }
-
-  return {
-    pendingRequest,
-    posterResult,
-  };
-}
-
-async function sendReadyPoster({ to, name, mobile, posterPayload }) {
-  const { pendingRequest, posterResult } = await getOrCreatePosterResult({
-    to,
-    name,
-    mobile,
-    posterPayload,
-  });
-  const whatsappResult = await sendPosterWhatsApp({
-    toMobile: to,
-    imageUrl: posterResult.imageUrl,
-  });
-
-  console.log("Poster sent to WhatsApp:", {
-    to,
-    imageUrl: posterResult.imageUrl,
-    sid: whatsappResult.sid,
-    status: whatsappResult.status,
-  });
-  pendingPosterRequests.delete(to);
-
-  return {
-    mobile: pendingRequest.mobile,
-    imageName: posterResult.imageName,
-    imageUrl: posterResult.imageUrl,
-    cloudinaryPublicId: posterResult.cloudinaryPublicId,
-    whatsapp: whatsappResult,
   };
 }
 

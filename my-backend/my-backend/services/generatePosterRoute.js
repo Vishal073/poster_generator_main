@@ -14,7 +14,7 @@ const {
 const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const User = require("../models/User");
-const { sendWhatsAppImageSmart } = require("./whatsappTemplateService");
+const { queueReadyPosterForDownload } = require("./whatsappPosterDelivery");
 const { postPosterForUser, postPosterToInstagramForUser } = require("./facebookPostService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
@@ -285,12 +285,15 @@ async function generatePoster(req, res) {
           mobileValue,
           "name whatsappLastInboundAt",
         );
-        whatsappResult = await sendWhatsAppImageSmart({
+        whatsappResult = await queueReadyPosterForDownload({
           toMobile: mobileValue,
           name: waUser?.name || name || username || "Customer",
-          imageUrl: uploadResult.imageUrl,
-          body: "Here is your image",
-          lastInboundAt: waUser?.whatsappLastInboundAt,
+          mobile: mobileValue,
+          posterResult: {
+            imageName,
+            imageUrl: uploadResult.imageUrl,
+            cloudinaryPublicId: uploadResult.publicId,
+          },
         });
       } catch (error) {
         return res.status(502).json({
@@ -298,7 +301,6 @@ async function generatePoster(req, res) {
           message: "Poster generated and uploaded, but WhatsApp delivery failed.",
           imageName,
           imageUrl: uploadResult.imageUrl,
-          cloudinaryPublicId: uploadResult.publicId,
           error: getErrorMessage(error),
         });
       }
@@ -384,7 +386,8 @@ async function generatePoster(req, res) {
 
     let responseMessage = "Poster generated and uploaded to Cloudinary.";
     if (shouldSendWhatsApp) {
-      responseMessage = "Poster generated, uploaded, and sent to WhatsApp.";
+      responseMessage =
+        "Poster generated and uploaded. WhatsApp download button sent — user taps Download to receive the image.";
     }
     if (shouldUploadFacebook && facebookResult?.success) {
       responseMessage = shouldSendWhatsApp
