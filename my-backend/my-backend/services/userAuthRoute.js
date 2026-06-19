@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
 const LoginToken = require("../models/LoginToken");
 const User = require("../models/User");
 const { requireAuth, JWT_SECRET } = require("../middleware/requireAuth");
@@ -8,8 +9,26 @@ const { requireUserAuth } = require("../middleware/requireUserAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { getFacebookStatusByUserIds } = require("./facebookPostService");
 const { sendWhatsAppText } = require("./whatsappService");
+const { uploadBufferToCloudinary } = require("./cloudnaryService");
+const {
+  buildUserPayload,
+  getUserImageFileName,
+  validateFieldFormats,
+  validateUserPayload,
+} = require("../utils/userPayload");
+const {
+  createLoginLinkForUser,
+  getValidRegistrationToken,
+  markRegistrationTokenUsed,
+} = require("../utils/portalAuth");
 
 const router = express.Router();
+const registerUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+});
 
 const LOGIN_TOKEN_TTL_MS =
   Number(process.env.LOGIN_TOKEN_TTL_HOURS || 48) * 60 * 60 * 1000;
@@ -188,6 +207,146 @@ router.post("/auth/user/verify-token", requireDb, async (req, res) => {
     });
   }
 });
+
+/**
+ * GET /auth/user/register-token?token=
+ * Validate WhatsApp registration link before showing the form.
+ */
+router.get("/auth/user/register-token", requireDb, async (req, res) => {
+  try {
+    const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "token is required.",
+      });
+    }
+
+    const registrationDoc = await getValidRegistrationToken(token);
+    if (!registrationDoc) {
+      return res.status(401).json({
+        success: false,
+        message: "Registration link is invalid or expired.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Registration link is valid.",
+      mobileNumber: registrationDoc.mobileNumber,
+      expiresAt: registrationDoc.expiresAt.toISOString(),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to validate registration link.",
+    });
+  }
+});
+
+/**
+ * POST /auth/user/register
+ * Public self-registration using a WhatsApp registration link token.
+ */
+router.post(
+  "/auth/user/register",
+  requireDb,
+  registerUpload.single("userImage"),
+  async (req, res) => {
+    try {
+      const body =
+        req.body != null && typeof req.body === "object" && !Array.isArray(req.body)
+          ? req.body
+          : {};
+      const registrationToken =
+        typeof body.registrationToken === "string" ? body.registrationToken.trim() : "";
+
+      if (!registrationToken) {
+        return res.status(400).json({
+          success: false,
+          message: "registrationToken is required.",
+        });
+      }
+
+      const registrationDoc = await getValidRegistrationToken(registrationToken);
+      if (!registrationDoc) {
+        return res.status(401).json({
+          success: false,
+          message: "Registration link is invalid or expired.",
+        });
+      }
+
+      const payload = buildUserPayload(body);
+      payload.mobileNumber = registrationDoc.mobileNumber;
+
+      const missingFields = validateUserPayload(payload);
+      if (missingFields.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Required fields are missing.",
+          missingFields,
+        });
+      }
+
+      const formatErrors = validateFieldFormats(payload);
+      if (formatErrors.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: formatErrors[0].message,
+          errors: formatErrors,
+        });
+      }
+
+      if (payload.mobileNumber !== registrationDoc.mobileNumber) {
+        return res.status(400).json({
+          success: false,
+          message: "Mobile number must match the WhatsApp number used for registration.",
+        });
+      }
+
+      if (req.file) {
+        const uploadResult = await uploadBufferToCloudinary(
+          req.file.buffer,
+          getUserImageFileName(payload, req.file.originalname),
+          {
+            folder: process.env.CLOUDINARY_USER_FOLDER || "user-images",
+          },
+        );
+        payload.userImageUrl = uploadResult.imageUrl;
+        payload.userImagePublicId = uploadResult.publicId;
+      }
+
+      const user = await User.create(payload);
+      await markRegistrationTokenUsed(registrationToken);
+
+      const { loginUrl, expiresAt } = await createLoginLinkForUser(user);
+
+      return res.status(201).json({
+        success: true,
+        message: "Registration completed successfully.",
+        loginUrl,
+        expiresAt: expiresAt.toISOString(),
+        data: {
+          _id: String(user._id),
+          name: user.name,
+          mobileNumber: user.mobileNumber,
+        },
+      });
+    } catch (error) {
+      if (error && error.code === 11000 && error.keyPattern && error.keyPattern.mobileNumber) {
+        return res.status(409).json({
+          success: false,
+          message: "Mobile number already exists.",
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to register user.",
+      });
+    }
+  },
+);
 
 /**
  * GET /auth/user/me

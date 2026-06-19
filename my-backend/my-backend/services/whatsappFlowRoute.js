@@ -8,6 +8,10 @@ const {
   sendWhatsAppText,
 } = require("./whatsappService");
 const { recordWhatsAppInbound } = require("./whatsappTemplateService");
+const {
+  handleGcrGraphixGreeting,
+  isGcrGraphixGreeting,
+} = require("../utils/portalAuth");
 
 const router = express.Router();
 const pendingPosterRequests = new Map();
@@ -423,6 +427,14 @@ router.post("/webhook", async (req, res) => {
 
     if (["skip", skipPayload].includes(reply)) {
       pendingPosterRequests.delete(normalizedFrom);
+      return res.status(204).end();
+    }
+
+    const bodyText = String(req.body.Body || "").trim();
+    if (isGcrGraphixGreeting(bodyText)) {
+      handleGcrGraphixGreeting(normalizedFrom).catch((error) => {
+        console.error("GCR Graphix greeting reply failed:", getErrorMessage(error));
+      });
       return res.status(204).end();
     }
 
