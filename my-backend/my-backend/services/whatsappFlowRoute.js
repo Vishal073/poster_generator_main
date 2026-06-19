@@ -209,7 +209,6 @@ router.post("/send-whatsapp-template", async (req, res) => {
     const templateResult = await sendWhatsAppDownloadTemplate({
       toMobile: to,
       name,
-      withApprove: canApproveSocial,
     });
     preparePosterInBackground({
       to,
@@ -316,7 +315,7 @@ router.post("/webhook", async (req, res) => {
 
     if (reply === "approve" || reply === approvePayload) {
       const pendingRequest = pendingPosterRequests.get(normalizedFrom);
-      if (!pendingRequest?.canApproveSocial) {
+      if (!pendingRequest?.canApproveSocial || !pendingRequest?.downloadedAt) {
         return res.status(204).end();
       }
 

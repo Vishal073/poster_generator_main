@@ -15,6 +15,19 @@ function getDownloadApproveTemplateContentSid() {
   return String(process.env.TWILIO_DOWNLOAD_APPROVE_TEMPLATE_CONTENT_SID || "").trim();
 }
 
+function getApprovePostTemplateContentSid() {
+  return (
+    String(process.env.TWILIO_APPROVE_POST_TEMPLATE_CONTENT_SID || "").trim() ||
+    getDownloadApproveTemplateContentSid()
+  );
+}
+
+function getApprovePostTemplateContentVariables({ name }) {
+  return {
+    "1": String(name || "Customer"),
+  };
+}
+
 function getDownloadTemplateContentVariables({ name }) {
   return {
     "1": String(name || "Customer"),
@@ -157,14 +170,8 @@ async function sendWhatsAppLoginLink({ toMobile, name, token, loginUrl }) {
   });
 }
 
-async function sendWhatsAppDownloadTemplate({ toMobile, name, withApprove = false }) {
-  let contentSid = getDownloadTemplateContentSid();
-  if (withApprove) {
-    const approveSid = getDownloadApproveTemplateContentSid();
-    if (approveSid) {
-      contentSid = approveSid;
-    }
-  }
+async function sendWhatsAppDownloadTemplate({ toMobile, name }) {
+  const contentSid = getDownloadTemplateContentSid();
 
   if (!contentSid) {
     throw new Error(
@@ -176,6 +183,25 @@ async function sendWhatsAppDownloadTemplate({ toMobile, name, withApprove = fals
     toMobile,
     contentSid,
     contentVariables: getDownloadTemplateContentVariables({ name }),
+  });
+}
+
+/**
+ * After the poster image is sent — offer Approve to post on Facebook/Instagram.
+ */
+async function sendWhatsAppApprovePostTemplate({ toMobile, name }) {
+  const contentSid = getApprovePostTemplateContentSid();
+  if (!contentSid) {
+    console.warn(
+      "Approve post template not configured. Set TWILIO_APPROVE_POST_TEMPLATE_CONTENT_SID in .env.",
+    );
+    return null;
+  }
+
+  return sendWhatsAppContentTemplate({
+    toMobile,
+    contentSid,
+    contentVariables: getApprovePostTemplateContentVariables({ name }),
   });
 }
 
@@ -253,6 +279,7 @@ module.exports = {
   isWhatsAppSessionOpen,
   recordWhatsAppInbound,
   sendWhatsAppDownloadTemplate,
+  sendWhatsAppApprovePostTemplate,
   sendWhatsAppLoginLink,
   sendWhatsAppPortalLink,
   sendWhatsAppRegisterLink,

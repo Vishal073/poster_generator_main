@@ -5,7 +5,7 @@ const {
   sendPosterWhatsApp,
   sendWhatsAppText,
 } = require("./whatsappService");
-const { sendWhatsAppDownloadTemplate } = require("./whatsappTemplateService");
+const { sendWhatsAppDownloadTemplate, sendWhatsAppApprovePostTemplate } = require("./whatsappTemplateService");
 const { approvePosterForUser } = require("./facebookPostService");
 const { findUserByMobile } = require("../utils/portalAuth");
 
@@ -124,12 +124,27 @@ async function sendReadyPoster({ to, name, mobile, posterPayload }) {
     downloadedAt: new Date().toISOString(),
   });
 
+  let approveOffer = null;
+  const latestPending = pendingPosterRequests.get(to) || pendingRequest;
+  if (latestPending.canApproveSocial) {
+    approveOffer = await sendWhatsAppApprovePostTemplate({
+      toMobile: to,
+      name: latestPending.name || name,
+    });
+    if (approveOffer) {
+      updatePendingRequest(to, {
+        approveOfferedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   return {
     mobile: pendingRequest.mobile,
     imageName: posterResult.imageName,
     imageUrl: posterResult.imageUrl,
     cloudinaryPublicId: posterResult.cloudinaryPublicId,
     whatsapp: whatsappResult,
+    approveOffer,
   };
 }
 
@@ -169,6 +184,14 @@ async function approveReadyPoster({ to, mobile }) {
     throw new Error("No pending poster found. Please ask admin to send a new poster.");
   }
 
+  if (!pendingRequest.canApproveSocial) {
+    throw new Error("Facebook posting is not available for this poster.");
+  }
+
+  if (!pendingRequest.downloadedAt) {
+    throw new Error("Please tap Download first to receive your poster.");
+  }
+
   const { posterResult } = await getOrCreatePosterResult({
     to,
     name: pendingRequest.name,
@@ -204,7 +227,7 @@ async function sendApproveConfirmation({ toMobile, result }) {
 }
 
 /**
- * Poster already generated — send "ready" template with Download button; Approve when Facebook connected.
+ * Step 1: send download-only template. Approve is offered after the user downloads the image.
  */
 async function queueReadyPosterForDownload({
   toMobile,
@@ -233,11 +256,10 @@ async function queueReadyPosterForDownload({
   const templateResult = await sendWhatsAppDownloadTemplate({
     toMobile: mobile || toMobile,
     name,
-    withApprove: Boolean(canApproveSocial),
   });
 
   return {
-    mode: canApproveSocial ? "download_and_approve" : "download_button",
+    mode: "download_button",
     template: templateResult,
     posterStatus: "ready",
     canApproveSocial: Boolean(canApproveSocial),
