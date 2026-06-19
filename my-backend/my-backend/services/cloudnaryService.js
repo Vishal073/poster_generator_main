@@ -180,9 +180,9 @@ function formatEventPosterResource(resource) {
 
 async function listEventPosterResourcesFromCloudinary(options = {}) {
   const rootFolder = getEventPosterRootFolder();
-  const dateFilter = options.date ? String(options.date).trim() : "";
-  const prefix = dateFilter
-    ? `${rootFolder}/${dateFilter}-`
+  const folderFilter = options.folder ? String(options.folder).trim() : "";
+  const prefix = folderFilter
+    ? `${rootFolder}/${folderFilter}/`
     : `${rootFolder}/`;
   const maxResults = Number(options.maxResults) > 0 ? Number(options.maxResults) : 500;
   const posters = [];
@@ -207,40 +207,53 @@ async function listEventPosterResourcesFromCloudinary(options = {}) {
   return posters.slice(0, maxResults);
 }
 
-function groupEventPostersByDate(posters) {
+function formatEventDisplayName(eventName) {
+  return String(eventName || "")
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function groupEventPostersByFolder(posters) {
   const groups = new Map();
 
   for (const poster of posters) {
-    const date = poster.date;
-    if (!date) {
+    if (!poster.folder) {
       continue;
     }
 
-    if (!groups.has(date)) {
-      groups.set(date, {
-        date,
+    if (!groups.has(poster.folder)) {
+      const displayEvent = formatEventDisplayName(poster.eventName);
+      groups.set(poster.folder, {
+        folder: poster.folder,
+        date: poster.date,
+        eventName: displayEvent,
+        title: `${poster.date} ${displayEvent}`.trim(),
         imageCount: 0,
-        folders: new Set(),
+        coverImageUrl: poster.imageUrl,
+        latestCreatedAt: poster.createdAt || "",
       });
     }
 
-    const group = groups.get(date);
+    const group = groups.get(poster.folder);
     group.imageCount += 1;
-    if (poster.folder) {
-      group.folders.add(poster.folder);
+
+    if ((poster.createdAt || "") >= group.latestCreatedAt) {
+      group.latestCreatedAt = poster.createdAt || "";
+      group.coverImageUrl = poster.imageUrl;
     }
   }
 
   return Array.from(groups.values())
-    .map((group) => ({
-      date: group.date,
-      imageCount: group.imageCount,
-      folders: Array.from(group.folders).sort(),
-    }))
+    .map(({ latestCreatedAt, ...group }) => group)
     .sort((left, right) => {
       const leftParts = left.date.split("-").reverse().join("-");
       const rightParts = right.date.split("-").reverse().join("-");
-      return rightParts.localeCompare(leftParts);
+      if (leftParts !== rightParts) {
+        return rightParts.localeCompare(leftParts);
+      }
+      return left.title.localeCompare(right.title);
     });
 }
 
@@ -279,6 +292,7 @@ module.exports.sanitizeEventName = sanitizeEventName;
 module.exports.buildEventPosterFolder = buildEventPosterFolder;
 module.exports.parseEventPosterFolderKey = parseEventPosterFolderKey;
 module.exports.listEventPosterResourcesFromCloudinary = listEventPosterResourcesFromCloudinary;
-module.exports.groupEventPostersByDate = groupEventPostersByDate;
+module.exports.groupEventPostersByFolder = groupEventPostersByFolder;
+module.exports.formatEventDisplayName = formatEventDisplayName;
 module.exports.isAllowedEventPosterSource = isAllowedEventPosterSource;
 module.exports.isAllowedPosterSource = isAllowedPosterSource;

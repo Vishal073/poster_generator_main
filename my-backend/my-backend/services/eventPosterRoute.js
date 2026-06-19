@@ -5,7 +5,7 @@ const {
   uploadBufferToCloudinary,
   buildEventPosterFolder,
   getEventPosterRootFolder,
-  groupEventPostersByDate,
+  groupEventPostersByFolder,
   isValidEventDate,
   listEventPosterResourcesFromCloudinary,
   sanitizeEventName,
@@ -34,34 +34,26 @@ function getErrorMessage(error) {
 
 router.get("/event-posters", async (req, res) => {
   try {
-    const date = typeof req.query.date === "string" ? req.query.date.trim() : "";
+    const folder =
+      typeof req.query.folder === "string" ? req.query.folder.trim() : "";
 
-    if (date && !isValidEventDate(date)) {
-      return res.status(400).json({
-        success: false,
-        message: "date query must be in DD-MM-YYYY format.",
-        rootFolder: getEventPosterRootFolder(),
-      });
-    }
+    if (folder) {
+      const posters = await listEventPosterResourcesFromCloudinary({ folder });
 
-    const posters = await listEventPosterResourcesFromCloudinary({
-      date: date || undefined,
-    });
-
-    if (date) {
       return res.status(200).json({
         success: true,
         message: posters.length
-          ? `Event posters fetched for ${date}.`
-          : `No event posters found for ${date}.`,
+          ? `Event posters fetched for folder ${folder}.`
+          : `No event posters found for folder ${folder}.`,
         rootFolder: getEventPosterRootFolder(),
-        date,
+        folder,
         count: posters.length,
         data: posters,
       });
     }
 
-    const grouped = groupEventPostersByDate(posters);
+    const posters = await listEventPosterResourcesFromCloudinary();
+    const grouped = groupEventPostersByFolder(posters);
 
     return res.status(200).json({
       success: true,
