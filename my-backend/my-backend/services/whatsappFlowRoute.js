@@ -3,7 +3,7 @@ const {
   formatWhatsAppNumber,
   sendWhatsAppText,
 } = require("./whatsappService");
-const { recordWhatsAppInbound, sendWhatsAppDownloadTemplate } = require("./whatsappTemplateService");
+const { recordWhatsAppInbound, sendWhatsAppDownloadTemplate, isWhatsAppSessionOpen } = require("./whatsappTemplateService");
 const {
   handleGcrGraphixGreeting,
   isGcrGraphixGreeting,
@@ -188,23 +188,45 @@ router.post("/send-whatsapp-template", async (req, res) => {
 
     let canApproveSocial = false;
     let resolvedUserId = null;
+    let sessionOpen = false;
     const matchedUser = await findUserByMobile(String(mobile).trim());
     if (matchedUser?._id) {
       resolvedUserId = String(matchedUser._id);
       const eligibility = await getUserSocialApproveEligibility(resolvedUserId);
       canApproveSocial = eligibility.canApprove;
     }
+    sessionOpen = isWhatsAppSessionOpen(matchedUser?.whatsappLastInboundAt);
 
     pendingPosterRequests.set(to, {
       name,
       mobile: String(mobile).trim(),
       posterPayload,
-      posterStatus: "queued",
+      posterStatus: sessionOpen ? "generating" : "queued",
       userId: resolvedUserId,
       canApproveSocial,
+      sessionOpen,
       caption: "",
       createdAt: new Date().toISOString(),
     });
+
+    if (sessionOpen) {
+      preparePosterInBackground({
+        to,
+        mobile: String(mobile).trim(),
+        posterPayload,
+        autoDeliverOnReady: true,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "WhatsApp session is active. Poster will be sent directly when ready.",
+        name,
+        mobile: String(mobile).trim(),
+        posterStatus: "generating",
+        sessionOpen: true,
+        posterPayload,
+      });
+    }
 
     const templateResult = await sendWhatsAppDownloadTemplate({
       toMobile: to,
@@ -222,6 +244,7 @@ router.post("/send-whatsapp-template", async (req, res) => {
       name,
       mobile: String(mobile).trim(),
       posterStatus: "generating",
+      sessionOpen: false,
       posterPayload,
       whatsapp: templateResult,
     });

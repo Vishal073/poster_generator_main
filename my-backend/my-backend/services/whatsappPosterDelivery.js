@@ -10,6 +10,7 @@ const {
   sendWhatsAppDownloadTemplate,
   sendWhatsAppApprovePostTemplate,
   getApproveAfterImageDelayMs,
+  isWhatsAppSessionOpen,
   delay,
 } = require("./whatsappTemplateService");
 const { approvePosterForUser } = require("./facebookPostService");
@@ -54,9 +55,9 @@ async function generateAndUploadPoster({ mobile, posterPayload }) {
   };
 }
 
-function preparePosterInBackground({ to, mobile, posterPayload }) {
+function preparePosterInBackground({ to, mobile, posterPayload, autoDeliverOnReady = false }) {
   const posterPromise = generateAndUploadPoster({ mobile, posterPayload })
-    .then((posterResult) => {
+    .then(async (posterResult) => {
       if (!posterResult) {
         return null;
       }
@@ -65,6 +66,17 @@ function preparePosterInBackground({ to, mobile, posterPayload }) {
         posterResult,
         posterStatus: "ready",
       });
+
+      if (autoDeliverOnReady) {
+        const pending = pendingPosterRequests.get(to);
+        await sendReadyPoster({
+          to,
+          name: pending?.name || "Customer",
+          mobile: pending?.mobile || mobile,
+          posterPayload,
+        });
+      }
+
       return posterResult;
     })
     .catch((error) => {
@@ -243,7 +255,7 @@ async function sendApproveConfirmation({ toMobile, result }) {
 }
 
 /**
- * Step 1: send download-only template. Approve is offered after the user downloads the image.
+ * Active 24h WhatsApp session → send image directly. Otherwise download template first.
  */
 async function queueReadyPosterForDownload({
   toMobile,
@@ -254,28 +266,51 @@ async function queueReadyPosterForDownload({
   userId,
   caption,
   canApproveSocial = false,
+  lastInboundAt = null,
 }) {
   const to = formatWhatsAppNumber(toMobile);
+  const sessionOpen = isWhatsAppSessionOpen(lastInboundAt);
+  const displayName = String(name || "Customer").trim() || "Customer";
+  const displayMobile = String(mobile || toMobile).trim();
 
   pendingPosterRequests.set(to, {
-    name: String(name || "Customer").trim() || "Customer",
-    mobile: String(mobile || toMobile).trim(),
+    name: displayName,
+    mobile: displayMobile,
     posterPayload: posterPayload || null,
     posterResult,
     posterStatus: "ready",
     userId: userId ? String(userId) : null,
     caption: typeof caption === "string" ? caption.trim() : "",
     canApproveSocial: Boolean(canApproveSocial),
+    sessionOpen,
     createdAt: new Date().toISOString(),
   });
 
+  if (sessionOpen) {
+    const directResult = await sendReadyPoster({
+      to,
+      name: displayName,
+      mobile: displayMobile,
+      posterPayload: posterPayload || null,
+    });
+
+    return {
+      mode: "direct",
+      sessionOpen: true,
+      posterStatus: "ready",
+      canApproveSocial: Boolean(canApproveSocial),
+      ...directResult,
+    };
+  }
+
   const templateResult = await sendWhatsAppDownloadTemplate({
-    toMobile: mobile || toMobile,
-    name,
+    toMobile: displayMobile,
+    name: displayName,
   });
 
   return {
     mode: "download_button",
+    sessionOpen: false,
     template: templateResult,
     posterStatus: "ready",
     canApproveSocial: Boolean(canApproveSocial),

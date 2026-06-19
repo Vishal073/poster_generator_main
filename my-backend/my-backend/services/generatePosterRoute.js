@@ -313,6 +313,7 @@ async function generatePoster(req, res) {
           userId: resolvedUserId || undefined,
           caption: posterCaption,
           canApproveSocial: socialEligibility.canApprove,
+          lastInboundAt: waUser?.whatsappLastInboundAt || null,
         });
       } catch (error) {
         return res.status(502).json({
