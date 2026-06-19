@@ -34,6 +34,21 @@ function toTenDigitMobile(value) {
   return digits;
 }
 
+async function findUserByMobile(value) {
+  const tenDigit = toTenDigitMobile(value);
+  if (!/^\d{10}$/.test(tenDigit)) {
+    return null;
+  }
+
+  const directMatch = await User.findOne({ mobileNumber: tenDigit }).lean();
+  if (directMatch) {
+    return directMatch;
+  }
+
+  // Fallback for legacy rows stored with a country prefix or extra characters.
+  return User.findOne({ mobileNumber: new RegExp(`${tenDigit}$`) }).lean();
+}
+
 function normalizeGreetingText(text) {
   return String(text || "")
     .toLowerCase()
@@ -117,17 +132,14 @@ async function handleGcrGraphixGreeting(fromWhatsAppNumber) {
     return { handled: false, reason: "invalid_mobile" };
   }
 
-  const user = await User.findOne({ mobileNumber }).lean();
+  const user = await findUserByMobile(fromWhatsAppNumber);
 
   if (user) {
-    const { loginUrl } = await createLoginLinkForUser(user);
     await sendWhatsAppText({
       toMobile: mobileNumber,
-      body:
-        `Hi ${user.name}! Welcome to GCR Graphix.\n\n` +
-        `Open your account here:\n${loginUrl}`,
+      body: `Hi ${user.name}! Welcome to GCR Graphix.`,
     });
-    return { handled: true, type: "existing_user", mobileNumber, name: user.name, loginUrl };
+    return { handled: true, type: "existing_user", mobileNumber, name: user.name };
   }
 
   const { registerUrl } = await createRegistrationToken(mobileNumber);
@@ -145,6 +157,7 @@ module.exports = {
   buildPortalRegisterUrl,
   createLoginLinkForUser,
   createRegistrationToken,
+  findUserByMobile,
   getValidRegistrationToken,
   handleGcrGraphixGreeting,
   isGcrGraphixGreeting,

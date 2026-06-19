@@ -18,6 +18,7 @@ const {
 } = require("../utils/userPayload");
 const {
   createLoginLinkForUser,
+  findUserByMobile,
   getValidRegistrationToken,
   markRegistrationTokenUsed,
 } = require("../utils/portalAuth");
@@ -230,6 +231,14 @@ router.get("/auth/user/register-token", requireDb, async (req, res) => {
       });
     }
 
+    const existingUser = await findUserByMobile(registrationDoc.mobileNumber);
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "You are already registered with GCR Graphix.",
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: "Registration link is valid.",
@@ -273,6 +282,14 @@ router.post(
         return res.status(401).json({
           success: false,
           message: "Registration link is invalid or expired.",
+        });
+      }
+
+      const existingUser = await findUserByMobile(registrationDoc.mobileNumber);
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: "You are already registered with GCR Graphix.",
         });
       }
 
