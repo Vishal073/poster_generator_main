@@ -61,6 +61,49 @@ function formatWhatsAppNumber(value) {
   return `whatsapp:+${countryCode}${compactNumber.replace(/\D/g, "")}`;
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Poll Twilio until a WhatsApp media message is sent/delivered before sending a follow-up template.
+ */
+async function waitForTwilioMessageReady(messageSid, options = {}) {
+  if (!messageSid) {
+    return null;
+  }
+
+  const timeoutMs = Number(options.timeoutMs) || 25000;
+  const pollMs = Number(options.pollMs) || 800;
+  const afterSentDelayMs = Number(options.afterSentDelayMs) || 2000;
+  const { client } = getTwilioClient();
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    const message = await client.messages(String(messageSid)).fetch();
+    const status = String(message.status || "").toLowerCase();
+
+    if (status === "delivered" || status === "read") {
+      return message;
+    }
+
+    if (status === "sent") {
+      if (afterSentDelayMs > 0) {
+        await delay(afterSentDelayMs);
+      }
+      return message;
+    }
+
+    if (status === "failed" || status === "undelivered") {
+      throw new Error(`WhatsApp image message ${status}.`);
+    }
+
+    await delay(pollMs);
+  }
+
+  return null;
+}
+
 async function sendPosterWhatsApp({ toMobile, imageUrl, body }) {
   if (!imageUrl || typeof imageUrl !== "string") {
     throw new Error("A public image URL is required for WhatsApp delivery.");
@@ -150,4 +193,5 @@ module.exports = {
   sendWhatsAppContentTemplate,
   sendPosterWhatsApp,
   sendWhatsAppText,
+  waitForTwilioMessageReady,
 };

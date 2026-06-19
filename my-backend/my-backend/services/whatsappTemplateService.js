@@ -42,6 +42,15 @@ function getTemplateBeforeMediaDelayMs() {
   return 2000;
 }
 
+function getApproveAfterImageDelayMs() {
+  const raw = Number(process.env.WHATSAPP_APPROVE_AFTER_IMAGE_DELAY_MS);
+  if (Number.isFinite(raw) && raw >= 0) {
+    return raw;
+  }
+  // Default pause so WhatsApp shows the image before the Approve template.
+  return 4000;
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -280,6 +289,8 @@ module.exports = {
   recordWhatsAppInbound,
   sendWhatsAppDownloadTemplate,
   sendWhatsAppApprovePostTemplate,
+  getApproveAfterImageDelayMs,
+  delay,
   sendWhatsAppLoginLink,
   sendWhatsAppPortalLink,
   sendWhatsAppRegisterLink,

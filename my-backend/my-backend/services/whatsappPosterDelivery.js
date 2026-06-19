@@ -4,8 +4,14 @@ const {
   formatWhatsAppNumber,
   sendPosterWhatsApp,
   sendWhatsAppText,
+  waitForTwilioMessageReady,
 } = require("./whatsappService");
-const { sendWhatsAppDownloadTemplate, sendWhatsAppApprovePostTemplate } = require("./whatsappTemplateService");
+const {
+  sendWhatsAppDownloadTemplate,
+  sendWhatsAppApprovePostTemplate,
+  getApproveAfterImageDelayMs,
+  delay,
+} = require("./whatsappTemplateService");
 const { approvePosterForUser } = require("./facebookPostService");
 const { findUserByMobile } = require("../utils/portalAuth");
 
@@ -118,7 +124,17 @@ async function sendReadyPoster({ to, name, mobile, posterPayload }) {
   const whatsappResult = await sendPosterWhatsApp({
     toMobile: to,
     imageUrl: posterResult.imageUrl,
+    body: "Here is your poster",
   });
+
+  if (whatsappResult.sid) {
+    await waitForTwilioMessageReady(whatsappResult.sid);
+  }
+
+  const approveDelayMs = getApproveAfterImageDelayMs();
+  if (approveDelayMs > 0) {
+    await delay(approveDelayMs);
+  }
 
   updatePendingRequest(to, {
     downloadedAt: new Date().toISOString(),
