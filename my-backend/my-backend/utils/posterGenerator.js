@@ -103,7 +103,7 @@ async function loadRasterBuffer(source) {
 async function prepareWatermarkImage(watermark, loadImage) {
   const targetWidth = watermark.watermarkWidth;
   const targetHeight = watermark.watermarkHeight;
-  const cacheKey = `${watermark.watermarkSource}|${targetWidth}x${targetHeight}|circle`;
+  const cacheKey = `${watermark.watermarkSource}|${targetWidth}x${targetHeight}|r${watermark.watermarkCornerRadius || 12}`;
 
   if (watermarkRasterCache.has(cacheKey)) {
     return watermarkRasterCache.get(cacheKey);
@@ -234,22 +234,6 @@ function drawRoundedRectPath(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function drawCircularImageExact(ctx, image, x, y, width, height) {
-  const radius = Math.min(width, height) / 2;
-  const centerX = x + width / 2;
-  const centerY = y + height / 2;
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-  ctx.closePath();
-  ctx.clip();
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(image, 0, 0, image.width, image.height, x, y, width, height);
-  ctx.restore();
-}
-
 function drawRoundedRectImageExact(ctx, image, x, y, width, height, cornerRadius) {
   ctx.save();
   drawRoundedRectPath(ctx, x, y, width, height, cornerRadius);
@@ -272,13 +256,14 @@ async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, lo
   try {
     const watermarkImage = await prepareWatermarkImage(watermark, loadImage);
     const { x, y } = resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark);
-    drawCircularImageExact(
+    drawRoundedRectImageExact(
       ctx,
       watermarkImage,
       x,
       y,
       watermark.watermarkWidth,
-      watermark.watermarkHeight
+      watermark.watermarkHeight,
+      watermark.watermarkCornerRadius
     );
   } catch (error) {
     console.warn("Poster watermark skipped:", error.message);
