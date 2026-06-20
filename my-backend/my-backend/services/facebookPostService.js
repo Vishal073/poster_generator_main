@@ -161,7 +161,11 @@ async function approvePosterForUser({ userId, imageUrl, caption = "" }) {
   const eligibility = await getUserSocialApproveEligibility(userId);
   if (eligibility.hasInstagram) {
     try {
-      instagram = await postPosterToInstagramForUser({ userId, imageUrl, caption });
+      const posted = await postPosterToInstagramForUser({ userId, imageUrl, caption });
+      instagram = {
+        success: true,
+        ...posted,
+      };
     } catch (error) {
       instagram = {
         success: false,

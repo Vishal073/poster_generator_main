@@ -180,7 +180,7 @@ function buildApproveConfirmationMessage(result) {
   const pageName = result?.facebook?.pageName || "your Facebook Page";
   let message = `Done! Your poster was posted to Facebook (${pageName}).`;
 
-  if (result?.instagram?.mediaId) {
+  if (result?.instagram?.success || result?.instagram?.mediaId) {
     const handle = result.instagram.username ? `@${result.instagram.username}` : "Instagram";
     message += ` Posted to ${handle} too.`;
   } else if (result?.instagram?.message) {

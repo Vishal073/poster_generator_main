@@ -146,6 +146,64 @@ function wrapGraphError(error, fallbackMessage) {
   return wrapped;
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Instagram image containers must finish processing before media_publish.
+ * Without this wait Meta often returns "Media ID is not available".
+ */
+async function waitForInstagramMediaContainer(creationId, pageAccessToken, options = {}) {
+  const maxAttempts =
+    typeof options.maxAttempts === "number" && options.maxAttempts > 0
+      ? options.maxAttempts
+      : 15;
+  const delayMs =
+    typeof options.delayMs === "number" && options.delayMs > 0 ? options.delayMs : 2000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const statusResponse = await axios.get(`${GRAPH_BASE_URL}/${creationId}`, {
+      params: {
+        fields: "status_code",
+        access_token: pageAccessToken,
+      },
+      timeout: 15000,
+    });
+
+    const statusCode = statusResponse.data?.status_code;
+    logFb("instagram.container_status", {
+      creationId,
+      attempt,
+      statusCode: statusCode || null,
+    });
+
+    if (statusCode === "FINISHED") {
+      return;
+    }
+
+    if (statusCode === "ERROR" || statusCode === "EXPIRED") {
+      const error = new Error(
+        `Instagram could not process the image (${statusCode || "unknown"}). Check that the image URL is public HTTPS JPEG/PNG.`,
+      );
+      error.statusCode = 502;
+      throw error;
+    }
+
+    if (attempt < maxAttempts) {
+      await delay(delayMs);
+    }
+  }
+
+  const error = new Error(
+    "Instagram is still processing the image. Please try posting again in a minute.",
+  );
+  error.statusCode = 504;
+  throw error;
+}
+
 /**
  * Step 1 of token exchange: trade authorization code for a short-lived user token.
  */
@@ -739,6 +797,8 @@ async function postImageToInstagram({ igUserId, pageAccessToken, imageUrl, capti
       throw error;
     }
 
+    await waitForInstagramMediaContainer(creationId, pageAccessToken);
+
     const publishResponse = await axios.post(
       `${GRAPH_BASE_URL}/${igUserId}/media_publish`,
       null,
@@ -751,8 +811,22 @@ async function postImageToInstagram({ igUserId, pageAccessToken, imageUrl, capti
       },
     );
 
+    const mediaId =
+      publishResponse.data?.id ||
+      publishResponse.data?.media_id ||
+      publishResponse.data?.post_id ||
+      null;
+
+    if (!mediaId) {
+      logFbWarn("instagram.publish_missing_media_id", {
+        igUserId,
+        creationId: String(creationId),
+        response: publishResponse.data || null,
+      });
+    }
+
     return {
-      mediaId: publishResponse.data?.id || null,
+      mediaId: mediaId ? String(mediaId) : null,
       creationId: String(creationId),
       raw: publishResponse.data,
     };
