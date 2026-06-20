@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const FacebookConnection = require("../models/FacebookConnection");
+const FacebookOAuthState = require("../models/FacebookOAuthState");
 const {
   postImageToPage,
   postImageToInstagram,
@@ -242,6 +243,31 @@ async function getFacebookStatusByUserIds(userIds) {
   return map;
 }
 
+/**
+ * Remove all Facebook OAuth data stored for an app user.
+ */
+async function disconnectFacebookForUser(userId) {
+  if (!isValidObjectId(userId)) {
+    const error = new Error("userId must be a valid MongoDB User _id.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedUserId = new mongoose.Types.ObjectId(userId);
+  const connection = await FacebookConnection.findOneAndDelete({
+    userId: normalizedUserId,
+  }).lean();
+  const oauthDeleteResult = await FacebookOAuthState.deleteMany({
+    userId: normalizedUserId,
+  });
+
+  return {
+    connectionRemoved: Boolean(connection),
+    removedPageName: connection?.selectedPage?.pageName || null,
+    oauthStatesRemoved: oauthDeleteResult.deletedCount || 0,
+  };
+}
+
 function resolvePublicApiBaseUrl(req) {
   const fromEnv =
     typeof process.env.API_BASE_URL === "string" ? process.env.API_BASE_URL.trim() : "";
@@ -282,6 +308,7 @@ module.exports = {
   listPostsForUser,
   deletePostForUser,
   getFacebookStatusByUserIds,
+  disconnectFacebookForUser,
   buildFacebookConnectUrl,
   resolvePublicApiBaseUrl,
   isValidObjectId,

@@ -16,6 +16,7 @@ const { router: whatsappFlowRoute } = require("./services/whatsappFlowRoute");
 const facebookRoutes = require("./routes/facebookRoutes");
 const { router: shareImageRoute } = require("./services/shareImageRoute");
 const { router: eventPosterRoute } = require("./services/eventPosterRoute");
+const FacebookConnection = require("./models/FacebookConnection");
 
 const app = express();
 
@@ -98,6 +99,24 @@ app.get("/health", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
+async function removeFacebookConnectionTtlIndex() {
+  try {
+    const indexes = await FacebookConnection.collection.indexes();
+    for (const index of indexes) {
+      if (
+        index.key &&
+        index.key.expiresAt === 1 &&
+        typeof index.expireAfterSeconds === "number"
+      ) {
+        await FacebookConnection.collection.dropIndex(index.name);
+        console.log(`Dropped FacebookConnection TTL index: ${index.name}`);
+      }
+    }
+  } catch (error) {
+    console.warn("Could not update FacebookConnection indexes:", error.message);
+  }
+}
+
 async function startServer() {
   if (!process.env.MONGO_URI) {
     throw new Error("MONGO_URI is not configured");
@@ -107,6 +126,7 @@ async function startServer() {
     serverSelectionTimeoutMS: 30000,
   });
   console.log("MongoDB Connected");
+  await removeFacebookConnectionTtlIndex();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);

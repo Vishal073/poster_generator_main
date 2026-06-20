@@ -66,7 +66,6 @@ const facebookConnectionSchema = new mongoose.Schema(
     expiresAt: {
       type: Date,
       required: true,
-      index: { expires: 0 },
     },
   },
   {

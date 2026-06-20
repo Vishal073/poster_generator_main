@@ -35,12 +35,21 @@ const {
   listPostsForUser,
   deletePostForUser,
   getFacebookStatusByUserIds,
+  disconnectFacebookForUser,
   buildFacebookConnectUrl,
   resolvePublicApiBaseUrl,
 } = require("../services/facebookPostService");
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
-const CONNECTION_TTL_MS = 24 * 60 * 60 * 1000;
+// Incomplete OAuth (no Page saved yet) — metadata only; not auto-deleted by MongoDB.
+const PENDING_CONNECTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Saved Page connections stay until admin taps "Remove Facebook link".
+const SAVED_CONNECTION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
+function getConnectionExpiresAt(selectedPage) {
+  const ttlMs = selectedPage?.pageId ? SAVED_CONNECTION_TTL_MS : PENDING_CONNECTION_TTL_MS;
+  return new Date(Date.now() + ttlMs);
+}
 
 function getFrontendUrl(returnTo = "admin") {
   const portalUrl =
@@ -334,7 +343,7 @@ async function handleFacebookCallback(req, res) {
           userAccessToken: longLived.accessToken,
           pages: [],
           selectedPage: null,
-          expiresAt: new Date(Date.now() + CONNECTION_TTL_MS),
+          expiresAt: getConnectionExpiresAt(null),
         });
       } catch (saveError) {
         console.error(
@@ -367,9 +376,7 @@ async function handleFacebookCallback(req, res) {
         pages[0] = autoSelectedPage;
       }
     }
-    const connectionExpiresAt = autoSelectedPage
-      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      : new Date(Date.now() + CONNECTION_TTL_MS);
+    const connectionExpiresAt = getConnectionExpiresAt(autoSelectedPage);
 
     let sessionId = "";
     try {
@@ -669,8 +676,8 @@ async function saveSelectedPage(req, res) {
       instagramAccount: freshInstagram,
     });
 
-    // Keep saved connections longer once a Page is chosen
-    connection.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    // Keep saved connections until explicitly removed by admin.
+    connection.expiresAt = getConnectionExpiresAt(connection.selectedPage);
     await connection.save();
 
     const message =
@@ -756,9 +763,9 @@ async function getFacebookConnectionByUser(req, res) {
 async function deleteFacebookConnectionByUser(req, res) {
   try {
     const user = await resolveAppUserId(req.params.userId);
+    const result = await disconnectFacebookForUser(String(user._id));
 
-    const connection = await FacebookConnection.findOneAndDelete({ userId: user._id }).lean();
-    if (!connection) {
+    if (!result.connectionRemoved && result.oauthStatesRemoved === 0) {
       return res.status(404).json({
         success: false,
         message: "No Facebook connection found for this user.",
@@ -768,9 +775,12 @@ async function deleteFacebookConnectionByUser(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: "Facebook link removed. Connect again to post to a Page.",
+      message: result.connectionRemoved
+        ? "Facebook link removed. Tokens and Page selection deleted from our database."
+        : "Pending Facebook OAuth data cleared from our database.",
       userId: user._id,
-      removedPageName: connection.selectedPage?.pageName || null,
+      removedPageName: result.removedPageName,
+      oauthStatesRemoved: result.oauthStatesRemoved,
     });
   } catch (error) {
     console.error("[Facebook OAuth] deleteFacebookConnectionByUser failed:", error.message);
