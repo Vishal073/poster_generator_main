@@ -11,6 +11,8 @@ const DEFAULT_POSTER_WATERMARK_PATH = path.join(
   "../assets/gcr-graphix-watermark.png"
 );
 
+const watermarkRasterCache = new Map();
+
 function getDefaultPosterWatermarkSource() {
   const envUrl = (process.env.POSTER_WATERMARK_URL || "").trim();
   if (envUrl) {
@@ -68,6 +70,66 @@ async function loadPosterImage(source, loadImage) {
     : path.resolve(process.cwd(), source);
   await fs.access(absolutePath);
   return loadImage(absolutePath);
+}
+
+async function loadRasterBuffer(source) {
+  if (isUrl(source)) {
+    if (typeof fetch !== "function") {
+      throw new Error("fetch is not available to load watermark URL.");
+    }
+    const res = await fetch(source, {
+      headers: {
+        "User-Agent":
+          process.env.IMAGE_FETCH_USER_AGENT ||
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        ...(process.env.IMAGE_FETCH_REFERER
+          ? { Referer: process.env.IMAGE_FETCH_REFERER }
+          : {}),
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Could not load watermark: HTTP ${res.status} ${res.statusText}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  const absolutePath = path.isAbsolute(source)
+    ? source
+    : path.resolve(process.cwd(), source);
+  return fs.readFile(absolutePath);
+}
+
+async function prepareWatermarkImage(watermark, loadImage) {
+  const targetWidth = watermark.watermarkWidth;
+  const targetHeight = watermark.watermarkHeight;
+  const cacheKey = `${watermark.watermarkSource}|${targetWidth}x${targetHeight}|circle`;
+
+  if (watermarkRasterCache.has(cacheKey)) {
+    return watermarkRasterCache.get(cacheKey);
+  }
+
+  const inputBuffer = await loadRasterBuffer(watermark.watermarkSource);
+  const sharp = require("sharp");
+  const metadata = await sharp(inputBuffer).metadata();
+  let outputBuffer;
+
+  if (metadata.width === targetWidth && metadata.height === targetHeight) {
+    outputBuffer = await sharp(inputBuffer).png().toBuffer();
+  } else {
+    outputBuffer = await sharp(inputBuffer)
+      .resize(targetWidth, targetHeight, {
+        fit: "cover",
+        position: "centre",
+        kernel: sharp.kernel.lanczos3,
+      })
+      .png()
+      .toBuffer();
+  }
+
+  const image = await loadImage(outputBuffer);
+  watermarkRasterCache.set(cacheKey, image);
+  return image;
 }
 
 function drawImageScaleToFill(ctx, image, targetX, targetY, targetWidth, targetHeight) {
@@ -139,8 +201,8 @@ function resolvePosterWatermarkOptions(options = {}) {
   return {
     addWatermark: true,
     watermarkSource,
-    watermarkWidth: pickPositiveNumber(options.watermarkWidth, 50),
-    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 50),
+    watermarkWidth: pickPositiveNumber(options.watermarkWidth, 100),
+    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 100),
     watermarkCornerRadius: pickPositiveNumber(options.watermarkCornerRadius, 12),
     watermarkPadding: pickPositiveNumber(options.watermarkPadding, 16),
     watermarkPosition,
@@ -172,6 +234,32 @@ function drawRoundedRectPath(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
+function drawCircularImageExact(ctx, image, x, y, width, height) {
+  const radius = Math.min(width, height) / 2;
+  const centerX = x + width / 2;
+  const centerY = y + height / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(image, 0, 0, image.width, image.height, x, y, width, height);
+  ctx.restore();
+}
+
+function drawRoundedRectImageExact(ctx, image, x, y, width, height, cornerRadius) {
+  ctx.save();
+  drawRoundedRectPath(ctx, x, y, width, height, cornerRadius);
+  ctx.clip();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(image, 0, 0, image.width, image.height, x, y, width, height);
+  ctx.restore();
+}
+
 function drawRoundedRectImage(ctx, image, x, y, width, height, cornerRadius) {
   ctx.save();
   drawRoundedRectPath(ctx, x, y, width, height, cornerRadius);
@@ -182,16 +270,15 @@ function drawRoundedRectImage(ctx, image, x, y, width, height, cornerRadius) {
 
 async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
   try {
-    const watermarkImage = await loadPosterImage(watermark.watermarkSource, loadImage);
+    const watermarkImage = await prepareWatermarkImage(watermark, loadImage);
     const { x, y } = resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark);
-    drawRoundedRectImage(
+    drawCircularImageExact(
       ctx,
       watermarkImage,
       x,
       y,
       watermark.watermarkWidth,
-      watermark.watermarkHeight,
-      watermark.watermarkCornerRadius
+      watermark.watermarkHeight
     );
   } catch (error) {
     console.warn("Poster watermark skipped:", error.message);
@@ -685,8 +772,8 @@ async function generatePosterImage({
   language = "en",
   addWatermark = true,
   watermarkSource,
-  watermarkWidth = 50,
-  watermarkHeight = 50,
+  watermarkWidth = 100,
+  watermarkHeight = 100,
   watermarkCornerRadius = 12,
   watermarkPadding = 16,
   watermarkPosition = "top-right",
