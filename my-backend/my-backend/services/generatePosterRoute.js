@@ -251,6 +251,7 @@ async function generatePoster(req, res) {
         posterSource: resolvedPosterSource,
         language,
         addWatermark: body.addWatermark,
+        watermarkPosition: body.watermarkPosition,
       });
     } catch (error) {
       return res.status(500).json({
@@ -773,6 +774,7 @@ router.post(
             language,
             ...resolvedLayout,
             addWatermark: body.addWatermark,
+            watermarkPosition: body.watermarkPosition,
           });
 
           const enhancement = await applyPosterEnhancement(

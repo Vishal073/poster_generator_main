@@ -139,6 +139,7 @@ function pickPosterOverrides(body) {
     "textBlendMode",
     "language",
     "addWatermark",
+    "watermarkPosition",
   ];
 
   return allowedFields.reduce((overrides, field) => {

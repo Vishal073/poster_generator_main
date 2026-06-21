@@ -5,6 +5,7 @@ const { transliterateText } = require("./googleTransliterate");
 const HINDI_FONT_FAMILY = "Noto Sans Devanagari";
 const PUNJABI_FONT_FAMILY = "Noto Sans Gurmukhi";
 const ENGLISH_FONT_FAMILY = "Helvetica Neue";
+const WATERMARK_FONT_FAMILY = "Plus Jakarta Sans";
 
 const DEVANAGARI_REGEX = /[\u0900-\u097F]/;
 const GURMUKHI_REGEX = /[\u0A00-\u0A7F]/;
@@ -170,15 +171,44 @@ function registerLanguageFont(language) {
   registeredFonts.add(language);
 }
 
+function registerWatermarkFont() {
+  if (registeredFonts.has("watermark")) {
+    return;
+  }
+
+  let canvasApi;
+  try {
+    canvasApi = require("canvas");
+  } catch (error) {
+    return;
+  }
+
+  const fontPath = path.resolve(__dirname, "../assets/fonts/PlusJakartaSans-Bold.ttf");
+  if (!fs.existsSync(fontPath)) {
+    console.warn(`${WATERMARK_FONT_FAMILY} font not found at:`, fontPath);
+    return;
+  }
+
+  canvasApi.registerFont(fontPath, {
+    family: WATERMARK_FONT_FAMILY,
+    weight: "bold",
+    style: "normal",
+  });
+
+  registeredFonts.add("watermark");
+}
+
 function registerPosterFonts() {
   registerLanguageFont("hi");
   registerLanguageFont("pa");
+  registerWatermarkFont();
 }
 
 module.exports = {
   HINDI_FONT_FAMILY,
   PUNJABI_FONT_FAMILY,
   ENGLISH_FONT_FAMILY,
+  WATERMARK_FONT_FAMILY,
   CUSTOM_MAP,
   normalizeLanguage,
   applyLanguageToPosterContent,

@@ -4,6 +4,7 @@ const path = require("path");
 const {
   applyLanguageToPosterContent,
   registerPosterFonts,
+  WATERMARK_FONT_FAMILY,
 } = require("./languageSupport");
 
 const DEFAULT_POSTER_WATERMARK_PATH = path.join(
@@ -13,10 +14,19 @@ const DEFAULT_POSTER_WATERMARK_PATH = path.join(
 
 const watermarkRasterCache = new Map();
 
+const WATERMARK_BRAND = {
+  textColor: "#141824",
+  gradientStops: [
+    { offset: 0, color: "#1d6ef2" },
+    { offset: 0.5, color: "#6d28d9" },
+    { offset: 1, color: "#e85d04" },
+  ],
+  logoSize: 52,
+  logoRadius: 12,
+  logoGap: 10,
+};
+
 function getDefaultPosterWatermarkSource() {
-  if ((process.env.POSTER_WATERMARK_MODE || "").trim().toLowerCase() !== "image") {
-    return "";
-  }
   const envUrl = (process.env.POSTER_WATERMARK_URL || "").trim();
   if (envUrl) {
     return envUrl;
@@ -193,7 +203,7 @@ function resolvePosterWatermarkOptions(options = {}) {
   const pickPositiveNumber = (value, fallback) =>
     typeof value === "number" && value > 0 ? value : fallback;
 
-  const allowedPositions = ["top-right", "bottom-right"];
+  const allowedPositions = ["top-left", "top-right", "bottom-left", "bottom-right"];
   const requestedPosition =
     typeof options.watermarkPosition === "string"
       ? options.watermarkPosition.trim().toLowerCase()
@@ -208,12 +218,13 @@ function resolvePosterWatermarkOptions(options = {}) {
   const requestedMode =
     typeof options.watermarkMode === "string" ? options.watermarkMode.trim().toLowerCase() : "";
   const envMode = (process.env.POSTER_WATERMARK_MODE || "").trim().toLowerCase();
-  const watermarkMode =
-    requestedMode === "image" || envMode === "image"
-      ? watermarkSource
-        ? "image"
-        : "text"
-      : "text";
+  let watermarkMode = requestedMode || envMode || "both";
+  if (watermarkMode === "both" && !watermarkSource) {
+    watermarkMode = "text";
+  }
+  if (watermarkMode === "image" && !watermarkSource) {
+    watermarkMode = "text";
+  }
 
   const watermarkText =
     (typeof options.watermarkText === "string" && options.watermarkText.trim()) ||
@@ -222,30 +233,33 @@ function resolvePosterWatermarkOptions(options = {}) {
   return {
     addWatermark: true,
     watermarkMode,
-    watermarkSource: watermarkMode === "image" ? watermarkSource : undefined,
+    watermarkSource: watermarkSource || undefined,
     watermarkText,
-    watermarkWidth: pickPositiveNumber(
-      options.watermarkWidth,
-      watermarkMode === "image" ? 100 : 240
+    watermarkLogoSize: pickPositiveNumber(options.watermarkLogoSize, WATERMARK_BRAND.logoSize),
+    watermarkLogoGap: pickPositiveNumber(options.watermarkLogoGap, WATERMARK_BRAND.logoGap),
+    watermarkWidth: pickPositiveNumber(options.watermarkWidth, 240),
+    watermarkHeight: pickPositiveNumber(options.watermarkHeight, WATERMARK_BRAND.logoSize),
+    watermarkCornerRadius: pickPositiveNumber(
+      options.watermarkCornerRadius,
+      WATERMARK_BRAND.logoRadius
     ),
-    watermarkHeight: pickPositiveNumber(
-      options.watermarkHeight,
-      watermarkMode === "image" ? 100 : 44
-    ),
-    watermarkCornerRadius: pickPositiveNumber(options.watermarkCornerRadius, 12),
     watermarkPadding: pickPositiveNumber(options.watermarkPadding, 16),
     watermarkPosition,
   };
 }
 
-function resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark) {
-  const x = canvasWidth - watermark.watermarkPadding - watermark.watermarkWidth;
-  const y =
-    watermark.watermarkPosition === "bottom-right"
-      ? canvasHeight - watermark.watermarkPadding - watermark.watermarkHeight
-      : watermark.watermarkPadding;
+function resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark, blockWidth, blockHeight) {
+  const padding = watermark.watermarkPadding;
+  const position = watermark.watermarkPosition || "top-right";
+  const isRight = position.endsWith("right");
+  const isBottom = position.startsWith("bottom");
+  const width = blockWidth || watermark.watermarkWidth;
+  const height = blockHeight || watermark.watermarkHeight;
 
-  return { x, y };
+  return {
+    x: isRight ? canvasWidth - padding - width : padding,
+    y: isBottom ? canvasHeight - padding - height : padding,
+  };
 }
 
 function drawRoundedRectPath(ctx, x, y, width, height, radius) {
@@ -281,67 +295,181 @@ function drawRoundedRectImage(ctx, image, x, y, width, height, cornerRadius) {
   ctx.restore();
 }
 
-function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
+function measureGcrGraphixTextWatermark(ctx, maxWidth, maxHeight, text) {
   const content = String(text || "GCR Graphix").trim() || "GCR Graphix";
   const spaceIndex = content.indexOf(" ");
   const prefix = spaceIndex >= 0 ? `${content.slice(0, spaceIndex)} ` : "";
   const suffix = spaceIndex >= 0 ? content.slice(spaceIndex + 1) : content;
-  const fontFamily = "Helvetica Neue";
-  let fontSize = Math.min(height, 36);
-
-  ctx.save();
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
+  const fontFamily = WATERMARK_FONT_FAMILY;
+  let fontSize = Math.min(maxHeight, 34);
 
   while (fontSize > 10) {
-    ctx.font = `700 ${fontSize}px "${fontFamily}"`;
+    ctx.font = `bold ${fontSize}px "${fontFamily}"`;
     const totalWidth = ctx.measureText(`${prefix}${suffix}`).width;
-    if (totalWidth <= width && fontSize <= height) {
-      break;
+    if (totalWidth <= maxWidth && fontSize <= maxHeight) {
+      return {
+        prefix,
+        suffix,
+        fontSize,
+        fontFamily,
+        prefixWidth: ctx.measureText(prefix).width,
+        totalWidth,
+        totalHeight: fontSize * 1.15,
+      };
     }
     fontSize -= 1;
   }
 
-  const prefixWidth = ctx.measureText(prefix).width;
+  ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+  return {
+    prefix,
+    suffix,
+    fontSize,
+    fontFamily,
+    prefixWidth: ctx.measureText(prefix).width,
+    totalWidth: ctx.measureText(`${prefix}${suffix}`).width,
+    totalHeight: fontSize * 1.15,
+  };
+}
+
+function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
+  const layout = measureGcrGraphixTextWatermark(ctx, width, height, text);
+
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.font = `bold ${layout.fontSize}px "${layout.fontFamily}"`;
+
   const textY = y + height / 2;
+  ctx.fillStyle = WATERMARK_BRAND.textColor;
+  ctx.fillText(layout.prefix, x, textY);
 
-  ctx.fillStyle = "#242424";
-  ctx.fillText(prefix, x, textY);
-
-  const gradientStartX = x + prefixWidth;
-  const gradient = ctx.createLinearGradient(gradientStartX, y, x + width, y);
-  gradient.addColorStop(0, "#2563eb");
-  gradient.addColorStop(0.5, "#7c3aed");
-  gradient.addColorStop(1, "#f97316");
+  const gradientStartX = x + layout.prefixWidth;
+  const gradientEndX = x + layout.totalWidth;
+  const gradient = ctx.createLinearGradient(
+    gradientStartX,
+    y,
+    gradientEndX,
+    y + height
+  );
+  for (const stop of WATERMARK_BRAND.gradientStops) {
+    gradient.addColorStop(stop.offset, stop.color);
+  }
   ctx.fillStyle = gradient;
-  ctx.fillText(suffix, gradientStartX, textY);
+  ctx.fillText(layout.suffix, gradientStartX, textY);
   ctx.restore();
+
+  return layout;
 }
 
 async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
   try {
-    const { x, y } = resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark);
+    const mode = watermark.watermarkMode || "both";
+    const logoSize = watermark.watermarkLogoSize || WATERMARK_BRAND.logoSize;
+    const logoGap = watermark.watermarkLogoGap || WATERMARK_BRAND.logoGap;
+    const blockHeight = logoSize;
 
-    if (watermark.watermarkMode === "image" && watermark.watermarkSource) {
-      const watermarkImage = await prepareWatermarkImage(watermark, loadImage);
+    if (mode === "image" && watermark.watermarkSource) {
+      const { x, y } = resolveWatermarkCoordinates(
+        canvasWidth,
+        canvasHeight,
+        watermark,
+        logoSize,
+        logoSize
+      );
+      const watermarkImage = await prepareWatermarkImage(
+        {
+          ...watermark,
+          watermarkWidth: logoSize,
+          watermarkHeight: logoSize,
+        },
+        loadImage
+      );
       drawRoundedRectImageExact(
         ctx,
         watermarkImage,
         x,
         y,
-        watermark.watermarkWidth,
-        watermark.watermarkHeight,
+        logoSize,
+        logoSize,
         watermark.watermarkCornerRadius
       );
       return;
     }
 
+    if (mode === "text") {
+      const textLayout = measureGcrGraphixTextWatermark(
+        ctx,
+        watermark.watermarkWidth,
+        blockHeight,
+        watermark.watermarkText
+      );
+      const { x, y } = resolveWatermarkCoordinates(
+        canvasWidth,
+        canvasHeight,
+        watermark,
+        textLayout.totalWidth,
+        blockHeight
+      );
+      drawGcrGraphixTextWatermark(
+        ctx,
+        x,
+        y,
+        textLayout.totalWidth,
+        blockHeight,
+        watermark.watermarkText
+      );
+      return;
+    }
+
+    const textLayout = measureGcrGraphixTextWatermark(
+      ctx,
+      watermark.watermarkWidth,
+      blockHeight,
+      watermark.watermarkText
+    );
+    const blockWidth = watermark.watermarkSource
+      ? logoSize + logoGap + textLayout.totalWidth
+      : textLayout.totalWidth;
+    const { x, y } = resolveWatermarkCoordinates(
+      canvasWidth,
+      canvasHeight,
+      watermark,
+      blockWidth,
+      blockHeight
+    );
+
+    if (watermark.watermarkSource) {
+      try {
+        const watermarkImage = await prepareWatermarkImage(
+          {
+            ...watermark,
+            watermarkWidth: logoSize,
+            watermarkHeight: logoSize,
+          },
+          loadImage
+        );
+        drawRoundedRectImageExact(
+          ctx,
+          watermarkImage,
+          x,
+          y,
+          logoSize,
+          logoSize,
+          watermark.watermarkCornerRadius
+        );
+      } catch (logoError) {
+        console.warn("Poster watermark logo skipped:", logoError.message);
+      }
+    }
+
+    const textX = watermark.watermarkSource ? x + logoSize + logoGap : x;
     drawGcrGraphixTextWatermark(
       ctx,
-      x,
+      textX,
       y,
-      watermark.watermarkWidth,
-      watermark.watermarkHeight,
+      textLayout.totalWidth,
+      blockHeight,
       watermark.watermarkText
     );
   } catch (error) {
