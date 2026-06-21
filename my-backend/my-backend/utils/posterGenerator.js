@@ -22,7 +22,7 @@ const WATERMARK_BRAND = {
     { offset: 1, color: "#dc6020" },
   ],
   opacity: 0.86,
-  fontSize: 18,
+  fontSize: 50,
   prefixFontWeight: "600",
   suffixFontWeight: "bold",
   logoSize: 52,
@@ -242,7 +242,7 @@ function resolvePosterWatermarkOptions(options = {}) {
     watermarkLogoSize: pickPositiveNumber(options.watermarkLogoSize, WATERMARK_BRAND.logoSize),
     watermarkLogoGap: pickPositiveNumber(options.watermarkLogoGap, WATERMARK_BRAND.logoGap),
     watermarkWidth: pickPositiveNumber(options.watermarkWidth, 220),
-    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 22),
+    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 58),
     watermarkCornerRadius: pickPositiveNumber(
       options.watermarkCornerRadius,
       WATERMARK_BRAND.logoRadius
@@ -307,7 +307,7 @@ function measureGcrGraphixTextWatermark(ctx, maxWidth, maxHeight, text) {
   const fontFamily = WATERMARK_FONT_FAMILY;
   const prefixWeight = WATERMARK_BRAND.prefixFontWeight || "600";
   const suffixWeight = WATERMARK_BRAND.suffixFontWeight || "bold";
-  const fontSize = WATERMARK_BRAND.fontSize || 18;
+  const fontSize = WATERMARK_BRAND.fontSize || 50;
 
   ctx.font = `${prefixWeight} ${fontSize}px "${fontFamily}"`;
   const prefixWidth = ctx.measureText(prefix).width;
@@ -363,7 +363,7 @@ function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
 async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
   try {
     const mode = watermark.watermarkMode || "text";
-    const blockHeight = watermark.watermarkHeight || 22;
+    const blockHeight = watermark.watermarkHeight || 58;
 
     if (mode === "image" && watermark.watermarkSource) {
       const logoSize = watermark.watermarkLogoSize || WATERMARK_BRAND.logoSize;
@@ -962,7 +962,7 @@ async function generatePosterImage({
   addWatermark = true,
   watermarkSource,
   watermarkWidth = 220,
-  watermarkHeight = 22,
+  watermarkHeight = 58,
   watermarkCornerRadius = 12,
   watermarkPadding = 16,
   watermarkPosition = "top-right",
