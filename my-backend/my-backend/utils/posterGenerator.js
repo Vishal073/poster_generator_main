@@ -22,8 +22,9 @@ const WATERMARK_BRAND = {
     { offset: 1, color: "#dc6020" },
   ],
   opacity: 0.86,
+  fontSize: 18,
   prefixFontWeight: "600",
-  suffixFontWeight: "500",
+  suffixFontWeight: "bold",
   logoSize: 52,
   logoRadius: 12,
   logoGap: 10,
@@ -241,7 +242,7 @@ function resolvePosterWatermarkOptions(options = {}) {
     watermarkLogoSize: pickPositiveNumber(options.watermarkLogoSize, WATERMARK_BRAND.logoSize),
     watermarkLogoGap: pickPositiveNumber(options.watermarkLogoGap, WATERMARK_BRAND.logoGap),
     watermarkWidth: pickPositiveNumber(options.watermarkWidth, 220),
-    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 38),
+    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 22),
     watermarkCornerRadius: pickPositiveNumber(
       options.watermarkCornerRadius,
       WATERMARK_BRAND.logoRadius
@@ -305,36 +306,14 @@ function measureGcrGraphixTextWatermark(ctx, maxWidth, maxHeight, text) {
   const suffix = spaceIndex >= 0 ? content.slice(spaceIndex + 1) : content;
   const fontFamily = WATERMARK_FONT_FAMILY;
   const prefixWeight = WATERMARK_BRAND.prefixFontWeight || "600";
-  const suffixWeight = WATERMARK_BRAND.suffixFontWeight || "500";
-  let fontSize = Math.min(maxHeight, 30);
-
-  while (fontSize > 10) {
-    ctx.font = `${prefixWeight} ${fontSize}px "${fontFamily}"`;
-    const prefixWidth = ctx.measureText(prefix).width;
-    ctx.font = `${suffixWeight} ${fontSize}px "${fontFamily}"`;
-    const suffixWidth = ctx.measureText(suffix).width;
-    const totalWidth = prefixWidth + suffixWidth;
-    if (totalWidth <= maxWidth && fontSize <= maxHeight) {
-      return {
-        prefix,
-        suffix,
-        fontSize,
-        fontFamily,
-        prefixWeight,
-        suffixWeight,
-        prefixWidth,
-        suffixWidth,
-        totalWidth,
-        totalHeight: fontSize * 1.15,
-      };
-    }
-    fontSize -= 1;
-  }
+  const suffixWeight = WATERMARK_BRAND.suffixFontWeight || "bold";
+  const fontSize = WATERMARK_BRAND.fontSize || 18;
 
   ctx.font = `${prefixWeight} ${fontSize}px "${fontFamily}"`;
   const prefixWidth = ctx.measureText(prefix).width;
   ctx.font = `${suffixWeight} ${fontSize}px "${fontFamily}"`;
   const suffixWidth = ctx.measureText(suffix).width;
+
   return {
     prefix,
     suffix,
@@ -384,7 +363,7 @@ function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
 async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
   try {
     const mode = watermark.watermarkMode || "text";
-    const blockHeight = watermark.watermarkHeight || 38;
+    const blockHeight = watermark.watermarkHeight || 22;
 
     if (mode === "image" && watermark.watermarkSource) {
       const logoSize = watermark.watermarkLogoSize || WATERMARK_BRAND.logoSize;
@@ -983,7 +962,7 @@ async function generatePosterImage({
   addWatermark = true,
   watermarkSource,
   watermarkWidth = 220,
-  watermarkHeight = 38,
+  watermarkHeight = 22,
   watermarkCornerRadius = 12,
   watermarkPadding = 16,
   watermarkPosition = "top-right",
