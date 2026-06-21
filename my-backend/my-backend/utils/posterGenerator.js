@@ -15,12 +15,13 @@ const DEFAULT_POSTER_WATERMARK_PATH = path.join(
 const watermarkRasterCache = new Map();
 
 const WATERMARK_BRAND = {
-  textColor: "#141824",
+  textColor: "#9098ad",
   gradientStops: [
-    { offset: 0, color: "#1d6ef2" },
-    { offset: 0.5, color: "#6d28d9" },
-    { offset: 1, color: "#e85d04" },
+    { offset: 0, color: "#9eb5d9" },
+    { offset: 0.5, color: "#b0a4cc" },
+    { offset: 1, color: "#c4ad98" },
   ],
+  opacity: 0.68,
   logoSize: 52,
   logoRadius: 12,
   logoGap: 10,
@@ -218,7 +219,7 @@ function resolvePosterWatermarkOptions(options = {}) {
   const requestedMode =
     typeof options.watermarkMode === "string" ? options.watermarkMode.trim().toLowerCase() : "";
   const envMode = (process.env.POSTER_WATERMARK_MODE || "").trim().toLowerCase();
-  let watermarkMode = requestedMode || envMode || "both";
+  let watermarkMode = requestedMode || envMode || "text";
   if (watermarkMode === "both" && !watermarkSource) {
     watermarkMode = "text";
   }
@@ -237,8 +238,8 @@ function resolvePosterWatermarkOptions(options = {}) {
     watermarkText,
     watermarkLogoSize: pickPositiveNumber(options.watermarkLogoSize, WATERMARK_BRAND.logoSize),
     watermarkLogoGap: pickPositiveNumber(options.watermarkLogoGap, WATERMARK_BRAND.logoGap),
-    watermarkWidth: pickPositiveNumber(options.watermarkWidth, 240),
-    watermarkHeight: pickPositiveNumber(options.watermarkHeight, WATERMARK_BRAND.logoSize),
+    watermarkWidth: pickPositiveNumber(options.watermarkWidth, 220),
+    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 38),
     watermarkCornerRadius: pickPositiveNumber(
       options.watermarkCornerRadius,
       WATERMARK_BRAND.logoRadius
@@ -301,10 +302,10 @@ function measureGcrGraphixTextWatermark(ctx, maxWidth, maxHeight, text) {
   const prefix = spaceIndex >= 0 ? `${content.slice(0, spaceIndex)} ` : "";
   const suffix = spaceIndex >= 0 ? content.slice(spaceIndex + 1) : content;
   const fontFamily = WATERMARK_FONT_FAMILY;
-  let fontSize = Math.min(maxHeight, 34);
+  let fontSize = Math.min(maxHeight, 30);
 
   while (fontSize > 10) {
-    ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+    ctx.font = `600 ${fontSize}px "${fontFamily}"`;
     const totalWidth = ctx.measureText(`${prefix}${suffix}`).width;
     if (totalWidth <= maxWidth && fontSize <= maxHeight) {
       return {
@@ -320,7 +321,7 @@ function measureGcrGraphixTextWatermark(ctx, maxWidth, maxHeight, text) {
     fontSize -= 1;
   }
 
-  ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+  ctx.font = `600 ${fontSize}px "${fontFamily}"`;
   return {
     prefix,
     suffix,
@@ -336,9 +337,10 @@ function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
   const layout = measureGcrGraphixTextWatermark(ctx, width, height, text);
 
   ctx.save();
+  ctx.globalAlpha = WATERMARK_BRAND.opacity;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.font = `bold ${layout.fontSize}px "${layout.fontFamily}"`;
+  ctx.font = `600 ${layout.fontSize}px "${layout.fontFamily}"`;
 
   const textY = y + height / 2;
   ctx.fillStyle = WATERMARK_BRAND.textColor;
@@ -364,12 +366,11 @@ function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
 
 async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
   try {
-    const mode = watermark.watermarkMode || "both";
-    const logoSize = watermark.watermarkLogoSize || WATERMARK_BRAND.logoSize;
-    const logoGap = watermark.watermarkLogoGap || WATERMARK_BRAND.logoGap;
-    const blockHeight = logoSize;
+    const mode = watermark.watermarkMode || "text";
+    const blockHeight = watermark.watermarkHeight || 38;
 
     if (mode === "image" && watermark.watermarkSource) {
+      const logoSize = watermark.watermarkLogoSize || WATERMARK_BRAND.logoSize;
       const { x, y } = resolveWatermarkCoordinates(
         canvasWidth,
         canvasHeight,
@@ -964,8 +965,8 @@ async function generatePosterImage({
   language = "en",
   addWatermark = true,
   watermarkSource,
-  watermarkWidth = 240,
-  watermarkHeight = 44,
+  watermarkWidth = 220,
+  watermarkHeight = 38,
   watermarkCornerRadius = 12,
   watermarkPadding = 16,
   watermarkPosition = "top-right",

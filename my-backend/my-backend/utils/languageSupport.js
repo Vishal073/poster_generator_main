@@ -195,6 +195,15 @@ function registerWatermarkFont() {
     style: "normal",
   });
 
+  const semiBoldPath = path.resolve(__dirname, "../assets/fonts/PlusJakartaSans-SemiBold.ttf");
+  if (fs.existsSync(semiBoldPath)) {
+    canvasApi.registerFont(semiBoldPath, {
+      family: WATERMARK_FONT_FAMILY,
+      weight: "600",
+      style: "normal",
+    });
+  }
+
   registeredFonts.add("watermark");
 }
 
