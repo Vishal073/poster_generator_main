@@ -14,6 +14,9 @@ const DEFAULT_POSTER_WATERMARK_PATH = path.join(
 const watermarkRasterCache = new Map();
 
 function getDefaultPosterWatermarkSource() {
+  if ((process.env.POSTER_WATERMARK_MODE || "").trim().toLowerCase() !== "image") {
+    return "";
+  }
   const envUrl = (process.env.POSTER_WATERMARK_URL || "").trim();
   if (envUrl) {
     return envUrl;
@@ -22,6 +25,11 @@ function getDefaultPosterWatermarkSource() {
     return DEFAULT_POSTER_WATERMARK_PATH;
   }
   return "";
+}
+
+function getDefaultPosterWatermarkText() {
+  const custom = (process.env.POSTER_WATERMARK_TEXT || "").trim();
+  return custom || "GCR Graphix";
 }
 
 function isUrl(value) {
@@ -178,11 +186,7 @@ function shouldAddPosterWatermark(value) {
 
 function resolvePosterWatermarkOptions(options = {}) {
   const addWatermark = shouldAddPosterWatermark(options.addWatermark);
-  const watermarkSource =
-    (typeof options.watermarkSource === "string" && options.watermarkSource.trim()) ||
-    getDefaultPosterWatermarkSource();
-
-  if (!addWatermark || !watermarkSource) {
+  if (!addWatermark) {
     return { addWatermark: false };
   }
 
@@ -198,11 +202,36 @@ function resolvePosterWatermarkOptions(options = {}) {
     ? requestedPosition
     : "top-right";
 
+  const watermarkSource =
+    (typeof options.watermarkSource === "string" && options.watermarkSource.trim()) ||
+    getDefaultPosterWatermarkSource();
+  const requestedMode =
+    typeof options.watermarkMode === "string" ? options.watermarkMode.trim().toLowerCase() : "";
+  const envMode = (process.env.POSTER_WATERMARK_MODE || "").trim().toLowerCase();
+  const watermarkMode =
+    requestedMode === "image" || envMode === "image"
+      ? watermarkSource
+        ? "image"
+        : "text"
+      : "text";
+
+  const watermarkText =
+    (typeof options.watermarkText === "string" && options.watermarkText.trim()) ||
+    getDefaultPosterWatermarkText();
+
   return {
     addWatermark: true,
-    watermarkSource,
-    watermarkWidth: pickPositiveNumber(options.watermarkWidth, 100),
-    watermarkHeight: pickPositiveNumber(options.watermarkHeight, 100),
+    watermarkMode,
+    watermarkSource: watermarkMode === "image" ? watermarkSource : undefined,
+    watermarkText,
+    watermarkWidth: pickPositiveNumber(
+      options.watermarkWidth,
+      watermarkMode === "image" ? 100 : 240
+    ),
+    watermarkHeight: pickPositiveNumber(
+      options.watermarkHeight,
+      watermarkMode === "image" ? 100 : 44
+    ),
     watermarkCornerRadius: pickPositiveNumber(options.watermarkCornerRadius, 12),
     watermarkPadding: pickPositiveNumber(options.watermarkPadding, 16),
     watermarkPosition,
@@ -252,18 +281,68 @@ function drawRoundedRectImage(ctx, image, x, y, width, height, cornerRadius) {
   ctx.restore();
 }
 
+function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
+  const content = String(text || "GCR Graphix").trim() || "GCR Graphix";
+  const spaceIndex = content.indexOf(" ");
+  const prefix = spaceIndex >= 0 ? `${content.slice(0, spaceIndex)} ` : "";
+  const suffix = spaceIndex >= 0 ? content.slice(spaceIndex + 1) : content;
+  const fontFamily = "Helvetica Neue";
+  let fontSize = Math.min(height, 36);
+
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+
+  while (fontSize > 10) {
+    ctx.font = `700 ${fontSize}px "${fontFamily}"`;
+    const totalWidth = ctx.measureText(`${prefix}${suffix}`).width;
+    if (totalWidth <= width && fontSize <= height) {
+      break;
+    }
+    fontSize -= 1;
+  }
+
+  const prefixWidth = ctx.measureText(prefix).width;
+  const textY = y + height / 2;
+
+  ctx.fillStyle = "#242424";
+  ctx.fillText(prefix, x, textY);
+
+  const gradientStartX = x + prefixWidth;
+  const gradient = ctx.createLinearGradient(gradientStartX, y, x + width, y);
+  gradient.addColorStop(0, "#2563eb");
+  gradient.addColorStop(0.5, "#7c3aed");
+  gradient.addColorStop(1, "#f97316");
+  ctx.fillStyle = gradient;
+  ctx.fillText(suffix, gradientStartX, textY);
+  ctx.restore();
+}
+
 async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
   try {
-    const watermarkImage = await prepareWatermarkImage(watermark, loadImage);
     const { x, y } = resolveWatermarkCoordinates(canvasWidth, canvasHeight, watermark);
-    drawRoundedRectImageExact(
+
+    if (watermark.watermarkMode === "image" && watermark.watermarkSource) {
+      const watermarkImage = await prepareWatermarkImage(watermark, loadImage);
+      drawRoundedRectImageExact(
+        ctx,
+        watermarkImage,
+        x,
+        y,
+        watermark.watermarkWidth,
+        watermark.watermarkHeight,
+        watermark.watermarkCornerRadius
+      );
+      return;
+    }
+
+    drawGcrGraphixTextWatermark(
       ctx,
-      watermarkImage,
       x,
       y,
       watermark.watermarkWidth,
       watermark.watermarkHeight,
-      watermark.watermarkCornerRadius
+      watermark.watermarkText
     );
   } catch (error) {
     console.warn("Poster watermark skipped:", error.message);
@@ -757,8 +836,8 @@ async function generatePosterImage({
   language = "en",
   addWatermark = true,
   watermarkSource,
-  watermarkWidth = 100,
-  watermarkHeight = 100,
+  watermarkWidth = 240,
+  watermarkHeight = 44,
   watermarkCornerRadius = 12,
   watermarkPadding = 16,
   watermarkPosition = "top-right",
