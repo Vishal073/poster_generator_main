@@ -15,13 +15,15 @@ const DEFAULT_POSTER_WATERMARK_PATH = path.join(
 const watermarkRasterCache = new Map();
 
 const WATERMARK_BRAND = {
-  textColor: "#3a3f4d",
+  textColor: "#252a35",
   gradientStops: [
-    { offset: 0, color: "#3a7ec8" },
-    { offset: 0.5, color: "#7350b8" },
-    { offset: 1, color: "#c96a38" },
+    { offset: 0, color: "#2a80e8" },
+    { offset: 0.5, color: "#6a32d0" },
+    { offset: 1, color: "#dc6020" },
   ],
-  opacity: 0.78,
+  opacity: 0.86,
+  prefixFontWeight: "600",
+  suffixFontWeight: "500",
   logoSize: 52,
   logoRadius: 12,
   logoGap: 10,
@@ -302,18 +304,26 @@ function measureGcrGraphixTextWatermark(ctx, maxWidth, maxHeight, text) {
   const prefix = spaceIndex >= 0 ? `${content.slice(0, spaceIndex)} ` : "";
   const suffix = spaceIndex >= 0 ? content.slice(spaceIndex + 1) : content;
   const fontFamily = WATERMARK_FONT_FAMILY;
+  const prefixWeight = WATERMARK_BRAND.prefixFontWeight || "600";
+  const suffixWeight = WATERMARK_BRAND.suffixFontWeight || "500";
   let fontSize = Math.min(maxHeight, 30);
 
   while (fontSize > 10) {
-    ctx.font = `600 ${fontSize}px "${fontFamily}"`;
-    const totalWidth = ctx.measureText(`${prefix}${suffix}`).width;
+    ctx.font = `${prefixWeight} ${fontSize}px "${fontFamily}"`;
+    const prefixWidth = ctx.measureText(prefix).width;
+    ctx.font = `${suffixWeight} ${fontSize}px "${fontFamily}"`;
+    const suffixWidth = ctx.measureText(suffix).width;
+    const totalWidth = prefixWidth + suffixWidth;
     if (totalWidth <= maxWidth && fontSize <= maxHeight) {
       return {
         prefix,
         suffix,
         fontSize,
         fontFamily,
-        prefixWidth: ctx.measureText(prefix).width,
+        prefixWeight,
+        suffixWeight,
+        prefixWidth,
+        suffixWidth,
         totalWidth,
         totalHeight: fontSize * 1.15,
       };
@@ -321,14 +331,20 @@ function measureGcrGraphixTextWatermark(ctx, maxWidth, maxHeight, text) {
     fontSize -= 1;
   }
 
-  ctx.font = `600 ${fontSize}px "${fontFamily}"`;
+  ctx.font = `${prefixWeight} ${fontSize}px "${fontFamily}"`;
+  const prefixWidth = ctx.measureText(prefix).width;
+  ctx.font = `${suffixWeight} ${fontSize}px "${fontFamily}"`;
+  const suffixWidth = ctx.measureText(suffix).width;
   return {
     prefix,
     suffix,
     fontSize,
     fontFamily,
-    prefixWidth: ctx.measureText(prefix).width,
-    totalWidth: ctx.measureText(`${prefix}${suffix}`).width,
+    prefixWeight,
+    suffixWeight,
+    prefixWidth,
+    suffixWidth,
+    totalWidth: prefixWidth + suffixWidth,
     totalHeight: fontSize * 1.15,
   };
 }
@@ -340,14 +356,14 @@ function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
   ctx.globalAlpha = WATERMARK_BRAND.opacity;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.font = `600 ${layout.fontSize}px "${layout.fontFamily}"`;
 
   const textY = y + height / 2;
+  ctx.font = `${layout.prefixWeight} ${layout.fontSize}px "${layout.fontFamily}"`;
   ctx.fillStyle = WATERMARK_BRAND.textColor;
   ctx.fillText(layout.prefix, x, textY);
 
   const gradientStartX = x + layout.prefixWidth;
-  const gradientEndX = x + layout.totalWidth;
+  const gradientEndX = gradientStartX + layout.suffixWidth;
   const gradient = ctx.createLinearGradient(
     gradientStartX,
     y,
@@ -357,6 +373,7 @@ function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
   for (const stop of WATERMARK_BRAND.gradientStops) {
     gradient.addColorStop(stop.offset, stop.color);
   }
+  ctx.font = `${layout.suffixWeight} ${layout.fontSize}px "${layout.fontFamily}"`;
   ctx.fillStyle = gradient;
   ctx.fillText(layout.suffix, gradientStartX, textY);
   ctx.restore();

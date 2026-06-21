@@ -204,6 +204,15 @@ function registerWatermarkFont() {
     });
   }
 
+  const mediumPath = path.resolve(__dirname, "../assets/fonts/PlusJakartaSans-Medium.ttf");
+  if (fs.existsSync(mediumPath)) {
+    canvasApi.registerFont(mediumPath, {
+      family: WATERMARK_FONT_FAMILY,
+      weight: "500",
+      style: "normal",
+    });
+  }
+
   registeredFonts.add("watermark");
 }
 
