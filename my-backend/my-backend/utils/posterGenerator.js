@@ -15,13 +15,13 @@ const DEFAULT_POSTER_WATERMARK_PATH = path.join(
 const watermarkRasterCache = new Map();
 
 const WATERMARK_BRAND = {
-  textColor: "#9098ad",
+  textColor: "#3a3f4d",
   gradientStops: [
-    { offset: 0, color: "#9eb5d9" },
-    { offset: 0.5, color: "#b0a4cc" },
-    { offset: 1, color: "#c4ad98" },
+    { offset: 0, color: "#3a7ec8" },
+    { offset: 0.5, color: "#7350b8" },
+    { offset: 1, color: "#c96a38" },
   ],
-  opacity: 0.68,
+  opacity: 0.78,
   logoSize: 52,
   logoRadius: 12,
   logoGap: 10,
