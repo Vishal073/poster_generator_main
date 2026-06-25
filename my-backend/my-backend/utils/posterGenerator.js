@@ -1229,17 +1229,31 @@ async function generatePosterImage({
       layout.textMaxWidth,
       { fontSize, fontColor, fontFamily, lineGap, paragraphGap }
     );
-    const textTop = layout.contentBottomY - resolvedTextLayout.totalHeight;
+    const textHeight = resolvedTextLayout.totalHeight;
+    const hasSideImage =
+      userImage &&
+      layout.imageWidth > 0 &&
+      (layout.imagePosition === "left" || layout.imagePosition === "right");
+    let textTop;
+    let finalImageY = layout.imageY;
+
+    if (hasSideImage) {
+      const blockHeight = Math.max(textHeight, layout.imageHeight);
+      const blockTop = layout.contentBottomY - blockHeight;
+      textTop = blockTop + (blockHeight - textHeight) / 2;
+      finalImageY = blockTop + (blockHeight - layout.imageHeight) / 2;
+    } else {
+      textTop = layout.contentBottomY - textHeight;
+      if (userImage && layout.imageWidth > 0 && layout.imagePosition === "top") {
+        finalImageY = textTop - layout.imageGap - layout.imageHeight;
+      }
+    }
 
     if (userImage && layout.imageWidth > 0) {
       let finalImageX = layout.imageX;
-      let finalImageY = layout.imageY;
 
-      if (layout.imagePosition === "left" || layout.imagePosition === "right") {
-        finalImageY = textTop + (resolvedTextLayout.totalHeight - layout.imageHeight) / 2;
-      } else if (layout.imagePosition === "top") {
+      if (layout.imagePosition === "top") {
         finalImageX = layout.textLeft + (layout.textMaxWidth - layout.imageWidth) / 2;
-        finalImageY = textTop - layout.imageGap - layout.imageHeight;
       }
 
       drawUserPhoto(
