@@ -23,7 +23,7 @@ const WATERMARK_BRAND = {
   ],
   opacity: 0.86,
   fontSize: 45,
-  prefixFontWeight: "600",
+  prefixFontWeight: "bold",
   suffixFontWeight: "bold",
   logoSize: 52,
   logoRadius: 12,

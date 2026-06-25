@@ -3,9 +3,12 @@ const path = require("path");
 const { transliterateText } = require("./googleTransliterate");
 
 const HINDI_FONT_FAMILY = "Noto Sans Devanagari";
+const HINDI_TITLE_FONT_FAMILY = "Noto Serif Devanagari";
 const PUNJABI_FONT_FAMILY = "Noto Sans Gurmukhi";
 const ENGLISH_FONT_FAMILY = "Helvetica Neue";
-const WATERMARK_FONT_FAMILY = "Plus Jakarta Sans";
+const POPPINS_FONT_FAMILY = "Poppins";
+const PLUS_JAKARTA_FONT_FAMILY = "Plus Jakarta Sans";
+const WATERMARK_FONT_FAMILY = "Cinzel";
 
 const DEVANAGARI_REGEX = /[\u0900-\u097F]/;
 const GURMUKHI_REGEX = /[\u0A00-\u0A7F]/;
@@ -94,11 +97,30 @@ function resolveFontFamily(normalizedLanguage, fontFamily) {
     return fontFamily || ENGLISH_FONT_FAMILY;
   }
 
-  if (!fontFamily || fontFamily === ENGLISH_FONT_FAMILY) {
+  if (!fontFamily || fontFamily === ENGLISH_FONT_FAMILY || fontFamily === POPPINS_FONT_FAMILY) {
     return config.fontFamily;
   }
 
   return fontFamily;
+}
+
+function applyHindiTitleFonts(textLineStyles) {
+  if (!Array.isArray(textLineStyles)) {
+    return textLineStyles;
+  }
+
+  return textLineStyles.map((style, index) => {
+    if (!style || typeof style !== "object") {
+      return style;
+    }
+
+    const nextStyle = { ...style };
+    if (index === 0 || index === 1) {
+      nextStyle.fontFamily = HINDI_TITLE_FONT_FAMILY;
+      nextStyle.fontWeight = "bold";
+    }
+    return nextStyle;
+  });
 }
 
 async function applyLanguageToPosterContent({
@@ -114,7 +136,9 @@ async function applyLanguageToPosterContent({
   const resolvedFontFamily = resolveFontFamily(normalizedLanguage, fontFamily);
 
   let resolvedTextLineStyles = textLineStyles;
-  if (normalizedLanguage !== "en" && Array.isArray(textLineStyles)) {
+  if (normalizedLanguage === "hi") {
+    resolvedTextLineStyles = applyHindiTitleFonts(textLineStyles);
+  } else if (normalizedLanguage !== "en" && Array.isArray(textLineStyles)) {
     const targetFontFamily = LANGUAGE_CONFIG[normalizedLanguage]?.fontFamily;
     resolvedTextLineStyles = textLineStyles.map((style) => {
       if (!style || typeof style !== "object") {
@@ -126,6 +150,7 @@ async function applyLanguageToPosterContent({
         targetFontFamily &&
         (!nextStyle.fontFamily ||
           nextStyle.fontFamily === ENGLISH_FONT_FAMILY ||
+          nextStyle.fontFamily === POPPINS_FONT_FAMILY ||
           nextStyle.fontFamily === "Avenir Next")
       ) {
         nextStyle.fontFamily = targetFontFamily;
@@ -143,9 +168,23 @@ async function applyLanguageToPosterContent({
   };
 }
 
+function registerCanvasFont(canvasApi, filePath, family, weight, style = "normal") {
+  if (!fs.existsSync(filePath)) {
+    console.warn(`${family} font not found at:`, filePath);
+    return false;
+  }
+
+  canvasApi.registerFont(filePath, {
+    family,
+    weight,
+    style,
+  });
+  return true;
+}
+
 function registerLanguageFont(language) {
   const config = LANGUAGE_CONFIG[language];
-  if (!config || registeredFonts.has(language)) {
+  if (!config || registeredFonts.has(`lang:${language}`)) {
     return;
   }
 
@@ -157,18 +196,61 @@ function registerLanguageFont(language) {
   }
 
   const fontPath = path.resolve(__dirname, "../assets/fonts", config.fontFile);
-  if (!fs.existsSync(fontPath)) {
-    console.warn(`${config.fontFamily} font not found at:`, fontPath);
+  registerCanvasFont(canvasApi, fontPath, config.fontFamily, "normal");
+  registeredFonts.add(`lang:${language}`);
+}
+
+function registerPosterTextFonts() {
+  if (registeredFonts.has("poster-text")) {
     return;
   }
 
-  canvasApi.registerFont(fontPath, {
-    family: config.fontFamily,
-    weight: "normal",
-    style: "normal",
-  });
+  let canvasApi;
+  try {
+    canvasApi = require("canvas");
+  } catch (error) {
+    return;
+  }
 
-  registeredFonts.add(language);
+  const fontsDir = path.resolve(__dirname, "../assets/fonts");
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Poppins-SemiBold.ttf"),
+    POPPINS_FONT_FAMILY,
+    "600"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Poppins-Medium.ttf"),
+    POPPINS_FONT_FAMILY,
+    "500"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "NotoSerifDevanagari-Bold.ttf"),
+    HINDI_TITLE_FONT_FAMILY,
+    "bold"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "PlusJakartaSans-Bold.ttf"),
+    PLUS_JAKARTA_FONT_FAMILY,
+    "bold"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "PlusJakartaSans-SemiBold.ttf"),
+    PLUS_JAKARTA_FONT_FAMILY,
+    "600"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "PlusJakartaSans-Medium.ttf"),
+    PLUS_JAKARTA_FONT_FAMILY,
+    "500"
+  );
+
+  registeredFonts.add("poster-text");
 }
 
 function registerWatermarkFont() {
@@ -183,49 +265,48 @@ function registerWatermarkFont() {
     return;
   }
 
-  const fontPath = path.resolve(__dirname, "../assets/fonts/PlusJakartaSans-Bold.ttf");
-  if (!fs.existsSync(fontPath)) {
-    console.warn(`${WATERMARK_FONT_FAMILY} font not found at:`, fontPath);
-    return;
-  }
-
-  canvasApi.registerFont(fontPath, {
-    family: WATERMARK_FONT_FAMILY,
-    weight: "bold",
-    style: "normal",
-  });
-
-  const semiBoldPath = path.resolve(__dirname, "../assets/fonts/PlusJakartaSans-SemiBold.ttf");
-  if (fs.existsSync(semiBoldPath)) {
-    canvasApi.registerFont(semiBoldPath, {
-      family: WATERMARK_FONT_FAMILY,
-      weight: "600",
-      style: "normal",
-    });
-  }
-
-  const mediumPath = path.resolve(__dirname, "../assets/fonts/PlusJakartaSans-Medium.ttf");
-  if (fs.existsSync(mediumPath)) {
-    canvasApi.registerFont(mediumPath, {
-      family: WATERMARK_FONT_FAMILY,
-      weight: "500",
-      style: "normal",
-    });
-  }
-
+  const fontsDir = path.resolve(__dirname, "../assets/fonts");
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Cinzel-Bold.ttf"),
+    WATERMARK_FONT_FAMILY,
+    "bold"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "PlusJakartaSans-Bold.ttf"),
+    PLUS_JAKARTA_FONT_FAMILY,
+    "bold"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "PlusJakartaSans-SemiBold.ttf"),
+    PLUS_JAKARTA_FONT_FAMILY,
+    "600"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "PlusJakartaSans-Medium.ttf"),
+    PLUS_JAKARTA_FONT_FAMILY,
+    "500"
+  );
   registeredFonts.add("watermark");
 }
 
 function registerPosterFonts() {
   registerLanguageFont("hi");
   registerLanguageFont("pa");
+  registerPosterTextFonts();
   registerWatermarkFont();
 }
 
 module.exports = {
   HINDI_FONT_FAMILY,
+  HINDI_TITLE_FONT_FAMILY,
   PUNJABI_FONT_FAMILY,
   ENGLISH_FONT_FAMILY,
+  POPPINS_FONT_FAMILY,
+  PLUS_JAKARTA_FONT_FAMILY,
   WATERMARK_FONT_FAMILY,
   CUSTOM_MAP,
   normalizeLanguage,
