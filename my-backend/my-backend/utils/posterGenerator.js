@@ -542,13 +542,15 @@ function getPhoneIconMetrics(fontSize) {
   };
 }
 
-const FIXED_LINE_GAP_PX = 8;
+const FIXED_LINE_GAP_PX = 16;
+// Cap-line row height — stops p/g/y descenders from bloating the gap to the next line.
+const TEXT_ROW_HEIGHT_RATIO = 0.82;
 
 function getBlockRowHeight(block) {
   if (block.showPhoneIcon) {
     return Math.max(block.fontSize, block.iconDiameter || 0);
   }
-  return block.fontSize;
+  return Math.round(block.fontSize * TEXT_ROW_HEIGHT_RATIO);
 }
 
 function applyFixedLineSpacing(blocks) {
