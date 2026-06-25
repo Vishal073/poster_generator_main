@@ -46,7 +46,7 @@ async function resizeToMatchOriginal(modifiedBuffer, originalBuffer) {
   }
 
   return sharp(modifiedBuffer)
-    .resize(original.width, original.height, { fit: "cover" })
+    .resize(original.width, original.height, { fit: "fill" })
     .png()
     .toBuffer();
 }

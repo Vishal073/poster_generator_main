@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const { generatePosterImage } = require("../utils/posterGenerator");
 const { enhancePosterBuffer, normalizeEnhancePriority } = require("../utils/posterEnhancementService");
+const { preparePosterUploadBuffer } = require("../utils/posterImageUtils");
 const {
   uploadPosterToCloudinary,
   uploadBufferToCloudinary,
@@ -507,8 +508,19 @@ router.post(
       const fallbackName = `base-poster-${Date.now()}`;
       const fileName = req.file.originalname || fallbackName;
 
+      let uploadBuffer;
+      try {
+        uploadBuffer = await preparePosterUploadBuffer(req.file.buffer);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: getErrorMessage(error),
+          folder: getBasePosterFolder(),
+        });
+      }
+
       const uploadResult = await uploadBufferToCloudinary(
-        req.file.buffer,
+        uploadBuffer,
         fileName,
         { folder: getBasePosterFolder() }
       );

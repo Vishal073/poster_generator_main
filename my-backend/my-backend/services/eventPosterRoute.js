@@ -10,6 +10,7 @@ const {
   listEventPosterResourcesFromCloudinary,
   sanitizeEventName,
 } = require("./cloudnaryService");
+const { preparePosterUploadBuffer } = require("../utils/posterImageUtils");
 
 const router = express.Router();
 
@@ -109,8 +110,18 @@ router.post(
       const fallbackName = `event-poster-${Date.now()}`;
       const fileName = req.file.originalname || fallbackName;
 
+      let uploadBuffer;
+      try {
+        uploadBuffer = await preparePosterUploadBuffer(req.file.buffer);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: getErrorMessage(error),
+        });
+      }
+
       const uploadResult = await uploadBufferToCloudinary(
-        req.file.buffer,
+        uploadBuffer,
         fileName,
         { folder },
       );
