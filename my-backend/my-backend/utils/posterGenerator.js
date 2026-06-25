@@ -726,6 +726,7 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
     blocks: plain.blocks.map((block) => ({
       lines: block.lines,
       lineHeight: plain.lineHeight,
+      rowHeight: plain.lineHeight,
       fontSize: plain.fontSize,
       fontFamily: plain.fontFamily,
       fontColor,
@@ -769,9 +770,12 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
         return;
       }
 
+      const rowHeight = block.rowHeight || block.lineHeight;
+      const centerY = y + rowHeight / 2;
       const textX = textAlign === "center" ? xStart - ctx.measureText(line).width / 2 : xStart;
-      ctx.fillText(line, textX, y);
-      y += block.lineHeight;
+      ctx.textBaseline = "middle";
+      ctx.fillText(line, textX, centerY);
+      y += rowHeight;
     });
     if (index < resolvedLayout.blocks.length - 1) {
       y += resolvedLayout.paragraphGap;
@@ -1230,30 +1234,17 @@ async function generatePosterImage({
       { fontSize, fontColor, fontFamily, lineGap, paragraphGap }
     );
     const textHeight = resolvedTextLayout.totalHeight;
-    const hasSideImage =
-      userImage &&
-      layout.imageWidth > 0 &&
-      (layout.imagePosition === "left" || layout.imagePosition === "right");
-    let textTop;
-    let finalImageY = layout.imageY;
-
-    if (hasSideImage) {
-      const blockHeight = Math.max(textHeight, layout.imageHeight);
-      const blockTop = layout.contentBottomY - blockHeight;
-      textTop = blockTop + (blockHeight - textHeight) / 2;
-      finalImageY = blockTop + (blockHeight - layout.imageHeight) / 2;
-    } else {
-      textTop = layout.contentBottomY - textHeight;
-      if (userImage && layout.imageWidth > 0 && layout.imagePosition === "top") {
-        finalImageY = textTop - layout.imageGap - layout.imageHeight;
-      }
-    }
+    const textTop = layout.contentBottomY - textHeight;
 
     if (userImage && layout.imageWidth > 0) {
       let finalImageX = layout.imageX;
+      let finalImageY = layout.imageY;
 
-      if (layout.imagePosition === "top") {
+      if (layout.imagePosition === "left" || layout.imagePosition === "right") {
+        finalImageY = textTop + (textHeight - layout.imageHeight) / 2;
+      } else if (layout.imagePosition === "top") {
         finalImageX = layout.textLeft + (layout.textMaxWidth - layout.imageWidth) / 2;
+        finalImageY = textTop - layout.imageGap - layout.imageHeight;
       }
 
       drawUserPhoto(
