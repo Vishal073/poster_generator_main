@@ -254,8 +254,6 @@ async function generatePoster(req, res) {
         posterSource: resolvedPosterSource,
         language,
         addWatermark: body.addWatermark,
-        addWatermarkLogo: body.addWatermarkLogo,
-        watermarkLogoGap: body.watermarkLogoGap,
         watermarkPosition: body.watermarkPosition,
       });
     } catch (error) {
@@ -771,8 +769,6 @@ router.post(
             language,
             ...resolvedLayout,
             addWatermark: body.addWatermark,
-            addWatermarkLogo: body.addWatermarkLogo,
-            watermarkLogoGap: body.watermarkLogoGap,
             watermarkPosition: body.watermarkPosition,
           });
 

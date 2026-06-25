@@ -219,22 +219,10 @@ function resolvePosterWatermarkOptions(options = {}) {
   const watermarkSource =
     (typeof options.watermarkSource === "string" && options.watermarkSource.trim()) ||
     getDefaultPosterWatermarkSource();
-  const addWatermarkLogo =
-    options.addWatermarkLogo === true ||
-    options.addWatermarkLogo === "true" ||
-    options.addWatermarkLogo === 1 ||
-    options.addWatermarkLogo === "1";
   const requestedMode =
     typeof options.watermarkMode === "string" ? options.watermarkMode.trim().toLowerCase() : "";
   const envMode = (process.env.POSTER_WATERMARK_MODE || "").trim().toLowerCase();
   let watermarkMode = requestedMode || envMode || "text";
-  if (addWatermarkLogo && watermarkSource) {
-    watermarkMode = "both";
-  } else if (addWatermarkLogo && !watermarkSource) {
-    watermarkMode = "text";
-  } else if (!addWatermarkLogo && !requestedMode && !envMode) {
-    watermarkMode = "text";
-  }
   if (watermarkMode === "both" && !watermarkSource) {
     watermarkMode = "text";
   }
@@ -248,7 +236,6 @@ function resolvePosterWatermarkOptions(options = {}) {
 
   return {
     addWatermark: true,
-    addWatermarkLogo: addWatermarkLogo && Boolean(watermarkSource),
     watermarkMode,
     watermarkSource: watermarkSource || undefined,
     watermarkText,
@@ -1092,8 +1079,6 @@ async function generatePosterImage({
   textBlendMode = "multiply",
   language = "en",
   addWatermark = true,
-  addWatermarkLogo = false,
-  watermarkLogoGap = 10,
   watermarkSource,
   watermarkWidth = 220,
   watermarkHeight = 52,
@@ -1127,8 +1112,6 @@ async function generatePosterImage({
   const { createCanvas, loadImage } = canvasApi;
   const watermark = resolvePosterWatermarkOptions({
     addWatermark,
-    addWatermarkLogo,
-    watermarkLogoGap,
     watermarkSource,
     watermarkWidth,
     watermarkHeight,
