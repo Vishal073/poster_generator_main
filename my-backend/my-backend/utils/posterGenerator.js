@@ -14,6 +14,8 @@ const DEFAULT_POSTER_WATERMARK_PATH = path.join(
 
 const watermarkRasterCache = new Map();
 
+const POSTER_OUTPUT_SIZE = 1024;
+
 const WATERMARK_BRAND = {
   textColor: "#252a35",
   gradientStops: [
@@ -1314,13 +1316,13 @@ async function generatePosterImage({
   }
 
   const posterImage = await loadPosterImage(posterSource, loadImage);
-  const W = posterImage.width;
-  const H = posterImage.height;
+  const W = POSTER_OUTPUT_SIZE;
+  const H = POSTER_OUTPUT_SIZE;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
   ctx.antialias = "subpixel";
 
-  ctx.drawImage(posterImage, 0, 0, W, H);
+  drawImageScaleToFill(ctx, posterImage, 0, 0, W, H);
 
   const textBody = name == null ? "" : String(name).trim();
   let userImage = null;
