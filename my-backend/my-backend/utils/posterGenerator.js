@@ -542,45 +542,55 @@ function getPhoneIconMetrics(fontSize) {
   };
 }
 
-function drawPhoneHandsetIcon(ctx, cx, cy, innerSize) {
+function drawPhoneHandsetIcon(ctx, cx, cy, diameter) {
   ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(-0.75);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
   ctx.fillStyle = "#ffffff";
+  ctx.translate(cx, cy);
 
-  const width = innerSize * 0.42;
-  const height = innerSize * 0.78;
-  const radius = width * 0.22;
+  const scale = diameter / 24;
+  ctx.scale(scale, scale);
+  ctx.translate(-12, -12);
 
   ctx.beginPath();
-  ctx.moveTo(-width / 2 + radius, -height / 2);
-  ctx.lineTo(width / 2 - radius, -height / 2);
-  ctx.quadraticCurveTo(width / 2, -height / 2, width / 2, -height / 2 + radius);
-  ctx.lineTo(width / 2, height / 2 - radius);
-  ctx.quadraticCurveTo(width / 2, height / 2, width / 2 - radius, height / 2);
-  ctx.lineTo(-width / 2 + radius, height / 2);
-  ctx.quadraticCurveTo(-width / 2, height / 2, -width / 2, height / 2 - radius);
-  ctx.lineTo(-width / 2, -height / 2 + radius);
-  ctx.quadraticCurveTo(-width / 2, -height / 2, -width / 2 + radius, -height / 2);
+  ctx.moveTo(6.62, 10.79);
+  ctx.bezierCurveTo(8.06, 13.62, 10.38, 15.93, 13.21, 17.38);
+  ctx.lineTo(15.41, 15.18);
+  ctx.bezierCurveTo(15.68, 14.91, 16.08, 14.82, 16.43, 14.94);
+  ctx.bezierCurveTo(17.55, 15.31, 18.76, 15.51, 20, 15.51);
+  ctx.bezierCurveTo(20.55, 15.51, 21, 15.96, 21, 16.51);
+  ctx.lineTo(21, 20);
+  ctx.bezierCurveTo(21, 20.55, 20.55, 21, 20, 21);
+  ctx.bezierCurveTo(10.61, 21, 3, 13.39, 3, 4);
+  ctx.bezierCurveTo(3, 3.45, 3.45, 3, 4, 3);
+  ctx.lineTo(7.5, 3);
+  ctx.bezierCurveTo(8.05, 3, 8.5, 3.45, 8.5, 4);
+  ctx.bezierCurveTo(8.5, 5.25, 8.7, 6.45, 9.07, 7.57);
+  ctx.bezierCurveTo(9.18, 7.92, 9.09, 8.32, 8.82, 8.59);
+  ctx.lineTo(6.62, 10.79);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 }
 
-function drawPhoneIconBadge(ctx, x, y, diameter, bgColor) {
+function drawPhoneIconBadge(ctx, x, y, diameter, bgColor, opacity = 1) {
   const radius = diameter / 2;
   const cx = x + radius;
   const cy = y + radius;
 
   ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = opacity;
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fillStyle = bgColor;
   ctx.fill();
-  ctx.save();
-  ctx.globalAlpha = 1;
-  drawPhoneHandsetIcon(ctx, cx, cy, diameter * 0.62);
-  ctx.restore();
+
+  drawPhoneHandsetIcon(ctx, cx, cy, diameter * 0.72);
   ctx.restore();
 }
 
@@ -738,14 +748,23 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
     block.lines.forEach((line) => {
       if (block.showPhoneIcon) {
         const rowHeight = block.rowHeight || block.lineHeight;
-        const iconY = y + (rowHeight - block.iconDiameter) / 2;
-        const textY = y + (rowHeight - block.fontSize) / 2;
+        const centerY = y + rowHeight / 2;
+        const iconY = centerY - block.iconDiameter / 2;
         const textWidth = ctx.measureText(line).width;
         const rowWidth = block.iconDiameter + block.iconGap + textWidth;
         const startX = textAlign === "center" ? xStart - rowWidth / 2 : xStart;
+        const textX = startX + block.iconDiameter + block.iconGap;
 
-        drawPhoneIconBadge(ctx, startX, iconY, block.iconDiameter, block.fontColor);
-        ctx.fillText(line, startX + block.iconDiameter + block.iconGap, textY);
+        drawPhoneIconBadge(ctx, startX, iconY, block.iconDiameter, block.fontColor, textOpacity);
+
+        ctx.save();
+        applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
+        ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(line, textX, centerY);
+        ctx.restore();
+
         y += rowHeight;
         return;
       }
