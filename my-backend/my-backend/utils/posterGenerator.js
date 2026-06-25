@@ -187,6 +187,23 @@ function drawImageScaleToFill(ctx, image, targetX, targetY, targetWidth, targetH
   );
 }
 
+async function normalizePosterOutputBuffer(buffer, targetSize = POSTER_OUTPUT_SIZE) {
+  const sharp = require("sharp");
+  const metadata = await sharp(buffer).metadata();
+  if (metadata.width === targetSize && metadata.height === targetSize) {
+    return buffer;
+  }
+
+  return sharp(buffer)
+    .resize(targetSize, targetSize, {
+      fit: "contain",
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+      kernel: sharp.kernel.lanczos3,
+    })
+    .png()
+    .toBuffer();
+}
+
 function shouldAddPosterWatermark(value) {
   if (value === false || value === 0) {
     return false;
@@ -1316,13 +1333,13 @@ async function generatePosterImage({
   }
 
   const posterImage = await loadPosterImage(posterSource, loadImage);
-  const W = POSTER_OUTPUT_SIZE;
-  const H = POSTER_OUTPUT_SIZE;
+  const W = posterImage.width;
+  const H = posterImage.height;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
   ctx.antialias = "subpixel";
 
-  drawImageScaleToFill(ctx, posterImage, 0, 0, W, H);
+  ctx.drawImage(posterImage, 0, 0, W, H);
 
   const textBody = name == null ? "" : String(name).trim();
   let userImage = null;
@@ -1412,7 +1429,8 @@ async function generatePosterImage({
     await drawPosterWatermark(ctx, W, H, watermark, loadImage);
   }
 
-  const outputBuffer = canvas.toBuffer("image/png");
+  let outputBuffer = canvas.toBuffer("image/png");
+  outputBuffer = await normalizePosterOutputBuffer(outputBuffer);
 
   return {
     buffer: outputBuffer,
