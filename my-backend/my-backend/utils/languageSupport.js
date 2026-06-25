@@ -9,6 +9,8 @@ const ENGLISH_FONT_FAMILY = "Helvetica Neue";
 const POPPINS_FONT_FAMILY = "Poppins";
 const PLUS_JAKARTA_FONT_FAMILY = "Plus Jakarta Sans";
 const WATERMARK_FONT_FAMILY = "Cinzel";
+const TIMES_NEW_ROMAN_BOLD_FONT_FAMILY = "Times New Roman Bold";
+const SF_PRO_TEXT_FONT_FAMILY = "SF Pro Text";
 
 const DEVANAGARI_REGEX = /[\u0900-\u097F]/;
 const GURMUKHI_REGEX = /[\u0A00-\u0A7F]/;
@@ -249,6 +251,54 @@ function registerPosterTextFonts() {
     PLUS_JAKARTA_FONT_FAMILY,
     "500"
   );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Tinos-Bold.ttf"),
+    TIMES_NEW_ROMAN_BOLD_FONT_FAMILY,
+    "normal"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Tinos-Bold.ttf"),
+    TIMES_NEW_ROMAN_BOLD_FONT_FAMILY,
+    "bold"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Tinos-Bold.ttf"),
+    TIMES_NEW_ROMAN_BOLD_FONT_FAMILY,
+    "600"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Tinos-Bold.ttf"),
+    TIMES_NEW_ROMAN_BOLD_FONT_FAMILY,
+    "500"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Inter-Regular.ttf"),
+    SF_PRO_TEXT_FONT_FAMILY,
+    "normal"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Inter-Medium.ttf"),
+    SF_PRO_TEXT_FONT_FAMILY,
+    "500"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Inter-SemiBold.ttf"),
+    SF_PRO_TEXT_FONT_FAMILY,
+    "600"
+  );
+  registerCanvasFont(
+    canvasApi,
+    path.join(fontsDir, "Inter-Bold.ttf"),
+    SF_PRO_TEXT_FONT_FAMILY,
+    "bold"
+  );
 
   registeredFonts.add("poster-text");
 }
@@ -308,6 +358,8 @@ module.exports = {
   POPPINS_FONT_FAMILY,
   PLUS_JAKARTA_FONT_FAMILY,
   WATERMARK_FONT_FAMILY,
+  TIMES_NEW_ROMAN_BOLD_FONT_FAMILY,
+  SF_PRO_TEXT_FONT_FAMILY,
   CUSTOM_MAP,
   normalizeLanguage,
   applyLanguageToPosterContent,

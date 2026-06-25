@@ -542,6 +542,31 @@ function getPhoneIconMetrics(fontSize) {
   };
 }
 
+const FIXED_LINE_GAP_PX = 8;
+
+function getBlockRowHeight(block) {
+  if (block.showPhoneIcon) {
+    return Math.max(block.fontSize, block.iconDiameter || 0);
+  }
+  return block.fontSize;
+}
+
+function applyFixedLineSpacing(blocks) {
+  let totalHeight = 0;
+
+  blocks.forEach((block, index) => {
+    const rowHeight = getBlockRowHeight(block);
+    block.rowHeight = rowHeight;
+    block.lineHeight = rowHeight;
+    totalHeight += rowHeight;
+    if (index < blocks.length - 1) {
+      totalHeight += FIXED_LINE_GAP_PX;
+    }
+  });
+
+  return totalHeight;
+}
+
 function drawPhoneHandsetIcon(ctx, cx, cy, diameter) {
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
@@ -653,7 +678,6 @@ function normalizeTextLineStyles(entries, textLineStyles, defaults) {
 
 function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, paragraphGap) {
   const blocks = [];
-  let totalHeight = 0;
   const minFontSize = 12;
 
   entries.forEach((entry, index) => {
@@ -672,11 +696,9 @@ function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, p
     );
     const lineHeight = fitted.fontSize * 1.2;
     const resolvedIconMetrics = showPhoneIcon ? getPhoneIconMetrics(fitted.fontSize) : null;
-    const rowHeight = showPhoneIcon ? Math.max(lineHeight, fitted.fontSize) : lineHeight;
     blocks.push({
       lines: [fitted.text],
       lineHeight,
-      rowHeight,
       fontSize: fitted.fontSize,
       fontFamily: fitted.fontFamily,
       fontColor: style.fontColor,
@@ -685,13 +707,11 @@ function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, p
       iconDiameter: resolvedIconMetrics ? resolvedIconMetrics.diameter : 0,
       iconGap: resolvedIconMetrics ? resolvedIconMetrics.gap : 0,
     });
-    totalHeight += rowHeight;
-    if (index < entries.length - 1) {
-      totalHeight += paragraphGap;
-    }
   });
 
-  return { blocks, totalHeight, paragraphGap, lineGap };
+  const totalHeight = applyFixedLineSpacing(blocks);
+
+  return { blocks, totalHeight, paragraphGap: FIXED_LINE_GAP_PX, lineGap };
 }
 
 function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth, options) {
@@ -747,8 +767,9 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
     applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
     ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
     block.lines.forEach((line) => {
+      const rowHeight = block.rowHeight || block.lineHeight || block.fontSize;
+
       if (block.showPhoneIcon) {
-        const rowHeight = block.rowHeight || block.lineHeight;
         const centerY = y + rowHeight / 2;
         const iconY = centerY - block.iconDiameter / 2;
         const textWidth = ctx.measureText(line).width;
@@ -773,10 +794,10 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
       const textX = textAlign === "center" ? xStart - ctx.measureText(line).width / 2 : xStart;
       ctx.textBaseline = "top";
       ctx.fillText(line, textX, y);
-      y += block.rowHeight || block.lineHeight;
+      y += rowHeight;
     });
     if (index < resolvedLayout.blocks.length - 1) {
-      y += resolvedLayout.paragraphGap;
+      y += FIXED_LINE_GAP_PX;
     }
   });
   ctx.restore();
