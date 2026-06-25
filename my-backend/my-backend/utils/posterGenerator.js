@@ -544,43 +544,22 @@ function getPhoneIconMetrics(fontSize) {
 
 const FIXED_LINE_GAP_PX = 16;
 
-function prepareBlockFont(ctx, block) {
-  ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
-}
-
-function getBlockLineAdvance(ctx, block) {
+function getBlockRowHeight(block) {
   if (block.showPhoneIcon) {
     return Math.max(block.fontSize, block.iconDiameter || 0);
   }
-
-  prepareBlockFont(ctx, block);
-  const metrics = ctx.measureText(block.lines[0] || "Mg");
-  return Math.ceil(metrics.actualBoundingBoxAscent ?? block.fontSize * 0.78);
+  return block.fontSize;
 }
 
-function getBlockBottomExtent(ctx, block, lineAdvance) {
-  if (block.showPhoneIcon) {
-    return lineAdvance;
-  }
-
-  prepareBlockFont(ctx, block);
-  const metrics = ctx.measureText(block.lines[0] || "Mg");
-  const descent = metrics.actualBoundingBoxDescent ?? block.fontSize * 0.2;
-  return lineAdvance + descent;
-}
-
-function applyFixedLineSpacing(ctx, blocks) {
+function applyFixedLineSpacing(blocks) {
   let totalHeight = 0;
 
   blocks.forEach((block, index) => {
-    const lineAdvance = getBlockLineAdvance(ctx, block);
-    block.lineAdvance = lineAdvance;
-    block.rowHeight = lineAdvance;
-
+    const rowHeight = getBlockRowHeight(block);
+    block.rowHeight = rowHeight;
+    totalHeight += rowHeight;
     if (index < blocks.length - 1) {
-      totalHeight += lineAdvance + FIXED_LINE_GAP_PX;
-    } else {
-      totalHeight += getBlockBottomExtent(ctx, block, lineAdvance);
+      totalHeight += FIXED_LINE_GAP_PX;
     }
   });
 
@@ -729,7 +708,7 @@ function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, p
     });
   });
 
-  const totalHeight = applyFixedLineSpacing(ctx, blocks);
+  const totalHeight = applyFixedLineSpacing(blocks);
 
   return { blocks, totalHeight, paragraphGap: FIXED_LINE_GAP_PX, lineGap };
 }
@@ -787,10 +766,10 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
     applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
     ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
     block.lines.forEach((line) => {
-      const lineAdvance = block.lineAdvance || block.rowHeight || block.fontSize;
+      const rowHeight = block.rowHeight || block.fontSize;
 
       if (block.showPhoneIcon) {
-        const centerY = y + lineAdvance / 2;
+        const centerY = y + rowHeight / 2;
         const iconY = centerY - block.iconDiameter / 2;
         const textWidth = ctx.measureText(line).width;
         const rowWidth = block.iconDiameter + block.iconGap + textWidth;
@@ -807,17 +786,14 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
         ctx.fillText(line, textX, centerY);
         ctx.restore();
 
-        y += lineAdvance;
+        y += rowHeight;
         return;
       }
 
-      prepareBlockFont(ctx, block);
-      const metrics = ctx.measureText(line);
-      const ascent = metrics.actualBoundingBoxAscent ?? block.fontSize * 0.78;
-      const textX = textAlign === "center" ? xStart - metrics.width / 2 : xStart;
-      ctx.textBaseline = "alphabetic";
-      ctx.fillText(line, textX, y + ascent);
-      y += lineAdvance;
+      const textX = textAlign === "center" ? xStart - ctx.measureText(line).width / 2 : xStart;
+      ctx.textBaseline = "top";
+      ctx.fillText(line, textX, y);
+      y += rowHeight;
     });
     if (index < resolvedLayout.blocks.length - 1) {
       y += FIXED_LINE_GAP_PX;
