@@ -194,14 +194,33 @@ async function normalizePosterOutputBuffer(buffer, outputSize = POSTER_OUTPUT_SI
     return buffer;
   }
 
-  if (metadata.width === outputSize && metadata.height === outputSize) {
+  const { width, height } = metadata;
+
+  if (width === outputSize && height === outputSize) {
     return buffer;
   }
 
+  // Square poster: scale to 1080x1080 — no crop, no padding.
+  if (width === height) {
+    return sharp(buffer)
+      .resize(outputSize, outputSize, {
+        fit: "fill",
+        kernel: sharp.kernel.lanczos3,
+      })
+      .png()
+      .toBuffer();
+  }
+
+  // Non-square poster: scale down proportionally so the longest side is 1080.
+  const maxDim = Math.max(width, height);
+  if (maxDim <= outputSize) {
+    return buffer;
+  }
+
+  const scale = outputSize / maxDim;
   return sharp(buffer)
-    .resize(outputSize, outputSize, {
-      fit: "cover",
-      position: "centre",
+    .resize(Math.round(width * scale), Math.round(height * scale), {
+      fit: "fill",
       kernel: sharp.kernel.lanczos3,
     })
     .png()
@@ -1337,13 +1356,13 @@ async function generatePosterImage({
   }
 
   const posterImage = await loadPosterImage(posterSource, loadImage);
-  const W = POSTER_OUTPUT_SIZE;
-  const H = POSTER_OUTPUT_SIZE;
+  const W = posterImage.width;
+  const H = posterImage.height;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
   ctx.antialias = "subpixel";
 
-  drawImageScaleToFill(ctx, posterImage, 0, 0, W, H);
+  ctx.drawImage(posterImage, 0, 0, W, H);
 
   const textBody = name == null ? "" : String(name).trim();
   let userImage = null;
