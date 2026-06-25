@@ -187,17 +187,25 @@ function drawImageScaleToFill(ctx, image, targetX, targetY, targetWidth, targetH
   );
 }
 
-async function normalizePosterOutputBuffer(buffer, targetSize = POSTER_OUTPUT_SIZE) {
+async function normalizePosterOutputBuffer(buffer, maxSize = POSTER_OUTPUT_SIZE) {
   const sharp = require("sharp");
   const metadata = await sharp(buffer).metadata();
-  if (metadata.width === targetSize && metadata.height === targetSize) {
+  if (!metadata.width || !metadata.height) {
     return buffer;
   }
 
+  const maxDim = Math.max(metadata.width, metadata.height);
+  if (maxDim <= maxSize) {
+    return buffer;
+  }
+
+  const scale = maxSize / maxDim;
+  const targetWidth = Math.round(metadata.width * scale);
+  const targetHeight = Math.round(metadata.height * scale);
+
   return sharp(buffer)
-    .resize(targetSize, targetSize, {
-      fit: "contain",
-      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    .resize(targetWidth, targetHeight, {
+      fit: "fill",
       kernel: sharp.kernel.lanczos3,
     })
     .png()
