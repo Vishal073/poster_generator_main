@@ -770,12 +770,10 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
         return;
       }
 
-      const rowHeight = block.rowHeight || block.lineHeight;
-      const centerY = y + rowHeight / 2;
       const textX = textAlign === "center" ? xStart - ctx.measureText(line).width / 2 : xStart;
-      ctx.textBaseline = "middle";
-      ctx.fillText(line, textX, centerY);
-      y += rowHeight;
+      ctx.textBaseline = "top";
+      ctx.fillText(line, textX, y);
+      y += block.rowHeight || block.lineHeight;
     });
     if (index < resolvedLayout.blocks.length - 1) {
       y += resolvedLayout.paragraphGap;
