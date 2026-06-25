@@ -542,7 +542,44 @@ function getPhoneIconMetrics(fontSize) {
   };
 }
 
-const FIXED_LINE_GAP_PX = 16;
+const DEFAULT_LINE_GAP_PX = 16;
+
+function resolveLineGapPx(drawOptions, resolvedLayout) {
+  const value = drawOptions?.lineGapPx ?? resolvedLayout?.paragraphGap;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  return DEFAULT_LINE_GAP_PX;
+}
+
+function normalizeTextAlign(value) {
+  const resolved = String(value || "left").trim().toLowerCase();
+  if (resolved === "center" || resolved === "right") {
+    return resolved;
+  }
+  return "left";
+}
+
+function normalizeTextLineAlignments(values, fallbackAlign = "left") {
+  const blockAlign = normalizeTextAlign(fallbackAlign);
+  const normalized = [0, 1, 2].map((index) => {
+    if (Array.isArray(values) && values[index] != null) {
+      return normalizeTextAlign(values[index]);
+    }
+    return blockAlign;
+  });
+  return normalized;
+}
+
+function getAlignedStartX(align, xStart, maxWidth, contentWidth) {
+  if (align === "center") {
+    return xStart + Math.max(0, (maxWidth - contentWidth) / 2);
+  }
+  if (align === "right") {
+    return xStart + Math.max(0, maxWidth - contentWidth);
+  }
+  return xStart;
+}
 
 function getBlockRowHeight(block) {
   if (block.showPhoneIcon) {
@@ -551,7 +588,11 @@ function getBlockRowHeight(block) {
   return block.fontSize;
 }
 
-function applyFixedLineSpacing(blocks) {
+function applyFixedLineSpacing(blocks, lineGapPx) {
+  const gap =
+    typeof lineGapPx === "number" && Number.isFinite(lineGapPx) && lineGapPx >= 0
+      ? lineGapPx
+      : DEFAULT_LINE_GAP_PX;
   let totalHeight = 0;
 
   blocks.forEach((block, index) => {
@@ -559,7 +600,7 @@ function applyFixedLineSpacing(blocks) {
     block.rowHeight = rowHeight;
     totalHeight += rowHeight;
     if (index < blocks.length - 1) {
-      totalHeight += FIXED_LINE_GAP_PX;
+      totalHeight += gap;
     }
   });
 
@@ -698,6 +739,7 @@ function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, p
     blocks.push({
       lines: [fitted.text],
       lineHeight,
+      lineIndex: entry.lineIndex,
       fontSize: fitted.fontSize,
       fontFamily: fitted.fontFamily,
       fontColor: style.fontColor,
@@ -708,9 +750,9 @@ function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, p
     });
   });
 
-  const totalHeight = applyFixedLineSpacing(blocks);
+  const totalHeight = applyFixedLineSpacing(blocks, paragraphGap);
 
-  return { blocks, totalHeight, paragraphGap: FIXED_LINE_GAP_PX, lineGap };
+  return { blocks, totalHeight, paragraphGap, lineGap };
 }
 
 function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth, options) {
@@ -756,7 +798,28 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
   };
 }
 
-function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, textOpacity, blendMode) {
+function drawResolvedTextBlocks(
+  ctx,
+  resolvedLayout,
+  xStart,
+  yTop,
+  drawOptions
+) {
+  const textMaxWidth = drawOptions.textMaxWidth;
+  const textBlockAlign = normalizeTextAlign(drawOptions.textBlockAlign);
+  const textLineAlignments = normalizeTextLineAlignments(
+    drawOptions.textLineAlignments,
+    textBlockAlign
+  );
+  const lineGapPx =
+    typeof drawOptions.lineGapPx === "number" && drawOptions.lineGapPx >= 0
+      ? drawOptions.lineGapPx
+      : typeof resolvedLayout.paragraphGap === "number" && resolvedLayout.paragraphGap >= 0
+        ? resolvedLayout.paragraphGap
+        : DEFAULT_LINE_GAP_PX;
+  const textOpacity = drawOptions.textOpacity;
+  const blendMode = drawOptions.blendMode;
+
   ctx.save();
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
@@ -765,6 +828,10 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
   resolvedLayout.blocks.forEach((block, index) => {
     applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
     ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
+    const lineAlign = normalizeTextAlign(
+      textLineAlignments[block.lineIndex == null ? index : block.lineIndex]
+    );
+
     block.lines.forEach((line) => {
       const rowHeight = block.rowHeight || block.fontSize;
 
@@ -773,7 +840,7 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
         const iconY = centerY - block.iconDiameter / 2;
         const textWidth = ctx.measureText(line).width;
         const rowWidth = block.iconDiameter + block.iconGap + textWidth;
-        const startX = textAlign === "center" ? xStart - rowWidth / 2 : xStart;
+        const startX = getAlignedStartX(lineAlign, xStart, textMaxWidth, rowWidth);
         const textX = startX + block.iconDiameter + block.iconGap;
 
         drawPhoneIconBadge(ctx, startX, iconY, block.iconDiameter, block.fontColor, textOpacity);
@@ -790,13 +857,14 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
         return;
       }
 
-      const textX = textAlign === "center" ? xStart - ctx.measureText(line).width / 2 : xStart;
+      const textWidth = ctx.measureText(line).width;
+      const textX = getAlignedStartX(lineAlign, xStart, textMaxWidth, textWidth);
       ctx.textBaseline = "top";
       ctx.fillText(line, textX, y);
       y += rowHeight;
     });
     if (index < resolvedLayout.blocks.length - 1) {
-      y += FIXED_LINE_GAP_PX;
+      y += lineGapPx;
     }
   });
   ctx.restore();
@@ -963,7 +1031,14 @@ function drawNameText(ctx, name, x, y, textLines, textLineStyles, options) {
     options
   );
   const yTop = y - resolvedLayout.totalHeight / 2;
-  drawResolvedTextBlocks(ctx, resolvedLayout, x, yTop, "center", textOpacity, blendMode);
+  drawResolvedTextBlocks(ctx, resolvedLayout, x, yTop, {
+    textMaxWidth: maxWidth,
+    textBlockAlign: options.textBlockAlign || "center",
+    textLineAlignments: options.textLineAlignments,
+    textOpacity,
+    blendMode,
+    lineGapPx: options.paragraphGap,
+  });
 }
 
 /** Inset box: text left-aligned, bottom-aligned; supports newlines and multiple logical lines. */
@@ -987,7 +1062,14 @@ function drawNameTextBlockBottomLeft(
     options
   );
   const yTop = yBottom - resolvedLayout.totalHeight;
-  drawResolvedTextBlocks(ctx, resolvedLayout, xLeft, yTop, "left", textOpacity, blendMode);
+  drawResolvedTextBlocks(ctx, resolvedLayout, xLeft, yTop, {
+    textMaxWidth: maxWidth,
+    textBlockAlign: options.textBlockAlign || "left",
+    textLineAlignments: options.textLineAlignments,
+    textOpacity,
+    blendMode,
+    lineGapPx: options.paragraphGap,
+  });
 }
 
 function isInsetLayout(insetFromBottom, insetLeft, insetRight) {
@@ -1118,6 +1200,8 @@ async function generatePosterImage({
   fontFamily = "Helvetica Neue",
   textOpacity = 0.9,
   textBlendMode = "multiply",
+  textBlockAlign = "left",
+  textLineAlignments,
   language = "en",
   addWatermark = true,
   watermarkSource,
@@ -1276,15 +1360,14 @@ async function generatePosterImage({
         { imageCornerRadius }
       );
     }
-    drawResolvedTextBlocks(
-      ctx,
-      resolvedTextLayout,
-      layout.textLeft,
-      textTop,
-      "left",
+    drawResolvedTextBlocks(ctx, resolvedTextLayout, layout.textLeft, textTop, {
+      textMaxWidth: layout.textMaxWidth,
+      textBlockAlign,
+      textLineAlignments,
       textOpacity,
-      textBlendMode
-    );
+      blendMode: textBlendMode,
+      lineGapPx: paragraphGap,
+    });
   } else {
     if (userImage && canUseManualImage) {
       drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, imageShape, {

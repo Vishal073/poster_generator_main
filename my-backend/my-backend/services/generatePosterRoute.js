@@ -50,12 +50,14 @@ const BULK_DEFAULT_LAYOUT = {
   imageGap: 16,
   imageMaxSize: 350,
   lineGap: 0,
-  paragraphGap: 8,
+  paragraphGap: 16,
   fontSize: 40,
   fontColor: "#2a2a2a",
   fontFamily: "Helvetica Neue",
   textOpacity: 0.9,
   textBlendMode: "multiply",
+  textBlockAlign: "left",
+  textLineAlignments: ["left", "left", "left"],
 };
 
 const basePosterUpload = multer({
@@ -180,6 +182,8 @@ async function generatePoster(req, res) {
       fontFamily = "Helvetica Neue",
       textOpacity = 0.9,
       textBlendMode = "multiply",
+      textBlockAlign = "left",
+      textLineAlignments,
       posterSource,
       language = "en",
       userId,
@@ -223,6 +227,11 @@ async function generatePoster(req, res) {
       mobileNumber: mobileValue,
     });
 
+    const resolvedTextLineAlignments = parseTextLineAlignments(
+      textLineAlignments,
+      textBlockAlign
+    );
+
     let posterResult;
     try {
       posterResult = await generatePosterImage({
@@ -251,6 +260,8 @@ async function generatePoster(req, res) {
         fontFamily,
         textOpacity,
         textBlendMode,
+        textBlockAlign,
+        textLineAlignments: resolvedTextLineAlignments,
         posterSource: resolvedPosterSource,
         language,
         addWatermark: body.addWatermark,
@@ -559,6 +570,29 @@ function parseTextLineStyles(input, fallback) {
   });
 }
 
+function parseTextLineAlignments(input, fallbackAlign = "left") {
+  const blockAlign =
+    typeof fallbackAlign === "string" &&
+    ["left", "center", "right"].includes(fallbackAlign.trim().toLowerCase())
+      ? fallbackAlign.trim().toLowerCase()
+      : "left";
+
+  if (!Array.isArray(input)) {
+    return [blockAlign, blockAlign, blockAlign];
+  }
+
+  return [0, 1, 2].map((index) => {
+    const value = input[index];
+    if (
+      typeof value === "string" &&
+      ["left", "center", "right"].includes(value.trim().toLowerCase())
+    ) {
+      return value.trim().toLowerCase();
+    }
+    return blockAlign;
+  });
+}
+
 function resolvePosterSources(body) {
   const fromArray = Array.isArray(body.posterSources)
     ? body.posterSources
@@ -663,6 +697,8 @@ router.post(
         fontFamily: pickString(body.fontFamily),
         textOpacity: pickNumber(body.textOpacity),
         textBlendMode: pickString(body.textBlendMode, ["multiply", "overlay"]),
+        textBlockAlign: pickString(body.textBlockAlign, ["left", "center", "right"]),
+        textLineAlignments: parseTextLineAlignments(body.textLineAlignments, body.textBlockAlign),
       };
 
       const resolvedLayout = { ...BULK_DEFAULT_LAYOUT };
