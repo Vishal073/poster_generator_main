@@ -219,10 +219,22 @@ function resolvePosterWatermarkOptions(options = {}) {
   const watermarkSource =
     (typeof options.watermarkSource === "string" && options.watermarkSource.trim()) ||
     getDefaultPosterWatermarkSource();
+  const addWatermarkLogo =
+    options.addWatermarkLogo === true ||
+    options.addWatermarkLogo === "true" ||
+    options.addWatermarkLogo === 1 ||
+    options.addWatermarkLogo === "1";
   const requestedMode =
     typeof options.watermarkMode === "string" ? options.watermarkMode.trim().toLowerCase() : "";
   const envMode = (process.env.POSTER_WATERMARK_MODE || "").trim().toLowerCase();
   let watermarkMode = requestedMode || envMode || "text";
+  if (addWatermarkLogo && watermarkSource) {
+    watermarkMode = "both";
+  } else if (addWatermarkLogo && !watermarkSource) {
+    watermarkMode = "text";
+  } else if (!addWatermarkLogo && !requestedMode && !envMode) {
+    watermarkMode = "text";
+  }
   if (watermarkMode === "both" && !watermarkSource) {
     watermarkMode = "text";
   }
@@ -236,6 +248,7 @@ function resolvePosterWatermarkOptions(options = {}) {
 
   return {
     addWatermark: true,
+    addWatermarkLogo: addWatermarkLogo && Boolean(watermarkSource),
     watermarkMode,
     watermarkSource: watermarkSource || undefined,
     watermarkText,
@@ -363,10 +376,11 @@ function drawGcrGraphixTextWatermark(ctx, x, y, width, height, text) {
 async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, loadImage) {
   try {
     const mode = watermark.watermarkMode || "text";
+    const logoSize = watermark.watermarkLogoSize || WATERMARK_BRAND.logoSize;
+    const logoGap = watermark.watermarkLogoGap || WATERMARK_BRAND.logoGap;
     const blockHeight = watermark.watermarkHeight || 52;
 
     if (mode === "image" && watermark.watermarkSource) {
-      const logoSize = watermark.watermarkLogoSize || WATERMARK_BRAND.logoSize;
       const { x, y } = resolveWatermarkCoordinates(
         canvasWidth,
         canvasHeight,
@@ -425,6 +439,7 @@ async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, lo
       blockHeight,
       watermark.watermarkText
     );
+    const combinedBlockHeight = Math.max(blockHeight, logoSize);
     const blockWidth = watermark.watermarkSource
       ? logoSize + logoGap + textLayout.totalWidth
       : textLayout.totalWidth;
@@ -433,7 +448,7 @@ async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, lo
       canvasHeight,
       watermark,
       blockWidth,
-      blockHeight
+      combinedBlockHeight
     );
 
     if (watermark.watermarkSource) {
@@ -446,11 +461,12 @@ async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, lo
           },
           loadImage
         );
+        const logoY = y + (combinedBlockHeight - logoSize) / 2;
         drawRoundedRectImageExact(
           ctx,
           watermarkImage,
           x,
-          y,
+          logoY,
           logoSize,
           logoSize,
           watermark.watermarkCornerRadius
@@ -461,10 +477,11 @@ async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, lo
     }
 
     const textX = watermark.watermarkSource ? x + logoSize + logoGap : x;
+    const textY = y + (combinedBlockHeight - blockHeight) / 2;
     drawGcrGraphixTextWatermark(
       ctx,
       textX,
-      y,
+      textY,
       textLayout.totalWidth,
       blockHeight,
       watermark.watermarkText
@@ -476,7 +493,7 @@ async function drawPosterWatermark(ctx, canvasWidth, canvasHeight, watermark, lo
 
 function drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, imageShape, options = {}) {
   const shape = imageShape === "circle" ? "circle" : "rectangle";
-  const { circleBorderColor, circleBorderWidth } = options;
+  const { circleBorderColor, circleBorderWidth, imageCornerRadius = 0 } = options;
 
   if (shape === "circle") {
     const radius = Math.min(imageWidth, imageHeight) / 2;
@@ -504,7 +521,80 @@ function drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, 
     return;
   }
 
+  const cornerRadius =
+    typeof imageCornerRadius === "number" && imageCornerRadius > 0 ? imageCornerRadius : 0;
+  if (cornerRadius > 0) {
+    drawRoundedRectImage(
+      ctx,
+      userImage,
+      imageX,
+      imageY,
+      imageWidth,
+      imageHeight,
+      cornerRadius
+    );
+    return;
+  }
+
   drawImageScaleToFill(ctx, userImage, imageX, imageY, imageWidth, imageHeight);
+}
+
+const PHONE_ICON_LINE_INDEX = 2;
+
+function shouldShowPhoneIcon(lineIndex) {
+  return lineIndex === PHONE_ICON_LINE_INDEX;
+}
+
+function getPhoneIconMetrics(fontSize) {
+  const diameter = Math.round(fontSize);
+  const gap = Math.max(6, Math.round(fontSize * 0.2));
+  return {
+    diameter,
+    gap,
+    prefixWidth: diameter + gap,
+  };
+}
+
+function drawPhoneHandsetIcon(ctx, cx, cy, innerSize) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-0.75);
+  ctx.fillStyle = "#ffffff";
+
+  const width = innerSize * 0.42;
+  const height = innerSize * 0.78;
+  const radius = width * 0.22;
+
+  ctx.beginPath();
+  ctx.moveTo(-width / 2 + radius, -height / 2);
+  ctx.lineTo(width / 2 - radius, -height / 2);
+  ctx.quadraticCurveTo(width / 2, -height / 2, width / 2, -height / 2 + radius);
+  ctx.lineTo(width / 2, height / 2 - radius);
+  ctx.quadraticCurveTo(width / 2, height / 2, width / 2 - radius, height / 2);
+  ctx.lineTo(-width / 2 + radius, height / 2);
+  ctx.quadraticCurveTo(-width / 2, height / 2, -width / 2, height / 2 - radius);
+  ctx.lineTo(-width / 2, -height / 2 + radius);
+  ctx.quadraticCurveTo(-width / 2, -height / 2, -width / 2 + radius, -height / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPhoneIconBadge(ctx, x, y, diameter, bgColor) {
+  const radius = diameter / 2;
+  const cx = x + radius;
+  const cy = y + radius;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = bgColor;
+  ctx.fill();
+  ctx.save();
+  ctx.globalAlpha = 1;
+  drawPhoneHandsetIcon(ctx, cx, cy, diameter * 0.62);
+  ctx.restore();
+  ctx.restore();
 }
 
 /** Word-wrap a single paragraph at a fixed font size (no auto-shrink). */
@@ -536,13 +626,13 @@ function fitSingleLineText(
   };
 }
 
-function normalizeTextLineStyles(paragraphs, textLineStyles, defaults) {
+function normalizeTextLineStyles(entries, textLineStyles, defaults) {
   if (!Array.isArray(textLineStyles) || !textLineStyles.length) {
     return [];
   }
 
-  return paragraphs.map((_, index) => {
-    const style = textLineStyles[index] || {};
+  return entries.map(({ lineIndex }) => {
+    const style = textLineStyles[lineIndex] || textLineStyles[textLineStyles.length - 1] || {};
     return {
       fontSize:
         typeof style.fontSize === "number" && style.fontSize > 0
@@ -564,33 +654,42 @@ function normalizeTextLineStyles(paragraphs, textLineStyles, defaults) {
   });
 }
 
-function getStyledMultilineLayout(ctx, paragraphs, lineStyles, maxWidth, lineGap, paragraphGap) {
+function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, paragraphGap) {
   const blocks = [];
   let totalHeight = 0;
   const minFontSize = 12;
 
-  paragraphs.forEach((paragraph, index) => {
+  entries.forEach((entry, index) => {
     const style = lineStyles[index];
+    const showPhoneIcon = shouldShowPhoneIcon(entry.lineIndex);
+    const iconMetrics = showPhoneIcon ? getPhoneIconMetrics(style.fontSize) : null;
+    const fitWidth = showPhoneIcon ? Math.max(40, maxWidth - iconMetrics.prefixWidth) : maxWidth;
     const fitted = fitSingleLineText(
       ctx,
-      paragraph,
-      maxWidth,
+      entry.text,
+      fitWidth,
       style.fontSize,
       minFontSize,
       style.fontFamily,
       style.fontWeight
     );
     const lineHeight = fitted.fontSize * 1.2;
+    const resolvedIconMetrics = showPhoneIcon ? getPhoneIconMetrics(fitted.fontSize) : null;
+    const rowHeight = showPhoneIcon ? Math.max(lineHeight, fitted.fontSize) : lineHeight;
     blocks.push({
       lines: [fitted.text],
       lineHeight,
+      rowHeight,
       fontSize: fitted.fontSize,
       fontFamily: fitted.fontFamily,
       fontColor: style.fontColor,
       fontWeight: fitted.fontWeight,
+      showPhoneIcon,
+      iconDiameter: resolvedIconMetrics ? resolvedIconMetrics.diameter : 0,
+      iconGap: resolvedIconMetrics ? resolvedIconMetrics.gap : 0,
     });
-    totalHeight += lineHeight;
-    if (index < paragraphs.length - 1) {
+    totalHeight += rowHeight;
+    if (index < entries.length - 1) {
       totalHeight += paragraphGap;
     }
   });
@@ -602,16 +701,17 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
   const { fontSize, fontColor, fontFamily } = options;
   const lineGap = options.lineGap == null ? 0 : options.lineGap;
   const paragraphGap = options.paragraphGap == null ? 8 : options.paragraphGap;
-  const paragraphs = splitTextParagraphs(name, textLines);
+  const entries = splitTextLineEntries(name, textLines);
+  const paragraphs = entries.map((entry) => entry.text);
   const resolvedFontFamily = fontFamily || "Helvetica Neue";
-  const resolvedStyles = normalizeTextLineStyles(paragraphs, textLineStyles, {
+  const resolvedStyles = normalizeTextLineStyles(entries, textLineStyles, {
     fontSize,
     fontFamily: resolvedFontFamily,
     fontColor,
   });
 
   if (resolvedStyles.length) {
-    return getStyledMultilineLayout(ctx, paragraphs, resolvedStyles, maxWidth, lineGap, paragraphGap);
+    return getStyledMultilineLayout(ctx, entries, resolvedStyles, maxWidth, lineGap, paragraphGap);
   }
 
   const minFontSize = 16;
@@ -641,7 +741,7 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
 
 function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, textOpacity, blendMode) {
   ctx.save();
-  ctx.textAlign = textAlign;
+  ctx.textAlign = "left";
   ctx.textBaseline = "top";
 
   let y = yTop;
@@ -649,7 +749,22 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
     applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
     ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
     block.lines.forEach((line) => {
-      ctx.fillText(line, xStart, y);
+      if (block.showPhoneIcon) {
+        const rowHeight = block.rowHeight || block.lineHeight;
+        const iconY = y + (rowHeight - block.iconDiameter) / 2;
+        const textY = y + (rowHeight - block.fontSize) / 2;
+        const textWidth = ctx.measureText(line).width;
+        const rowWidth = block.iconDiameter + block.iconGap + textWidth;
+        const startX = textAlign === "center" ? xStart - rowWidth / 2 : xStart;
+
+        drawPhoneIconBadge(ctx, startX, iconY, block.iconDiameter, block.fontColor);
+        ctx.fillText(line, startX + block.iconDiameter + block.iconGap, textY);
+        y += rowHeight;
+        return;
+      }
+
+      const textX = textAlign === "center" ? xStart - ctx.measureText(line).width / 2 : xStart;
+      ctx.fillText(line, textX, y);
       y += block.lineHeight;
     });
     if (index < resolvedLayout.blocks.length - 1) {
@@ -663,21 +778,37 @@ function drawResolvedTextBlocks(ctx, resolvedLayout, xStart, yTop, textAlign, te
  * @param {string} name
  * @param {string[]|undefined} textLines
  */
-function splitTextParagraphs(name, textLines) {
+function splitTextLineEntries(name, textLines) {
   if (Array.isArray(textLines) && textLines.length) {
-    return textLines.map((s) => String(s).trim()).filter((s) => s.length);
+    return textLines
+      .map((line, lineIndex) => ({
+        text: String(line || "").trim(),
+        lineIndex,
+      }))
+      .filter((entry) => entry.text.length > 0);
   }
   if (name != null && String(name).includes("\n")) {
     return String(name)
       .split("\n")
-      .map((s) => s.trim())
-      .filter((s) => s.length);
+      .map((line, lineIndex) => ({
+        text: line.trim(),
+        lineIndex,
+      }))
+      .filter((entry) => entry.text.length > 0);
   }
   if (name != null) {
-    const t = String(name).trim();
-    return t ? [t] : [""];
+    const text = String(name).trim();
+    return text ? [{ text, lineIndex: 0 }] : [{ text: "", lineIndex: 0 }];
   }
-  return [""];
+  return [{ text: "", lineIndex: 0 }];
+}
+
+/**
+ * @param {string} name
+ * @param {string[]|undefined} textLines
+ */
+function splitTextParagraphs(name, textLines) {
+  return splitTextLineEntries(name, textLines).map((entry) => entry.text);
 }
 
 /**
@@ -945,6 +1076,7 @@ async function generatePosterImage({
   imageWidth = 120,
   imageHeight = 120,
   imageShape = "rectangle",
+  imageCornerRadius = 16,
   imagePosition = "left",
   insetFromBottom,
   insetLeft,
@@ -960,6 +1092,8 @@ async function generatePosterImage({
   textBlendMode = "multiply",
   language = "en",
   addWatermark = true,
+  addWatermarkLogo = false,
+  watermarkLogoGap = 10,
   watermarkSource,
   watermarkWidth = 220,
   watermarkHeight = 52,
@@ -993,6 +1127,8 @@ async function generatePosterImage({
   const { createCanvas, loadImage } = canvasApi;
   const watermark = resolvePosterWatermarkOptions({
     addWatermark,
+    addWatermarkLogo,
+    watermarkLogoGap,
     watermarkSource,
     watermarkWidth,
     watermarkHeight,
@@ -1111,7 +1247,8 @@ async function generatePosterImage({
         finalImageY,
         layout.imageWidth,
         layout.imageHeight,
-        imageShape
+        imageShape,
+        { imageCornerRadius }
       );
     }
     drawResolvedTextBlocks(
@@ -1125,7 +1262,9 @@ async function generatePosterImage({
     );
   } else {
     if (userImage && canUseManualImage) {
-      drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, imageShape);
+      drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, imageShape, {
+        imageCornerRadius,
+      });
     }
     drawNameText(ctx, textBody, x, y, textLines, textLineStyles, {
       fontSize,

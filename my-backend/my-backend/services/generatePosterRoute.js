@@ -46,6 +46,7 @@ const BULK_DEFAULT_LAYOUT = {
   imageWidth: 300,
   imageHeight: 300,
   imageShape: "circle",
+  imageCornerRadius: 16,
   imageGap: 16,
   imageMaxSize: 350,
   lineGap: 0,
@@ -165,6 +166,7 @@ async function generatePoster(req, res) {
       imageWidth = 120,
       imageHeight = 120,
       imageShape = "rectangle",
+      imageCornerRadius = 16,
       imagePosition = "left",
       insetFromBottom,
       insetLeft,
@@ -235,6 +237,7 @@ async function generatePoster(req, res) {
         imageWidth,
         imageHeight,
         imageShape,
+        imageCornerRadius,
         imagePosition,
         insetFromBottom,
         insetLeft,
@@ -251,6 +254,8 @@ async function generatePoster(req, res) {
         posterSource: resolvedPosterSource,
         language,
         addWatermark: body.addWatermark,
+        addWatermarkLogo: body.addWatermarkLogo,
+        watermarkLogoGap: body.watermarkLogoGap,
         watermarkPosition: body.watermarkPosition,
       });
     } catch (error) {
@@ -580,27 +585,18 @@ function pickRandomPosterSource(sources) {
 }
 
 function buildTextLinesFromUser(user) {
-  const lines = [];
-
-  if (user.name) {
-    lines.push(String(user.name).trim());
-  }
-
   let secondLine = "";
   if (user.occupationType === "Politician") {
     secondLine = user.post || user.party || "";
   } else {
     secondLine = user.address || user.city || "";
   }
-  if (secondLine) {
-    lines.push(String(secondLine).trim());
-  }
 
-  if (user.mobileNumber) {
-    lines.push(String(user.mobileNumber).trim());
-  }
-
-  return lines.filter(Boolean);
+  return [
+    user.name ? String(user.name).trim() : "",
+    secondLine ? String(secondLine).trim() : "",
+    user.mobileNumber ? String(user.mobileNumber).trim() : "",
+  ];
 }
 
 // POST /generate-posters/bulk
@@ -659,6 +655,7 @@ router.post(
         imageWidth: pickNumber(body.imageWidth),
         imageHeight: pickNumber(body.imageHeight),
         imageShape: pickString(body.imageShape, ["circle", "rectangle"]),
+        imageCornerRadius: pickNumber(body.imageCornerRadius),
         imageGap: pickNumber(body.imageGap),
         imageMaxSize: pickNumber(body.imageMaxSize),
         lineGap: pickNumber(body.lineGap),
@@ -774,6 +771,8 @@ router.post(
             language,
             ...resolvedLayout,
             addWatermark: body.addWatermark,
+            addWatermarkLogo: body.addWatermarkLogo,
+            watermarkLogoGap: body.watermarkLogoGap,
             watermarkPosition: body.watermarkPosition,
           });
 
