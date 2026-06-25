@@ -544,12 +544,25 @@ function getPhoneIconMetrics(fontSize) {
 
 const DEFAULT_LINE_GAP_PX = 16;
 
-function resolveLineGapPx(drawOptions, resolvedLayout) {
-  const value = drawOptions?.lineGapPx ?? resolvedLayout?.paragraphGap;
+function normalizeLineGap(value, fallback = DEFAULT_LINE_GAP_PX) {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
     return value;
   }
-  return DEFAULT_LINE_GAP_PX;
+  return fallback;
+}
+
+function normalizeLineGaps(lineGaps, fallbackGap = DEFAULT_LINE_GAP_PX) {
+  const fallback = normalizeLineGap(fallbackGap);
+  if (Array.isArray(lineGaps) && lineGaps.length > 0) {
+    const first = normalizeLineGap(lineGaps[0], fallback);
+    const second = normalizeLineGap(lineGaps[1], first);
+    return [first, second];
+  }
+  return [fallback, fallback];
+}
+
+function gapAfterBlockIndex(lineGaps, index) {
+  return lineGaps[Math.min(index, lineGaps.length - 1)] ?? DEFAULT_LINE_GAP_PX;
 }
 
 function normalizeTextAlign(value) {
@@ -588,11 +601,8 @@ function getBlockRowHeight(block) {
   return block.fontSize;
 }
 
-function applyFixedLineSpacing(blocks, lineGapPx) {
-  const gap =
-    typeof lineGapPx === "number" && Number.isFinite(lineGapPx) && lineGapPx >= 0
-      ? lineGapPx
-      : DEFAULT_LINE_GAP_PX;
+function applyFixedLineSpacing(blocks, lineGaps, fallbackGap) {
+  const gaps = normalizeLineGaps(lineGaps, fallbackGap);
   let totalHeight = 0;
 
   blocks.forEach((block, index) => {
@@ -600,7 +610,7 @@ function applyFixedLineSpacing(blocks, lineGapPx) {
     block.rowHeight = rowHeight;
     totalHeight += rowHeight;
     if (index < blocks.length - 1) {
-      totalHeight += gap;
+      totalHeight += gapAfterBlockIndex(gaps, index);
     }
   });
 
@@ -716,9 +726,10 @@ function normalizeTextLineStyles(entries, textLineStyles, defaults) {
   });
 }
 
-function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, paragraphGap) {
+function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, lineGaps, paragraphGap) {
   const blocks = [];
   const minFontSize = 12;
+  const normalizedLineGaps = normalizeLineGaps(lineGaps, paragraphGap);
 
   entries.forEach((entry, index) => {
     const style = lineStyles[index];
@@ -750,15 +761,16 @@ function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, p
     });
   });
 
-  const totalHeight = applyFixedLineSpacing(blocks, paragraphGap);
+  const totalHeight = applyFixedLineSpacing(blocks, normalizedLineGaps, paragraphGap);
 
-  return { blocks, totalHeight, paragraphGap, lineGap };
+  return { blocks, totalHeight, lineGaps: normalizedLineGaps, paragraphGap: normalizedLineGaps[0], lineGap };
 }
 
 function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth, options) {
   const { fontSize, fontColor, fontFamily } = options;
   const lineGap = options.lineGap == null ? 0 : options.lineGap;
-  const paragraphGap = options.paragraphGap == null ? 8 : options.paragraphGap;
+  const paragraphGap = options.paragraphGap == null ? DEFAULT_LINE_GAP_PX : options.paragraphGap;
+  const lineGaps = normalizeLineGaps(options.lineGaps, paragraphGap);
   const entries = splitTextLineEntries(name, textLines);
   const paragraphs = entries.map((entry) => entry.text);
   const resolvedFontFamily = fontFamily || "Helvetica Neue";
@@ -769,7 +781,7 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
   });
 
   if (resolvedStyles.length) {
-    return getStyledMultilineLayout(ctx, entries, resolvedStyles, maxWidth, lineGap, paragraphGap);
+    return getStyledMultilineLayout(ctx, entries, resolvedStyles, maxWidth, lineGap, lineGaps, paragraphGap);
   }
 
   const minFontSize = 16;
@@ -780,7 +792,7 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
     fontSize,
     minFontSize,
     resolvedFontFamily,
-    { lineGap, paragraphGap }
+    { lineGap, paragraphGap, lineGaps }
   );
 
   return {
@@ -794,6 +806,7 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
       fontWeight: "normal",
     })),
     totalHeight: plain.totalHeight,
+    lineGaps: normalizeLineGaps(plain.lineGaps, paragraphGap),
     paragraphGap: plain.paragraphGap,
   };
 }
@@ -811,18 +824,15 @@ function drawResolvedTextBlocks(
     drawOptions.textLineAlignments,
     textBlockAlign
   );
-  const lineGapPx =
-    typeof drawOptions.lineGapPx === "number" && drawOptions.lineGapPx >= 0
-      ? drawOptions.lineGapPx
-      : typeof resolvedLayout.paragraphGap === "number" && resolvedLayout.paragraphGap >= 0
-        ? resolvedLayout.paragraphGap
-        : DEFAULT_LINE_GAP_PX;
+  const lineGaps = normalizeLineGaps(
+    drawOptions.lineGaps ?? resolvedLayout.lineGaps,
+    drawOptions.paragraphGap ?? drawOptions.lineGapPx ?? resolvedLayout.paragraphGap
+  );
   const textOpacity = drawOptions.textOpacity;
   const blendMode = drawOptions.blendMode;
 
   ctx.save();
   ctx.textAlign = "left";
-  ctx.textBaseline = "top";
 
   let y = yTop;
   resolvedLayout.blocks.forEach((block, index) => {
@@ -831,10 +841,9 @@ function drawResolvedTextBlocks(
     const lineAlign = normalizeTextAlign(
       textLineAlignments[block.lineIndex == null ? index : block.lineIndex]
     );
+    const rowHeight = block.rowHeight || block.fontSize;
 
     block.lines.forEach((line) => {
-      const rowHeight = block.rowHeight || block.fontSize;
-
       if (block.showPhoneIcon) {
         const centerY = y + rowHeight / 2;
         const iconY = centerY - block.iconDiameter / 2;
@@ -859,12 +868,12 @@ function drawResolvedTextBlocks(
 
       const textWidth = ctx.measureText(line).width;
       const textX = getAlignedStartX(lineAlign, xStart, textMaxWidth, textWidth);
-      ctx.textBaseline = "top";
-      ctx.fillText(line, textX, y);
+      ctx.textBaseline = "middle";
+      ctx.fillText(line, textX, y + rowHeight / 2);
       y += rowHeight;
     });
     if (index < resolvedLayout.blocks.length - 1) {
-      y += lineGapPx;
+      y += gapAfterBlockIndex(lineGaps, index);
     }
   });
   ctx.restore();
@@ -909,7 +918,7 @@ function splitTextParagraphs(name, textLines) {
 
 /**
  * User logical lines (e.g. name / title / phone); each can wrap. Shrink font until all lines fit width.
- * @param {{ lineGap?: number, paragraphGap?: number }} extra
+ * @param {{ lineGap?: number, paragraphGap?: number, lineGaps?: number[] }} extra
  */
 function getMultilineBlockLayout(
   ctx,
@@ -922,7 +931,8 @@ function getMultilineBlockLayout(
 ) {
   const family = fontFamily || "Helvetica Neue";
   const lineGap = extra.lineGap == null ? 0 : extra.lineGap;
-  const paragraphGap = extra.paragraphGap == null ? 8 : extra.paragraphGap;
+  const paragraphGap = extra.paragraphGap == null ? DEFAULT_LINE_GAP_PX : extra.paragraphGap;
+  const lineGaps = normalizeLineGaps(extra.lineGaps, paragraphGap);
   if (!paragraphs.length) {
     return {
       blocks: [],
@@ -930,6 +940,7 @@ function getMultilineBlockLayout(
       lineHeight: fontSize * 1.2,
       lineGap,
       paragraphGap,
+      lineGaps,
       totalHeight: 0,
       fontFamily: family,
     };
@@ -951,7 +962,7 @@ function getMultilineBlockLayout(
       }
       totalHeight += lineHeight;
       if (i < blocks.length - 1) {
-        totalHeight += paragraphGap;
+        totalHeight += gapAfterBlockIndex(lineGaps, i);
       }
     }
     return { ok: true, blocks, lineHeight, totalHeight };
@@ -962,7 +973,7 @@ function getMultilineBlockLayout(
     for (let i = 0; i < blocks.length; i += 1) {
       t += lineHeight;
       if (i < blocks.length - 1) {
-        t += paragraphGap;
+        t += gapAfterBlockIndex(lineGaps, i);
       }
     }
     return t;
@@ -979,6 +990,7 @@ function getMultilineBlockLayout(
         lineHeight,
         lineGap,
         paragraphGap,
+        lineGaps,
         totalHeight,
         fontFamily: family,
       };
@@ -997,6 +1009,7 @@ function getMultilineBlockLayout(
     lineHeight: minFontSize * 1.2,
     lineGap,
     paragraphGap,
+    lineGaps,
     totalHeight: th,
     fontFamily: family,
   };
@@ -1037,7 +1050,8 @@ function drawNameText(ctx, name, x, y, textLines, textLineStyles, options) {
     textLineAlignments: options.textLineAlignments,
     textOpacity,
     blendMode,
-    lineGapPx: options.paragraphGap,
+    lineGaps: options.lineGaps,
+    paragraphGap: options.paragraphGap,
   });
 }
 
@@ -1068,7 +1082,8 @@ function drawNameTextBlockBottomLeft(
     textLineAlignments: options.textLineAlignments,
     textOpacity,
     blendMode,
-    lineGapPx: options.paragraphGap,
+    lineGaps: options.lineGaps,
+    paragraphGap: options.paragraphGap,
   });
 }
 
@@ -1194,7 +1209,8 @@ async function generatePosterImage({
   imageGap = 16,
   imageMaxSize = 120,
   lineGap = 0,
-  paragraphGap = 8,
+  paragraphGap = DEFAULT_LINE_GAP_PX,
+  lineGaps,
   fontSize = 40,
   fontColor = "#2a2a2a",
   fontFamily = "Helvetica Neue",
@@ -1221,6 +1237,8 @@ async function generatePosterImage({
   }
 
   registerPosterFonts();
+
+  const normalizedLineGaps = normalizeLineGaps(lineGaps, paragraphGap);
 
   const localizedContent = await applyLanguageToPosterContent({
     name,
@@ -1333,7 +1351,7 @@ async function generatePosterImage({
       textLines,
       textLineStyles,
       layout.textMaxWidth,
-      { fontSize, fontColor, fontFamily, lineGap, paragraphGap }
+      { fontSize, fontColor, fontFamily, lineGap, paragraphGap, lineGaps: normalizedLineGaps }
     );
     const textHeight = resolvedTextLayout.totalHeight;
     const textTop = layout.contentBottomY - textHeight;
@@ -1366,7 +1384,8 @@ async function generatePosterImage({
       textLineAlignments,
       textOpacity,
       blendMode: textBlendMode,
-      lineGapPx: paragraphGap,
+      lineGaps: normalizedLineGaps,
+      paragraphGap,
     });
   } else {
     if (userImage && canUseManualImage) {
@@ -1383,6 +1402,7 @@ async function generatePosterImage({
       blendMode: textBlendMode,
       lineGap,
       paragraphGap,
+      lineGaps: normalizedLineGaps,
     });
   }
 

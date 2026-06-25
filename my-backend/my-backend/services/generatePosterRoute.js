@@ -50,6 +50,7 @@ const BULK_DEFAULT_LAYOUT = {
   imageGap: 16,
   imageMaxSize: 350,
   lineGap: 0,
+  lineGaps: [16, 16],
   paragraphGap: 16,
   fontSize: 40,
   fontColor: "#2a2a2a",
@@ -176,7 +177,7 @@ async function generatePoster(req, res) {
       imageGap = 16,
       imageMaxSize = 120,
       lineGap = 0,
-      paragraphGap = 8,
+      paragraphGap = 16,
       fontSize = 40,
       fontColor = "#2a2a2a",
       fontFamily = "Helvetica Neue",
@@ -231,6 +232,7 @@ async function generatePoster(req, res) {
       textLineAlignments,
       textBlockAlign
     );
+    const resolvedLineGaps = parseLineGaps(body.lineGaps, paragraphGap);
 
     let posterResult;
     try {
@@ -255,6 +257,7 @@ async function generatePoster(req, res) {
         imageMaxSize,
         lineGap,
         paragraphGap,
+        lineGaps: resolvedLineGaps,
         fontSize,
         fontColor,
         fontFamily,
@@ -593,6 +596,25 @@ function parseTextLineAlignments(input, fallbackAlign = "left") {
   });
 }
 
+function parseLineGaps(input, legacyGap = 16) {
+  const fallback =
+    typeof legacyGap === "number" && Number.isFinite(legacyGap) && legacyGap >= 0
+      ? legacyGap
+      : 16;
+  if (Array.isArray(input) && input.length > 0) {
+    const first =
+      typeof input[0] === "number" && Number.isFinite(input[0]) && input[0] >= 0
+        ? input[0]
+        : fallback;
+    const second =
+      typeof input[1] === "number" && Number.isFinite(input[1]) && input[1] >= 0
+        ? input[1]
+        : first;
+    return [first, second];
+  }
+  return [fallback, fallback];
+}
+
 function resolvePosterSources(body) {
   const fromArray = Array.isArray(body.posterSources)
     ? body.posterSources
@@ -691,6 +713,7 @@ router.post(
         imageGap: pickNumber(body.imageGap),
         imageMaxSize: pickNumber(body.imageMaxSize),
         lineGap: pickNumber(body.lineGap),
+        lineGaps: parseLineGaps(body.lineGaps, pickNumber(body.paragraphGap)),
         paragraphGap: pickNumber(body.paragraphGap),
         fontSize: pickNumber(body.fontSize),
         fontColor: pickString(body.fontColor),
