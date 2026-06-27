@@ -69,6 +69,69 @@ function resolveReturnTo(value) {
   return value === "portal" ? "portal" : "admin";
 }
 
+function isInAppBrowserUserAgent(userAgent) {
+  return /WhatsApp|Instagram|FBAN|FBAV|FB_IAB|Line\/|MicroMessenger/i.test(
+    String(userAgent || ""),
+  );
+}
+
+function buildMobileOAuthBridgeHtml(oauthUrl, appId) {
+  const safeUrl = JSON.stringify(oauthUrl);
+  const safeAppId = JSON.stringify(String(appId || ""));
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Opening Facebook…</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 2rem 1.25rem; text-align: center; color: #1f2937; }
+    p { line-height: 1.5; }
+    a { color: #1877f2; }
+  </style>
+</head>
+<body>
+  <p>Opening Facebook app…</p>
+  <p><a id="fallback" href="#">Tap here if nothing happens</a></p>
+  <script>
+    (function () {
+      var webUrl = ${safeUrl};
+      var appId = ${safeAppId};
+      var ua = navigator.userAgent || "";
+      var fallback = document.getElementById("fallback");
+      if (fallback) fallback.href = webUrl;
+
+      function openWeb() {
+        window.location.replace(webUrl);
+      }
+
+      if (/Android/i.test(ua)) {
+        var intentUrl =
+          webUrl.replace(/^https:\\/\\//, "intent://") +
+          "#Intent;package=com.facebook.katana;scheme=https;end";
+        window.location.href = intentUrl;
+        setTimeout(openWeb, 1500);
+        return;
+      }
+
+      if (/iPhone|iPad|iPod/i.test(ua) && appId) {
+        try {
+          var parsed = new URL(webUrl);
+          var fbUrl =
+            "fb" + appId + "://authorize?" + parsed.searchParams.toString();
+          window.location.href = fbUrl;
+          setTimeout(openWeb, 1500);
+          return;
+        } catch (error) {}
+      }
+
+      openWeb();
+    })();
+  </script>
+</body>
+</html>`;
+}
+
 function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}, req = null) {
   const params = new URLSearchParams({
     userId: String(userId),
@@ -175,7 +238,23 @@ async function startFacebookAuth(req, res) {
       /Android|iPhone|iPad|iPod|Mobile|WhatsApp/i.test(userAgent);
 
     const reconnect = String(req.query.reconnect || "").trim() === "1";
+
+    if (isInAppBrowserUserAgent(userAgent)) {
+      const portalBase = getFrontendUrl(returnTo);
+      const helpParams = new URLSearchParams({
+        fbWebView: "1",
+        userId: String(user._id),
+      });
+      logFb("oauth.blocked_in_app_browser", {
+        appUserId: String(user._id),
+        returnTo,
+        userAgent: userAgent.slice(0, 120),
+      });
+      return res.redirect(`${portalBase}/portal?${helpParams.toString()}`);
+    }
+
     const oauthUrl = buildFacebookOAuthUrl(state, { mobile: isMobile, reconnect });
+    const { appId } = getFacebookConfig();
 
     logFb("oauth.start", {
       appUserId: String(user._id),
@@ -185,6 +264,11 @@ async function startFacebookAuth(req, res) {
       mobile: isMobile,
       userAgent: userAgent.slice(0, 120),
     });
+
+    if (isMobile) {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(buildMobileOAuthBridgeHtml(oauthUrl, appId));
+    }
 
     return res.redirect(oauthUrl);
   } catch (error) {
