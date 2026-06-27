@@ -86,46 +86,67 @@ function buildMobileOAuthBridgeHtml(oauthUrl, appId) {
   <title>Opening Facebook…</title>
   <style>
     body { font-family: system-ui, sans-serif; padding: 2rem 1.25rem; text-align: center; color: #1f2937; }
-    p { line-height: 1.5; }
-    a { color: #1877f2; }
+    p { line-height: 1.5; margin: 0 0 1rem; }
+    a, button {
+      display: inline-block; margin: 0.35rem;
+      padding: 0.75rem 1.1rem; border-radius: 0.625rem;
+      font-size: 1rem; font-weight: 600; text-decoration: none; cursor: pointer;
+    }
+    .primary { background: #1877f2; color: #fff; border: none; }
+    .secondary { background: #eef2ff; color: #1877f2; border: 1px solid #c7d2fe; }
   </style>
 </head>
 <body>
-  <p>Opening Facebook app…</p>
-  <p><a id="fallback" href="#">Tap here if nothing happens</a></p>
+  <p id="status">Opening Facebook app…</p>
+  <button type="button" class="primary" id="openApp">Open Facebook app</button>
+  <a class="secondary" id="openWeb" href="#">Continue in browser</a>
   <script>
     (function () {
       var webUrl = ${safeUrl};
       var appId = ${safeAppId};
       var ua = navigator.userAgent || "";
-      var fallback = document.getElementById("fallback");
-      if (fallback) fallback.href = webUrl;
+      var status = document.getElementById("status");
+      var openApp = document.getElementById("openApp");
+      var openWeb = document.getElementById("openWeb");
+      if (openWeb) openWeb.href = webUrl;
 
-      function openWeb() {
+      function openInBrowser() {
         window.location.replace(webUrl);
       }
 
-      if (/Android/i.test(ua)) {
-        var intentUrl =
-          webUrl.replace(/^https:\\/\\//, "intent://") +
-          "#Intent;package=com.facebook.katana;scheme=https;end";
-        window.location.href = intentUrl;
-        setTimeout(openWeb, 1500);
-        return;
-      }
-
-      if (/iPhone|iPad|iPod/i.test(ua) && appId) {
-        try {
-          var parsed = new URL(webUrl);
-          var fbUrl =
-            "fb" + appId + "://authorize?" + parsed.searchParams.toString();
-          window.location.href = fbUrl;
-          setTimeout(openWeb, 1500);
+      function openInFacebookApp() {
+        var encoded = encodeURIComponent(webUrl);
+        if (/Android/i.test(ua)) {
+          window.location.href = "fb://facewebmodal/f?href=" + encoded;
           return;
-        } catch (error) {}
+        }
+        if (/iPhone|iPad|iPod/i.test(ua)) {
+          if (appId) {
+            try {
+              var parsed = new URL(webUrl);
+              window.location.href =
+                "fb" + appId + "://authorize?" + parsed.searchParams.toString();
+              return;
+            } catch (error) {}
+          }
+          window.location.href = "fb://facewebmodal?href=" + encoded;
+        }
       }
 
-      openWeb();
+      if (openApp) openApp.addEventListener("click", openInFacebookApp);
+      if (openWeb) openWeb.addEventListener("click", function (event) {
+        event.preventDefault();
+        openInBrowser();
+      });
+
+      if (/Android|iPhone|iPad|iPod/i.test(ua)) {
+        openInFacebookApp();
+        setTimeout(function () {
+          if (status) status.textContent = "If Facebook did not open, tap a button below.";
+        }, 1800);
+      } else {
+        openInBrowser();
+      }
     })();
   </script>
 </body>
