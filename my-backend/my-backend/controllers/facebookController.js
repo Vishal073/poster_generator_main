@@ -75,9 +75,12 @@ function isInAppBrowserUserAgent(userAgent) {
   );
 }
 
-function buildMobileOAuthBridgeHtml(oauthUrl, appId) {
+function isIOSUserAgent(userAgent) {
+  return /iPhone|iPad|iPod/i.test(String(userAgent || ""));
+}
+
+function buildMobileOAuthBridgeHtml(oauthUrl) {
   const safeUrl = JSON.stringify(oauthUrl);
-  const safeAppId = JSON.stringify(String(appId || ""));
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -97,13 +100,12 @@ function buildMobileOAuthBridgeHtml(oauthUrl, appId) {
   </style>
 </head>
 <body>
-  <p id="status">Opening Facebook app…</p>
+  <p id="status">Opening Facebook…</p>
   <button type="button" class="primary" id="openApp">Open Facebook app</button>
   <a class="secondary" id="openWeb" href="#">Continue in browser</a>
   <script>
     (function () {
       var webUrl = ${safeUrl};
-      var appId = ${safeAppId};
       var ua = navigator.userAgent || "";
       var status = document.getElementById("status");
       var openApp = document.getElementById("openApp");
@@ -116,21 +118,7 @@ function buildMobileOAuthBridgeHtml(oauthUrl, appId) {
 
       function openInFacebookApp() {
         var encoded = encodeURIComponent(webUrl);
-        if (/Android/i.test(ua)) {
-          window.location.href = "fb://facewebmodal/f?href=" + encoded;
-          return;
-        }
-        if (/iPhone|iPad|iPod/i.test(ua)) {
-          if (appId) {
-            try {
-              var parsed = new URL(webUrl);
-              window.location.href =
-                "fb" + appId + "://authorize?" + parsed.searchParams.toString();
-              return;
-            } catch (error) {}
-          }
-          window.location.href = "fb://facewebmodal?href=" + encoded;
-        }
+        window.location.href = "fb://facewebmodal/f?href=" + encoded;
       }
 
       if (openApp) openApp.addEventListener("click", openInFacebookApp);
@@ -139,10 +127,10 @@ function buildMobileOAuthBridgeHtml(oauthUrl, appId) {
         openInBrowser();
       });
 
-      if (/Android|iPhone|iPad|iPod/i.test(ua)) {
+      if (/Android/i.test(ua)) {
         openInFacebookApp();
         setTimeout(function () {
-          if (status) status.textContent = "If Facebook did not open, tap a button below.";
+          if (status) status.textContent = "If Facebook did not open, tap Continue in browser.";
         }, 1800);
       } else {
         openInBrowser();
@@ -275,7 +263,6 @@ async function startFacebookAuth(req, res) {
     }
 
     const oauthUrl = buildFacebookOAuthUrl(state, { mobile: isMobile, reconnect });
-    const { appId } = getFacebookConfig();
 
     logFb("oauth.start", {
       appUserId: String(user._id),
@@ -286,9 +273,14 @@ async function startFacebookAuth(req, res) {
       userAgent: userAgent.slice(0, 120),
     });
 
-    if (isMobile) {
+    // iOS Safari: use HTTPS OAuth only (fb:// links show "address is invalid").
+    if (isIOSUserAgent(userAgent)) {
+      return res.redirect(oauthUrl);
+    }
+
+    if (isMobile && /Android/i.test(userAgent)) {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.send(buildMobileOAuthBridgeHtml(oauthUrl, appId));
+      return res.send(buildMobileOAuthBridgeHtml(oauthUrl));
     }
 
     return res.redirect(oauthUrl);
