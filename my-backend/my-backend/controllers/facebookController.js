@@ -69,78 +69,6 @@ function resolveReturnTo(value) {
   return value === "portal" ? "portal" : "admin";
 }
 
-function isInAppBrowserUserAgent(userAgent) {
-  return /WhatsApp|Instagram|FBAN|FBAV|FB_IAB|Line\/|MicroMessenger/i.test(
-    String(userAgent || ""),
-  );
-}
-
-function isIOSUserAgent(userAgent) {
-  return /iPhone|iPad|iPod/i.test(String(userAgent || ""));
-}
-
-function buildMobileOAuthBridgeHtml(oauthUrl) {
-  const safeUrl = JSON.stringify(oauthUrl);
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Opening Facebook…</title>
-  <style>
-    body { font-family: system-ui, sans-serif; padding: 2rem 1.25rem; text-align: center; color: #1f2937; }
-    p { line-height: 1.5; margin: 0 0 1rem; }
-    a, button {
-      display: inline-block; margin: 0.35rem;
-      padding: 0.75rem 1.1rem; border-radius: 0.625rem;
-      font-size: 1rem; font-weight: 600; text-decoration: none; cursor: pointer;
-    }
-    .primary { background: #1877f2; color: #fff; border: none; }
-    .secondary { background: #eef2ff; color: #1877f2; border: 1px solid #c7d2fe; }
-  </style>
-</head>
-<body>
-  <p id="status">Opening Facebook…</p>
-  <button type="button" class="primary" id="openApp">Open Facebook app</button>
-  <a class="secondary" id="openWeb" href="#">Continue in browser</a>
-  <script>
-    (function () {
-      var webUrl = ${safeUrl};
-      var ua = navigator.userAgent || "";
-      var status = document.getElementById("status");
-      var openApp = document.getElementById("openApp");
-      var openWeb = document.getElementById("openWeb");
-      if (openWeb) openWeb.href = webUrl;
-
-      function openInBrowser() {
-        window.location.replace(webUrl);
-      }
-
-      function openInFacebookApp() {
-        var encoded = encodeURIComponent(webUrl);
-        window.location.href = "fb://facewebmodal/f?href=" + encoded;
-      }
-
-      if (openApp) openApp.addEventListener("click", openInFacebookApp);
-      if (openWeb) openWeb.addEventListener("click", function (event) {
-        event.preventDefault();
-        openInBrowser();
-      });
-
-      if (/Android/i.test(ua)) {
-        openInFacebookApp();
-        setTimeout(function () {
-          if (status) status.textContent = "If Facebook did not open, tap Continue in browser.";
-        }, 1800);
-      } else {
-        openInBrowser();
-      }
-    })();
-  </script>
-</body>
-</html>`;
-}
-
 function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}, req = null) {
   const params = new URLSearchParams({
     userId: String(userId),
@@ -151,6 +79,9 @@ function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}, req = nu
   }
   if (options.mobile) {
     params.set("mobile", "1");
+  }
+  if (options.includeInstagram) {
+    params.set("instagram", "1");
   }
   const base = buildFacebookConnectUrl(String(userId), undefined, req).split("?")[0];
   return `${base}?${params.toString()}`;
@@ -247,41 +178,22 @@ async function startFacebookAuth(req, res) {
       /Android|iPhone|iPad|iPod|Mobile|WhatsApp/i.test(userAgent);
 
     const reconnect = String(req.query.reconnect || "").trim() === "1";
-
-    if (isInAppBrowserUserAgent(userAgent)) {
-      const portalBase = getFrontendUrl(returnTo);
-      const helpParams = new URLSearchParams({
-        fbWebView: "1",
-        userId: String(user._id),
-      });
-      logFb("oauth.blocked_in_app_browser", {
-        appUserId: String(user._id),
-        returnTo,
-        userAgent: userAgent.slice(0, 120),
-      });
-      return res.redirect(`${portalBase}/portal?${helpParams.toString()}`);
-    }
-
-    const oauthUrl = buildFacebookOAuthUrl(state, { mobile: isMobile, reconnect });
+    const includeInstagram = String(req.query.instagram || "").trim() === "1";
+    const oauthUrl = buildFacebookOAuthUrl(state, {
+      mobile: isMobile,
+      reconnect,
+      includeInstagram,
+    });
 
     logFb("oauth.start", {
       appUserId: String(user._id),
       appUserName: user.name || null,
       returnTo,
       reconnect,
+      includeInstagram,
       mobile: isMobile,
       userAgent: userAgent.slice(0, 120),
     });
-
-    // iOS Safari: use HTTPS OAuth only (fb:// links show "address is invalid").
-    if (isIOSUserAgent(userAgent)) {
-      return res.redirect(oauthUrl);
-    }
-
-    if (isMobile && /Android/i.test(userAgent)) {
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.send(buildMobileOAuthBridgeHtml(oauthUrl));
-    }
 
     return res.redirect(oauthUrl);
   } catch (error) {
@@ -1053,7 +965,8 @@ async function getFacebookOAuthConfig(req, res) {
         "Valid OAuth Redirect URIs includes redirectUri above (no trailing slash)",
         "App Domains: backend + admin hostnames (no https://)",
         "Facebook Login for Business → Configurations → User token → select Pages asset",
-        "Permissions: pages_show_list, pages_manage_posts, pages_read_engagement, instagram_basic, instagram_content_publish",
+        "Permissions: pages_show_list, pages_manage_posts, pages_read_engagement",
+        "Instagram posting (optional later): instagram_basic, instagram_content_publish — only after Meta App Review",
         "Copy Configuration ID → Render env FACEBOOK_LOGIN_CONFIG_ID",
         "During login user MUST tick their Page on Meta's screen",
         "Reconnect Facebook after env changes",

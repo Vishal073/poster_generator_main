@@ -12,22 +12,46 @@ const {
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
-// Default scopes for Page posting. Override via FACEBOOK_SCOPES in .env if needed.
+// Default scopes for Facebook Page connect + posting. Override via FACEBOOK_SCOPES in .env.
+// Instagram scopes are optional — add instagram_basic,instagram_content_publish only when Meta App Review approves them.
 // pages_read_engagement is required by Meta for /photos and App Review with pages_manage_posts.
 const FACEBOOK_SCOPES = (
   process.env.FACEBOOK_SCOPES ||
-  [
-    "pages_show_list",
-    "pages_read_engagement",
-    "pages_manage_posts",
-    "instagram_basic",
-    "instagram_content_publish",
-  ].join(",")
+  ["pages_show_list", "pages_read_engagement", "pages_manage_posts"].join(",")
 ).trim();
 
-function getFacebookLoginConfigId() {
+const FACEBOOK_INSTAGRAM_SCOPES = ["instagram_basic", "instagram_content_publish"];
+
+function getFacebookLoginConfigId(options = {}) {
+  const includeInstagram = Boolean(options.includeInstagram);
+  if (includeInstagram) {
+    const withInstagram = process.env.FACEBOOK_LOGIN_CONFIG_ID_WITH_INSTAGRAM;
+    if (typeof withInstagram === "string" && withInstagram.trim()) {
+      return withInstagram.trim();
+    }
+  }
+
   const raw = process.env.FACEBOOK_LOGIN_CONFIG_ID;
   return typeof raw === "string" ? raw.trim() : "";
+}
+
+function buildOAuthScopes(includeInstagram = false) {
+  const baseScopes = FACEBOOK_SCOPES.split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean)
+    .filter((scope) => !FACEBOOK_INSTAGRAM_SCOPES.includes(scope));
+
+  if (!includeInstagram) {
+    return baseScopes.join(",");
+  }
+
+  const merged = [...baseScopes];
+  for (const scope of FACEBOOK_INSTAGRAM_SCOPES) {
+    if (!merged.includes(scope)) {
+      merged.push(scope);
+    }
+  }
+  return merged.join(",");
 }
 
 function normalizeRedirectUri(value) {
@@ -73,12 +97,15 @@ function createSessionId() {
  * Build the Facebook Login URL that sends the user to grant Page permissions.
  * @param {object} [options]
  * @param {boolean} [options.mobile] - touch UI + m.facebook.com (better on phones, not WhatsApp WebView)
+ * @param {boolean} [options.includeInstagram] - request instagram_basic + instagram_content_publish
  */
 function buildFacebookOAuthUrl(state, options = {}) {
   const { appId, redirectUri } = getFacebookConfig();
   const useMobile = Boolean(options.mobile);
   const reconnect = Boolean(options.reconnect);
-  const configId = getFacebookLoginConfigId();
+  const includeInstagram = Boolean(options.includeInstagram);
+  const configId = getFacebookLoginConfigId({ includeInstagram });
+  const oauthScopes = buildOAuthScopes(includeInstagram);
 
   const params = new URLSearchParams({
     client_id: appId,
@@ -92,7 +119,7 @@ function buildFacebookOAuthUrl(state, options = {}) {
   if (configId) {
     params.set("config_id", configId);
   } else {
-    params.set("scope", FACEBOOK_SCOPES);
+    params.set("scope", oauthScopes);
   }
 
   if (useMobile) {
@@ -111,9 +138,10 @@ function buildFacebookOAuthUrl(state, options = {}) {
     host,
     useMobile,
     reconnect,
+    includeInstagram,
     authMode: configId ? "config_id" : "scope",
     configId: configId ? `${configId.slice(0, 3)}…` : null,
-    scopes: configId ? null : FACEBOOK_SCOPES,
+    scopes: configId ? null : oauthScopes,
     redirectUri,
   });
 
@@ -557,14 +585,6 @@ function buildEmptyPagesHelpMessage({ facebookUser, debugInfo }) {
 
   if (debugInfo) {
     const scopes = Array.isArray(debugInfo.scopes) ? debugInfo.scopes : [];
-    const hasInstagramScopes =
-      scopes.includes("instagram_basic") && scopes.includes("instagram_content_publish");
-
-    if (!hasInstagramScopes) {
-      parts.push(
-        "If you selected a Page linked to Instagram, add instagram_basic and instagram_content_publish to Meta → Facebook Login for Business → your Configuration, then reconnect.",
-      );
-    }
 
     if (!scopes.includes("pages_show_list")) {
       parts.push("Missing pages_show_list permission — reconnect and approve all permissions.");
@@ -837,6 +857,8 @@ async function postImageToInstagram({ igUserId, pageAccessToken, imageUrl, capti
 
 module.exports = {
   FACEBOOK_SCOPES,
+  FACEBOOK_INSTAGRAM_SCOPES,
+  buildOAuthScopes,
   getFacebookLoginConfigId,
   getFacebookConfig,
   buildFacebookOAuthUrl,
