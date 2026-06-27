@@ -320,7 +320,16 @@ async function handleFacebookCallback(req, res) {
       pages: summarizePages(rawPages),
     });
 
-    const pages = await enrichPagesWithInstagram(rawPages, longLived.accessToken);
+    let pages = rawPages;
+    try {
+      pages = await enrichPagesWithInstagram(rawPages, longLived.accessToken);
+    } catch (enrichError) {
+      logFbWarn("oauth.enrich_failed", {
+        appUserId,
+        error: enrichError.message,
+      });
+      pages = rawPages;
+    }
     logFb("oauth.enriched_pages", {
       appUserId,
       count: pages.length,
@@ -398,12 +407,20 @@ async function handleFacebookCallback(req, res) {
         expiresAt: connectionExpiresAt,
       });
     } catch (saveError) {
-      console.error("[Facebook OAuth] Failed to save FacebookConnection:", saveError.message);
+      console.error(
+        "[Facebook OAuth] Failed to save FacebookConnection:",
+        saveError.message,
+        saveError,
+      );
       const returnToQuery =
         oauthStateDoc.returnTo === "portal" ? "&returnTo=portal" : "";
+      const saveDetail =
+        typeof saveError.message === "string" && saveError.message.trim()
+          ? saveError.message.trim()
+          : "Unknown database error";
       return res.redirect(
         `${frontendUrl}${pagesPath}?error=${encodeURIComponent(
-          "Could not save Facebook connection. Try Connect Facebook again.",
+          `Could not save Facebook connection: ${saveDetail}`,
         )}&userId=${appUserId}${returnToQuery}`,
       );
     }
