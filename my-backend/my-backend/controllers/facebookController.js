@@ -378,7 +378,13 @@ async function handleFacebookCallback(req, res) {
       facebookUserName: facebookUser.name,
     });
 
-    const rawPages = await fetchUserPages(longLived.accessToken);
+    const rawPages = await fetchUserPages(longLived.accessToken).catch((fetchError) => {
+      logFbWarn("oauth.fetch_pages_failed", {
+        appUserId,
+        error: fetchError.message,
+      });
+      return [];
+    });
     logFb("oauth.raw_pages", {
       appUserId,
       count: rawPages.length,

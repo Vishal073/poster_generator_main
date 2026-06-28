@@ -673,36 +673,57 @@ async function fetchUserPagesFromMeField(userAccessToken) {
  * Fetch all Pages the user manages (follows Graph API paging).
  */
 async function fetchUserPages(userAccessToken) {
+  logFb("pages.fetch_start", { userToken: maskToken(userAccessToken) });
+
+  let allPages = [];
+  let source = "none";
+  let lastError = null;
+
   try {
-    logFb("pages.fetch_start", { userToken: maskToken(userAccessToken) });
+    allPages = await fetchUserPagesFromAccountsEndpoint(userAccessToken);
+    source = "me/accounts";
+  } catch (error) {
+    lastError = error;
+    logFbWarn("pages.me_accounts_failed", { error: getGraphErrorMessage(error) });
+  }
 
-    let allPages = await fetchUserPagesFromAccountsEndpoint(userAccessToken);
-    let source = "me/accounts";
-
-    if (!allPages.length) {
+  if (!allPages.length) {
+    try {
       logFbWarn("pages.me_accounts_empty", { trying: "me?fields=accounts" });
       allPages = await fetchUserPagesFromMeField(userAccessToken);
       source = "me.accounts";
+    } catch (error) {
+      lastError = error;
+      logFbWarn("pages.me_field_failed", { error: getGraphErrorMessage(error) });
     }
+  }
 
-    if (!allPages.length) {
+  if (!allPages.length) {
+    try {
       logFbWarn("pages.me_field_empty", { trying: "granular_scopes" });
       const debugInfo = await debugAccessToken(userAccessToken);
       allPages = await fetchUserPagesFromGranularScopes(userAccessToken, debugInfo);
       source = "granular_scopes";
+    } catch (error) {
+      lastError = error;
+      logFbWarn("pages.granular_failed", { error: getGraphErrorMessage(error) });
     }
-
-    logFb("pages.fetch_done", {
-      source,
-      total: allPages.length,
-      pages: summarizePages(allPages),
-    });
-
-    return allPages;
-  } catch (error) {
-    logFbError("pages.fetch_failed", error);
-    throw wrapGraphError(error, "Failed to fetch Facebook Pages.");
   }
+
+  if (!allPages.length && lastError) {
+    logFbWarn("pages.fetch_all_failed", {
+      error: getGraphErrorMessage(lastError),
+      code: lastError?.response?.data?.error?.code || null,
+    });
+  }
+
+  logFb("pages.fetch_done", {
+    source,
+    total: allPages.length,
+    pages: summarizePages(allPages),
+  });
+
+  return allPages;
 }
 
 /**
