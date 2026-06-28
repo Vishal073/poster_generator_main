@@ -230,17 +230,19 @@ async function getFacebookStatusByUserIds(userIds) {
   }
 
   const connections = await FacebookConnection.find({ userId: { $in: validIds } })
-    .select("userId selectedPage facebookUserId updatedAt")
+    .select("userId selectedPage facebookUserId includeInstagramPermissions updatedAt")
     .lean();
 
   for (const connection of connections) {
     const instagramAccount = connection.selectedPage?.instagramAccount;
+    const wantsInstagram = Boolean(connection.includeInstagramPermissions);
     map.set(String(connection.userId), {
       facebookConnected: true,
       facebookPageSelected: Boolean(connection.selectedPage?.pageId),
       facebookPageName: connection.selectedPage?.pageName || null,
-      instagramConnected: Boolean(instagramAccount?.igUserId),
-      instagramUsername: instagramAccount?.username || null,
+      instagramConnected: wantsInstagram && Boolean(instagramAccount?.igUserId),
+      instagramUsername:
+        wantsInstagram && instagramAccount?.username ? instagramAccount.username : null,
     });
   }
 

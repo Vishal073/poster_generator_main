@@ -23,6 +23,10 @@ const facebookOAuthStateSchema = new mongoose.Schema(
       enum: ["admin", "portal"],
       default: "admin",
     },
+    includeInstagram: {
+      type: Boolean,
+      default: false,
+    },
     expiresAt: {
       type: Date,
       required: true,

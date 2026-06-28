@@ -63,6 +63,10 @@ const facebookConnectionSchema = new mongoose.Schema(
       type: facebookPageSchema,
       default: null,
     },
+    includeInstagramPermissions: {
+      type: Boolean,
+      default: false,
+    },
     expiresAt: {
       type: Date,
       required: true,

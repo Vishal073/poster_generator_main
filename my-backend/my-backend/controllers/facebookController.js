@@ -164,10 +164,12 @@ async function startFacebookAuth(req, res) {
 
     // Generate CSRF state and persist it briefly before redirecting
     const state = createOAuthState();
+    const includeInstagram = String(req.query.instagram || "").trim() === "1";
     await FacebookOAuthState.create({
       state,
       userId: user._id,
       returnTo,
+      includeInstagram,
       expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
     });
 
@@ -178,7 +180,6 @@ async function startFacebookAuth(req, res) {
       /Android|iPhone|iPad|iPod|Mobile|WhatsApp/i.test(userAgent);
 
     const reconnect = String(req.query.reconnect || "").trim() === "1";
-    const includeInstagram = String(req.query.instagram || "").trim() === "1";
     const oauthUrl = buildFacebookOAuthUrl(state, {
       mobile: isMobile,
       reconnect,
@@ -213,6 +214,7 @@ async function persistFacebookConnection({
   pages,
   selectedPage,
   expiresAt,
+  includeInstagramPermissions = false,
 }) {
   const sessionId = createSessionId();
   const storedPages = sanitizePagesForStorage(pages || []);
@@ -231,6 +233,7 @@ async function persistFacebookConnection({
       userAccessToken,
       pages: storedPages,
       selectedPage: storedSelectedPage,
+      includeInstagramPermissions: Boolean(includeInstagramPermissions),
       expiresAt,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
@@ -239,12 +242,57 @@ async function persistFacebookConnection({
   return sessionId;
 }
 
+function buildOAuthErrorRedirect(frontendUrl, pagesPath, message, appUserId, returnTo) {
+  const params = new URLSearchParams({ error: message });
+  if (appUserId) {
+    params.set("userId", appUserId);
+  }
+  if (returnTo === "portal") {
+    params.set("returnTo", "portal");
+  }
+  return `${frontendUrl}${pagesPath}?${params.toString()}`;
+}
+
+async function resolveOAuthRedirectFromState(state) {
+  const fallback = {
+    frontendUrl: getFrontendUrl(),
+    pagesPath: "/facebook/pages",
+    appUserId: "",
+    returnTo: "admin",
+  };
+
+  if (!state) {
+    return fallback;
+  }
+
+  const oauthStateDoc = await FacebookOAuthState.findOne({ state }).lean();
+  if (!oauthStateDoc) {
+    return fallback;
+  }
+
+  const returnTo = resolveReturnTo(oauthStateDoc.returnTo);
+  return {
+    frontendUrl: getFrontendUrl(returnTo),
+    pagesPath: getFacebookPagesPath(returnTo),
+    appUserId: oauthStateDoc.userId ? String(oauthStateDoc.userId) : "",
+    returnTo,
+  };
+}
+
 async function handleFacebookCallback(req, res) {
   let frontendUrl = getFrontendUrl();
   let pagesPath = "/facebook/pages";
   let appUserId = "";
+  let returnTo = "admin";
 
   try {
+    const stateParam = typeof req.query.state === "string" ? req.query.state.trim() : "";
+    const redirectContext = await resolveOAuthRedirectFromState(stateParam);
+    frontendUrl = redirectContext.frontendUrl;
+    pagesPath = redirectContext.pagesPath;
+    appUserId = redirectContext.appUserId;
+    returnTo = redirectContext.returnTo;
+
     const oauthError = typeof req.query.error === "string" ? req.query.error : "";
     const oauthErrorDescription =
       typeof req.query.error_description === "string"
@@ -252,16 +300,24 @@ async function handleFacebookCallback(req, res) {
         : "";
 
     if (oauthError) {
-      const message = encodeURIComponent(oauthErrorDescription || oauthError);
-      return res.redirect(`${frontendUrl}${pagesPath}?error=${message}`);
+      const message = oauthErrorDescription || oauthError;
+      return res.redirect(
+        buildOAuthErrorRedirect(frontendUrl, pagesPath, message, appUserId, returnTo),
+      );
     }
 
     const code = typeof req.query.code === "string" ? req.query.code.trim() : "";
-    const state = typeof req.query.state === "string" ? req.query.state.trim() : "";
+    const state = stateParam;
 
     if (!code || !state) {
       return res.redirect(
-        `${frontendUrl}${pagesPath}?error=${encodeURIComponent("Missing OAuth code or state.")}`,
+        buildOAuthErrorRedirect(
+          frontendUrl,
+          pagesPath,
+          "Missing OAuth code or state.",
+          appUserId,
+          returnTo,
+        ),
       );
     }
 
@@ -269,12 +325,19 @@ async function handleFacebookCallback(req, res) {
     const oauthStateDoc = await FacebookOAuthState.findOneAndDelete({ state });
     if (!oauthStateDoc) {
       return res.redirect(
-        `${frontendUrl}${pagesPath}?error=${encodeURIComponent("Invalid or expired OAuth state.")}`,
+        buildOAuthErrorRedirect(
+          frontendUrl,
+          pagesPath,
+          "Invalid or expired OAuth state.",
+          appUserId,
+          returnTo,
+        ),
       );
     }
 
     pagesPath = getFacebookPagesPath(oauthStateDoc.returnTo);
     frontendUrl = getFrontendUrl(oauthStateDoc.returnTo);
+    returnTo = resolveReturnTo(oauthStateDoc.returnTo);
 
     if (!oauthStateDoc.userId) {
       return res.redirect(
@@ -283,12 +346,14 @@ async function handleFacebookCallback(req, res) {
     }
 
     appUserId = String(oauthStateDoc.userId);
+    const includeInstagramPermissions = Boolean(oauthStateDoc.includeInstagram);
 
     logFb("oauth.callback_start", {
       appUserId,
       returnTo: oauthStateDoc.returnTo,
       frontendUrl,
       pagesPath,
+      includeInstagramPermissions,
     });
 
     // Exchange authorization code -> short-lived token -> long-lived token
@@ -321,14 +386,16 @@ async function handleFacebookCallback(req, res) {
     });
 
     let pages = rawPages;
-    try {
-      pages = await enrichPagesWithInstagram(rawPages, longLived.accessToken);
-    } catch (enrichError) {
-      logFbWarn("oauth.enrich_failed", {
-        appUserId,
-        error: enrichError.message,
-      });
-      pages = rawPages;
+    if (includeInstagramPermissions) {
+      try {
+        pages = await enrichPagesWithInstagram(rawPages, longLived.accessToken);
+      } catch (enrichError) {
+        logFbWarn("oauth.enrich_failed", {
+          appUserId,
+          error: enrichError.message,
+        });
+        pages = rawPages;
+      }
     }
     logFb("oauth.enriched_pages", {
       appUserId,
@@ -362,6 +429,7 @@ async function handleFacebookCallback(req, res) {
           pages: [],
           selectedPage: null,
           expiresAt: getConnectionExpiresAt(null),
+          includeInstagramPermissions,
         });
       } catch (saveError) {
         console.error(
@@ -380,7 +448,7 @@ async function handleFacebookCallback(req, res) {
 
     // If user has only one Page, auto-select it (no extra click on /facebook/pages)
     let autoSelectedPage = pages.length === 1 ? pages[0] : null;
-    if (autoSelectedPage) {
+    if (autoSelectedPage && includeInstagramPermissions) {
       const freshInstagram = await fetchInstagramAccountForPage({
         pageId: autoSelectedPage.pageId,
         pageAccessToken: autoSelectedPage.pageAccessToken,
@@ -405,6 +473,7 @@ async function handleFacebookCallback(req, res) {
         pages,
         selectedPage: autoSelectedPage,
         expiresAt: connectionExpiresAt,
+        includeInstagramPermissions,
       });
     } catch (saveError) {
       console.error(
@@ -464,7 +533,10 @@ async function syncConnectionPagesFromFacebook(connection) {
   });
 
   const rawPages = await fetchUserPages(connection.userAccessToken);
-  const pages = await enrichPagesWithInstagram(rawPages, connection.userAccessToken);
+  let pages = rawPages;
+  if (connection.includeInstagramPermissions) {
+    pages = await enrichPagesWithInstagram(rawPages, connection.userAccessToken);
+  }
   connection.pages = pages;
 
   logFb("pages.sync_done", {
@@ -486,7 +558,7 @@ async function syncConnectionPagesFromFacebook(connection) {
   return pages;
 }
 
-function formatPageForApi(page) {
+function formatPageForApi(page, includeInstagram = true) {
   if (!page) {
     return null;
   }
@@ -495,7 +567,8 @@ function formatPageForApi(page) {
     pageId: page.pageId,
     pageName: page.pageName,
     pageAccessToken: page.pageAccessToken,
-    instagramAccount: page.instagramAccount?.igUserId
+    instagramAccount:
+      includeInstagram && page.instagramAccount?.igUserId
       ? {
           igUserId: page.instagramAccount.igUserId,
           username: page.instagramAccount.username || "",
@@ -506,13 +579,14 @@ function formatPageForApi(page) {
 }
 
 function formatPagesResponse(connection) {
+  const includeInstagram = Boolean(connection.includeInstagramPermissions);
   return {
     success: true,
     sessionId: connection.sessionId,
     userId: connection.userId,
     facebookUserId: connection.facebookUserId,
-    pages: (connection.pages || []).map((page) => formatPageForApi(page)),
-    selectedPage: formatPageForApi(connection.selectedPage),
+    pages: (connection.pages || []).map((page) => formatPageForApi(page, includeInstagram)),
+    selectedPage: formatPageForApi(connection.selectedPage, includeInstagram),
   };
 }
 
@@ -683,11 +757,13 @@ async function saveSelectedPage(req, res) {
       });
     }
 
-    const freshInstagram = await fetchInstagramAccountForPage({
-      pageId: selectedPage.pageId,
-      pageAccessToken: selectedPage.pageAccessToken,
-      userAccessToken: connection.userAccessToken,
-    });
+    const freshInstagram = connection.includeInstagramPermissions
+      ? await fetchInstagramAccountForPage({
+          pageId: selectedPage.pageId,
+          pageAccessToken: selectedPage.pageAccessToken,
+          userAccessToken: connection.userAccessToken,
+        })
+      : null;
 
     const pageIndex = connection.pages.findIndex((page) => page.pageId === pageId);
     if (pageIndex >= 0) {
@@ -711,9 +787,13 @@ async function saveSelectedPage(req, res) {
         ? `Facebook Page updated to ${selectedPage.pageName}.`
         : "Facebook Page saved successfully.";
 
-    const instagramNote = connection.selectedPage?.instagramAccount?.username
-      ? ` Instagram @${connection.selectedPage.instagramAccount.username} linked.`
-      : " No Instagram Business account linked to this Page.";
+    const instagramNote =
+      connection.includeInstagramPermissions &&
+      connection.selectedPage?.instagramAccount?.username
+        ? ` Instagram @${connection.selectedPage.instagramAccount.username} linked.`
+        : connection.includeInstagramPermissions
+          ? " No Instagram Business account linked to this Page."
+          : "";
 
     logFb("pages.save_success", {
       userId: String(connection.userId),
