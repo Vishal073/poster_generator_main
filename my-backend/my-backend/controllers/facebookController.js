@@ -158,6 +158,47 @@ function isAndroidUserAgent(userAgent) {
   return /Android/i.test(String(userAgent || ""));
 }
 
+function isIOSUserAgent(userAgent) {
+  return /iPhone|iPad|iPod/i.test(String(userAgent || ""));
+}
+
+function buildIOSOAuthBridgeHtml(oauthUrl) {
+  const safeOauthUrl = JSON.stringify(oauthUrl);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Opening Facebook…</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 2rem 1.25rem; text-align: center; color: #1f2937; }
+    p { line-height: 1.5; }
+    a { color: #1877f2; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <p><strong>Facebook app khul rahi hai…</strong></p>
+  <p>Page choose karein aur permissions allow karein.</p>
+  <p>If nothing happens, <a id="webFallback" href="#">Safari me continue karein</a>.</p>
+  <script>
+    (function () {
+      var oauthUrl = ${safeOauthUrl};
+      var fallback = document.getElementById("webFallback");
+      fallback.href = oauthUrl;
+
+      // Facebook iOS app in-app browser (uses existing FB login session)
+      window.location.replace("fb://facewebmodal/f?href=" + encodeURIComponent(oauthUrl));
+
+      window.setTimeout(function () {
+        window.location.replace(oauthUrl);
+      }, 1600);
+    })();
+  </script>
+</body>
+</html>`;
+}
+
 function buildAndroidOAuthBridgeHtml(oauthUrl) {
   const encodedFallback = encodeURIComponent(oauthUrl);
   const intentPath = oauthUrl.replace(/^https:\/\//i, "");
@@ -270,6 +311,13 @@ async function startFacebookAuth(req, res) {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("Cache-Control", "no-store");
       return res.status(200).send(buildAndroidOAuthBridgeHtml(oauthUrl));
+    }
+
+    if (isMobile && isIOSUserAgent(userAgent) && !skipAppBridge) {
+      logFb("oauth.mobile_bridge", { appUserId: String(user._id), platform: "ios" });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(200).send(buildIOSOAuthBridgeHtml(oauthUrl));
     }
 
     return res.redirect(oauthUrl);
