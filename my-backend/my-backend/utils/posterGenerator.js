@@ -575,8 +575,11 @@ function normalizeTextAlign(value) {
 
 function normalizeTextLineAlignments(values, fallbackAlign = "left") {
   const blockAlign = normalizeTextAlign(fallbackAlign);
+  if (!Array.isArray(values) || values.length === 0) {
+    return [blockAlign, blockAlign, blockAlign];
+  }
   const normalized = [0, 1, 2].map((index) => {
-    if (Array.isArray(values) && values[index] != null) {
+    if (values[index] != null && String(values[index]).trim() !== "") {
       return normalizeTextAlign(values[index]);
     }
     return blockAlign;
@@ -811,6 +814,40 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
   };
 }
 
+function measureBlockRowWidth(ctx, block, line) {
+  if (block.showPhoneIcon) {
+    const textWidth = ctx.measureText(line).width;
+    return block.iconDiameter + block.iconGap + textWidth;
+  }
+  return ctx.measureText(line).width;
+}
+
+/** Bounding box of line 1 after alignment — lines 2–3 align relative to this column. */
+function computeLine1AnchorBounds(ctx, line1Blocks, xStart, textMaxWidth, line1Align) {
+  const align = normalizeTextAlign(line1Align);
+  let minX = Infinity;
+  let maxX = -Infinity;
+
+  for (const block of line1Blocks) {
+    ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
+    for (const line of block.lines) {
+      const rowWidth = measureBlockRowWidth(ctx, block, line);
+      const rowStartX = getAlignedStartX(align, xStart, textMaxWidth, rowWidth);
+      minX = Math.min(minX, rowStartX);
+      maxX = Math.max(maxX, rowStartX + rowWidth);
+    }
+  }
+
+  if (!Number.isFinite(minX)) {
+    return { anchorX: xStart, anchorWidth: textMaxWidth };
+  }
+
+  return {
+    anchorX: minX,
+    anchorWidth: Math.max(1, maxX - minX),
+  };
+}
+
 function drawResolvedTextBlocks(
   ctx,
   resolvedLayout,
@@ -831,6 +868,17 @@ function drawResolvedTextBlocks(
   const textOpacity = drawOptions.textOpacity;
   const blendMode = drawOptions.blendMode;
 
+  const line1Blocks = resolvedLayout.blocks.filter(
+    (block) => (block.lineIndex == null ? 0 : block.lineIndex) === 0
+  );
+  const line1Anchor = computeLine1AnchorBounds(
+    ctx,
+    line1Blocks,
+    xStart,
+    textMaxWidth,
+    textBlockAlign
+  );
+
   ctx.save();
   ctx.textAlign = "left";
 
@@ -838,9 +886,13 @@ function drawResolvedTextBlocks(
   resolvedLayout.blocks.forEach((block, index) => {
     applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
     ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
-    const lineAlign = normalizeTextAlign(
-      textLineAlignments[block.lineIndex == null ? index : block.lineIndex]
-    );
+    const lineIndex = block.lineIndex == null ? index : block.lineIndex;
+    const isFirstLine = lineIndex === 0;
+    const lineAlign = isFirstLine
+      ? textBlockAlign
+      : normalizeTextAlign(textLineAlignments[lineIndex]);
+    const refX = isFirstLine ? xStart : line1Anchor.anchorX;
+    const refWidth = isFirstLine ? textMaxWidth : line1Anchor.anchorWidth;
     const rowHeight = block.rowHeight || block.fontSize;
 
     block.lines.forEach((line) => {
@@ -849,7 +901,7 @@ function drawResolvedTextBlocks(
         const iconY = centerY - block.iconDiameter / 2;
         const textWidth = ctx.measureText(line).width;
         const rowWidth = block.iconDiameter + block.iconGap + textWidth;
-        const startX = getAlignedStartX(lineAlign, xStart, textMaxWidth, rowWidth);
+        const startX = getAlignedStartX(lineAlign, refX, refWidth, rowWidth);
         const textX = startX + block.iconDiameter + block.iconGap;
 
         drawPhoneIconBadge(ctx, startX, iconY, block.iconDiameter, block.fontColor, textOpacity);
@@ -867,7 +919,7 @@ function drawResolvedTextBlocks(
       }
 
       const textWidth = ctx.measureText(line).width;
-      const textX = getAlignedStartX(lineAlign, xStart, textMaxWidth, textWidth);
+      const textX = getAlignedStartX(lineAlign, refX, refWidth, textWidth);
       ctx.textBaseline = "middle";
       ctx.fillText(line, textX, y + rowHeight / 2);
       y += rowHeight;
@@ -1171,6 +1223,10 @@ function computeInsetFooterLayout(
       finalImageHeight = 0;
       textLeft = contentLeft;
     }
+  } else {
+    // No user photo — text uses the full footer band (not a side column beside an image).
+    textLeft = contentLeft;
+    textMaxWidth = contentWidth;
   }
 
   return {
