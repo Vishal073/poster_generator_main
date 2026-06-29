@@ -154,6 +154,73 @@ function sendError(res, error, fallbackMessage) {
   });
 }
 
+function isAndroidUserAgent(userAgent) {
+  return /Android/i.test(String(userAgent || ""));
+}
+
+function buildAndroidOAuthBridgeHtml(oauthUrl) {
+  const encodedFallback = encodeURIComponent(oauthUrl);
+  const intentPath = oauthUrl.replace(/^https:\/\//i, "");
+  const safeOauthUrl = JSON.stringify(oauthUrl);
+  const safeIntentPath = JSON.stringify(intentPath);
+  const safeEncodedFallback = JSON.stringify(encodedFallback);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Opening Facebook…</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 2rem 1.25rem; text-align: center; color: #1f2937; }
+    p { line-height: 1.5; }
+    a { color: #1877f2; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <p><strong>Facebook app khul rahi hai…</strong></p>
+  <p>Page choose karein aur permissions allow karein.</p>
+  <p>If nothing happens, <a id="webFallback" href="#">browser me continue karein</a>.</p>
+  <script>
+    (function () {
+      var oauthUrl = ${safeOauthUrl};
+      var intentPath = ${safeIntentPath};
+      var encodedFallback = ${safeEncodedFallback};
+      var fallback = document.getElementById("webFallback");
+      fallback.href = oauthUrl;
+
+      function openWebFallback() {
+        window.location.replace(oauthUrl);
+      }
+
+      function openFacebookIntent(packageName) {
+        var intentUrl =
+          "intent://" + intentPath +
+          "#Intent;scheme=https;package=" + packageName +
+          ";S.browser_fallback_url=" + encodedFallback + ";end";
+        window.location.replace(intentUrl);
+      }
+
+      // 1) Facebook app in-app browser (uses existing FB login session)
+      window.location.replace("fb://facewebmodal/f?href=" + encodeURIComponent(oauthUrl));
+
+      window.setTimeout(function () {
+        // 2) Main Facebook app
+        openFacebookIntent("com.facebook.katana");
+      }, 700);
+
+      window.setTimeout(function () {
+        // 3) Facebook Lite
+        openFacebookIntent("com.facebook.lite");
+      }, 1400);
+
+      window.setTimeout(openWebFallback, 2600);
+    })();
+  </script>
+</body>
+</html>`;
+}
+
 /**
  * GET /auth/facebook
  * Starts OAuth by redirecting the browser to Facebook's consent screen.
@@ -196,6 +263,14 @@ async function startFacebookAuth(req, res) {
       mobile: isMobile,
       userAgent: userAgent.slice(0, 120),
     });
+
+    const skipAppBridge = String(req.query.app || "").trim() === "0";
+    if (isMobile && isAndroidUserAgent(userAgent) && !skipAppBridge) {
+      logFb("oauth.mobile_bridge", { appUserId: String(user._id), platform: "android" });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(200).send(buildAndroidOAuthBridgeHtml(oauthUrl));
+    }
 
     return res.redirect(oauthUrl);
   } catch (error) {
