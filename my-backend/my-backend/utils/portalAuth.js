@@ -2,8 +2,10 @@ const crypto = require("crypto");
 const LoginToken = require("../models/LoginToken");
 const RegistrationToken = require("../models/RegistrationToken");
 const User = require("../models/User");
-const { sendWhatsAppText } = require("../services/whatsappService");
-const { sendWhatsAppRegisterLink } = require("../services/whatsappTemplateService");
+const {
+  sendWhatsAppLoginLink,
+  sendWhatsAppRegisterLink,
+} = require("../services/whatsappTemplateService");
 
 const LOGIN_TOKEN_TTL_MS =
   Number(process.env.LOGIN_TOKEN_TTL_HOURS || 48) * 60 * 60 * 1000;
@@ -122,6 +124,7 @@ async function createLoginLinkForUser(user) {
   });
 
   return {
+    token,
     loginUrl: buildPortalLoginUrl(token),
     expiresAt,
   };
@@ -136,11 +139,21 @@ async function handleGcrGraphixGreeting(fromWhatsAppNumber) {
   const user = await findUserByMobile(fromWhatsAppNumber);
 
   if (user) {
-    await sendWhatsAppText({
+    const { token, loginUrl, expiresAt } = await createLoginLinkForUser(user);
+    await sendWhatsAppLoginLink({
       toMobile: mobileNumber,
-      body: `Hi ${user.name}! Welcome to GCR Graphix.`,
+      name: user.name,
+      token,
+      loginUrl,
     });
-    return { handled: true, type: "existing_user", mobileNumber, name: user.name };
+    return {
+      handled: true,
+      type: "login_link",
+      mobileNumber,
+      name: user.name,
+      loginUrl,
+      expiresAt,
+    };
   }
 
   const { token, registerUrl } = await createRegistrationToken(mobileNumber);
