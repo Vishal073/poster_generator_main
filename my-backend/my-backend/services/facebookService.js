@@ -22,17 +22,63 @@ const FACEBOOK_SCOPES = (
 
 const FACEBOOK_INSTAGRAM_SCOPES = ["instagram_basic", "instagram_content_publish"];
 
+function isScopeBasedOAuthForced() {
+  const raw = process.env.FACEBOOK_OAUTH_FORCE_SCOPES;
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function getInstagramLoginConfigId() {
+  const raw = process.env.FACEBOOK_LOGIN_CONFIG_ID_WITH_INSTAGRAM;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
 function getFacebookLoginConfigId(options = {}) {
+  if (isScopeBasedOAuthForced()) {
+    return "";
+  }
+
   const includeInstagram = Boolean(options.includeInstagram);
   if (includeInstagram) {
-    const withInstagram = process.env.FACEBOOK_LOGIN_CONFIG_ID_WITH_INSTAGRAM;
-    if (typeof withInstagram === "string" && withInstagram.trim()) {
-      return withInstagram.trim();
+    const withInstagram = getInstagramLoginConfigId();
+    if (withInstagram) {
+      return withInstagram;
     }
   }
 
   const raw = process.env.FACEBOOK_LOGIN_CONFIG_ID;
   return typeof raw === "string" ? raw.trim() : "";
+}
+
+/**
+ * Pick config_id vs scope OAuth. When Instagram is requested without a dedicated
+ * Business Login config, use scopes so instagram_basic + instagram_content_publish
+ * are actually sent (main config_id often has Page-only permissions).
+ */
+function resolveOAuthAuthParams(options = {}) {
+  const includeInstagram = Boolean(options.includeInstagram);
+
+  if (isScopeBasedOAuthForced()) {
+    return {
+      authMode: "scope",
+      configId: "",
+      scopes: buildOAuthScopes(includeInstagram),
+    };
+  }
+
+  if (includeInstagram) {
+    const instagramConfigId = getInstagramLoginConfigId();
+    if (instagramConfigId) {
+      return { authMode: "config_id", configId: instagramConfigId, scopes: null };
+    }
+    return { authMode: "scope", configId: "", scopes: buildOAuthScopes(true) };
+  }
+
+  const configId = getFacebookLoginConfigId({ includeInstagram: false });
+  if (configId) {
+    return { authMode: "config_id", configId, scopes: null };
+  }
+
+  return { authMode: "scope", configId: "", scopes: buildOAuthScopes(false) };
 }
 
 function buildOAuthScopes(includeInstagram = false) {
@@ -104,8 +150,9 @@ function buildFacebookOAuthUrl(state, options = {}) {
   const useMobile = Boolean(options.mobile);
   const reconnect = Boolean(options.reconnect);
   const includeInstagram = Boolean(options.includeInstagram);
-  const configId = getFacebookLoginConfigId({ includeInstagram });
-  const oauthScopes = buildOAuthScopes(includeInstagram);
+  const { authMode, configId, scopes: oauthScopes } = resolveOAuthAuthParams({
+    includeInstagram,
+  });
 
   const params = new URLSearchParams({
     client_id: appId,
@@ -139,7 +186,7 @@ function buildFacebookOAuthUrl(state, options = {}) {
     useMobile,
     reconnect,
     includeInstagram,
-    authMode: configId ? "config_id" : "scope",
+    authMode,
     configId: configId ? `${configId.slice(0, 3)}…` : null,
     scopes: configId ? null : oauthScopes,
     redirectUri,
@@ -167,10 +214,34 @@ function getGraphErrorMessage(error) {
   return "Unknown Facebook API error";
 }
 
+function getGraphErrorDetails(error) {
+  const graphError = error?.response?.data?.error;
+  if (!graphError || typeof graphError !== "object") {
+    return {
+      message: getGraphErrorMessage(error),
+      type: null,
+      code: null,
+      errorSubcode: null,
+      fbtraceId: null,
+      httpStatus: error?.response?.status || null,
+    };
+  }
+
+  return {
+    message: graphError.message || getGraphErrorMessage(error),
+    type: graphError.type || null,
+    code: graphError.code ?? null,
+    errorSubcode: graphError.error_subcode ?? null,
+    fbtraceId: graphError.fbtrace_id || null,
+    httpStatus: error?.response?.status || null,
+  };
+}
+
 function wrapGraphError(error, fallbackMessage) {
   const wrapped = new Error(getGraphErrorMessage(error) || fallbackMessage);
   wrapped.statusCode = error?.response?.status || 502;
   wrapped.details = error?.response?.data || null;
+  wrapped.graphError = getGraphErrorDetails(error);
   return wrapped;
 }
 
@@ -261,6 +332,11 @@ async function exchangeCodeForShortLivedToken(code) {
       expiresIn: response.data?.expires_in || null,
     };
   } catch (error) {
+    const graphError = getGraphErrorDetails(error);
+    logFbWarn("oauth.exchange_code_failed", {
+      ...graphError,
+      redirectUri: getFacebookConfig().redirectUri,
+    });
     throw wrapGraphError(error, "Failed to exchange OAuth code for access token.");
   }
 }
@@ -294,7 +370,29 @@ async function exchangeForLongLivedToken(shortLivedToken) {
       expiresIn: response.data?.expires_in || null,
     };
   } catch (error) {
+    const graphError = getGraphErrorDetails(error);
+    logFbWarn("oauth.exchange_long_lived_failed", graphError);
     throw wrapGraphError(error, "Failed to exchange for long-lived access token.");
+  }
+}
+
+/**
+ * Prefer long-lived token; keep short-lived if Meta rejects the exchange.
+ */
+async function exchangeForLongLivedTokenWithFallback(shortLivedToken, shortLivedExpiresIn = null) {
+  try {
+    return await exchangeForLongLivedToken(shortLivedToken);
+  } catch (error) {
+    logFbWarn("oauth.long_lived_fallback", {
+      error: getGraphErrorMessage(error),
+      usingShortLived: true,
+      shortLivedExpiresIn,
+    });
+    return {
+      accessToken: shortLivedToken,
+      expiresIn: shortLivedExpiresIn,
+      usedShortLivedFallback: true,
+    };
   }
 }
 
@@ -318,6 +416,39 @@ async function fetchFacebookUserId(userAccessToken) {
   } catch (error) {
     throw wrapGraphError(error, "Failed to fetch Facebook user profile.");
   }
+}
+
+/**
+ * Resolve Facebook user id/name from token — /me first, debug_token as fallback.
+ */
+async function resolveFacebookUserFromToken(userAccessToken) {
+  let profileError = null;
+
+  try {
+    return await fetchFacebookUserId(userAccessToken);
+  } catch (error) {
+    profileError = error;
+    logFbWarn("oauth.facebook_user_failed", getGraphErrorDetails(error));
+  }
+
+  const debugInfo = await debugAccessToken(userAccessToken);
+  if (debugInfo?.userId) {
+    logFb("oauth.facebook_user_from_debug", {
+      facebookUserId: debugInfo.userId,
+      isValid: debugInfo.isValid,
+      scopes: debugInfo.scopes,
+    });
+    return {
+      id: debugInfo.userId,
+      name: "",
+    };
+  }
+
+  const error = new Error(
+    getGraphErrorMessage(profileError) || "Failed to resolve Facebook user from token.",
+  );
+  error.statusCode = 502;
+  throw error;
 }
 
 function mapGraphPages(rawPages) {
@@ -881,13 +1012,18 @@ module.exports = {
   FACEBOOK_INSTAGRAM_SCOPES,
   buildOAuthScopes,
   getFacebookLoginConfigId,
+  getInstagramLoginConfigId,
+  resolveOAuthAuthParams,
   getFacebookConfig,
   buildFacebookOAuthUrl,
   createOAuthState,
   createSessionId,
   exchangeCodeForShortLivedToken,
   exchangeForLongLivedToken,
+  exchangeForLongLivedTokenWithFallback,
   fetchFacebookUserId,
+  resolveFacebookUserFromToken,
+  getGraphErrorDetails,
   fetchUserPages,
   enrichPagesWithInstagram,
   fetchInstagramAccountForPage,

@@ -109,6 +109,26 @@ function isTruthyParam(value) {
   return value === 1;
 }
 
+function isFalsyParam(value) {
+  if (value === false) {
+    return true;
+  }
+  if (typeof value === "string") {
+    return ["false", "0", "no", "n"].includes(value.trim().toLowerCase());
+  }
+  return value === 0;
+}
+
+function resolveUserImageSource(userImageSource, includeUserImage) {
+  if (isFalsyParam(includeUserImage)) {
+    return undefined;
+  }
+  if (typeof userImageSource === "string" && userImageSource.trim()) {
+    return userImageSource.trim();
+  }
+  return undefined;
+}
+
 async function applyPosterEnhancement(buffer, enhancePriority) {
   try {
     return await enhancePosterBuffer(buffer, {
@@ -242,7 +262,7 @@ async function generatePoster(req, res) {
         textLineStyles,
         x,
         y,
-        userImageSource,
+        userImageSource: resolveUserImageSource(userImageSource, body.includeUserImage),
         imageX,
         imageY,
         imageWidth,
@@ -678,6 +698,7 @@ router.post(
       const shouldUploadInstagram = isTruthyParam(
         body.uploadToInstagram ?? body.postToInstagram ?? body.instagram,
       );
+      const includeUserImage = !isFalsyParam(body.includeUserImage);
       const posterSources = resolvePosterSources(body);
       const language =
         typeof body.language === "string" && body.language.trim()
@@ -823,7 +844,7 @@ router.post(
             name: "",
             textLines,
             textLineStyles: resolvedTextLineStyles.map((style) => ({ ...style })),
-            userImageSource: user.userImageUrl || undefined,
+            userImageSource: includeUserImage ? user.userImageUrl || undefined : undefined,
             posterSource: userPosterSource,
             language,
             ...resolvedLayout,

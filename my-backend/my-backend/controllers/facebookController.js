@@ -18,8 +18,9 @@ const {
   createOAuthState,
   createSessionId,
   exchangeCodeForShortLivedToken,
-  exchangeForLongLivedToken,
-  fetchFacebookUserId,
+  exchangeForLongLivedTokenWithFallback,
+  resolveFacebookUserFromToken,
+  getGraphErrorDetails,
   fetchUserPages,
   enrichPagesWithInstagram,
   fetchInstagramAccountForPage,
@@ -357,6 +358,7 @@ async function handleFacebookCallback(req, res) {
     });
 
     // Exchange authorization code -> short-lived token -> long-lived token
+    logFb("oauth.callback_step", { appUserId, step: "exchange_code" });
     const shortLived = await exchangeCodeForShortLivedToken(code);
     logFb("oauth.token_short_lived", {
       appUserId,
@@ -364,14 +366,20 @@ async function handleFacebookCallback(req, res) {
       token: maskToken(shortLived.accessToken),
     });
 
-    const longLived = await exchangeForLongLivedToken(shortLived.accessToken);
+    logFb("oauth.callback_step", { appUserId, step: "exchange_long_lived" });
+    const longLived = await exchangeForLongLivedTokenWithFallback(
+      shortLived.accessToken,
+      shortLived.expiresIn,
+    );
     logFb("oauth.token_long_lived", {
       appUserId,
       expiresIn: longLived.expiresIn,
+      usedShortLivedFallback: Boolean(longLived.usedShortLivedFallback),
       token: maskToken(longLived.accessToken),
     });
 
-    const facebookUser = await fetchFacebookUserId(longLived.accessToken);
+    logFb("oauth.callback_step", { appUserId, step: "resolve_facebook_user" });
+    const facebookUser = await resolveFacebookUserFromToken(longLived.accessToken);
     logFb("oauth.facebook_user", {
       appUserId,
       facebookUserId: facebookUser.id,
@@ -516,7 +524,11 @@ async function handleFacebookCallback(req, res) {
       `${frontendUrl}${pagesPath}?sessionId=${sessionId}&userId=${appUserId}${returnToQuery}`,
     );
   } catch (error) {
-    logFbError("oauth.callback_failed", error, { appUserId });
+    const graphError = error?.graphError || getGraphErrorDetails(error);
+    logFbError("oauth.callback_failed", error, {
+      appUserId,
+      graphError,
+    });
     const message = encodeURIComponent(error.message || "Facebook authentication failed.");
     const userIdQuery = appUserId ? `&userId=${appUserId}` : "";
     return res.redirect(`${frontendUrl}${pagesPath}?error=${message}${userIdQuery}`);
@@ -1020,6 +1032,9 @@ async function getFacebookOAuthConfig(req, res) {
         : "not-set";
 
     const configId = getFacebookLoginConfigId();
+    const forceScopeOAuth = process.env.FACEBOOK_OAUTH_FORCE_SCOPES === "1"
+      || process.env.FACEBOOK_OAUTH_FORCE_SCOPES === "true"
+      || process.env.FACEBOOK_OAUTH_FORCE_SCOPES === "yes";
     const maskedConfigId =
       configId && configId.length > 6
         ? `${configId.slice(0, 3)}…${configId.slice(-3)}`
@@ -1031,6 +1046,11 @@ async function getFacebookOAuthConfig(req, res) {
 
     if (!configId) {
       warnings.push("FACEBOOK_LOGIN_CONFIG_ID is missing — Meta may return zero Pages for Business apps.");
+    }
+    if (forceScopeOAuth) {
+      warnings.push(
+        "FACEBOOK_OAUTH_FORCE_SCOPES is enabled — using scope-based login instead of config_id (debug only).",
+      );
     }
     if (adminFrontendUrl.includes("localhost")) {
       warnings.push("FRONTEND_URL points to localhost — OAuth will redirect users to localhost after login.");
@@ -1060,6 +1080,7 @@ async function getFacebookOAuthConfig(req, res) {
       portalFrontendUrl,
       loginConfigId: maskedConfigId,
       usesLoginForBusiness: Boolean(configId),
+      forceScopeOAuth,
       scopes: configId ? null : FACEBOOK_SCOPES,
       warnings,
       metaChecklist: [
@@ -1068,7 +1089,9 @@ async function getFacebookOAuthConfig(req, res) {
         "Valid OAuth Redirect URIs includes redirectUri above (no trailing slash)",
         "App Domains: backend + admin hostnames (no https://)",
         "Facebook Login for Business → Configurations → User token → select Pages asset",
-        "Permissions: pages_show_list, pages_manage_posts, pages_read_engagement",
+        "App Restrictions (Settings → Advanced): disable Country/Age restrictions if enabled",
+        "Login config must be User access token (not System User)",
+        "Login config permissions must match App Review approvals only",
         "Instagram posting (optional later): instagram_basic, instagram_content_publish — only after Meta App Review",
         "Copy Configuration ID → Render env FACEBOOK_LOGIN_CONFIG_ID",
         "During login user MUST tick their Page on Meta's screen",
