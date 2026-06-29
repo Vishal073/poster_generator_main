@@ -165,11 +165,14 @@ function isIOSUserAgent(userAgent) {
 function buildIOSOAuthBridgeHtml(oauthUrl) {
   const safeOauthUrl = JSON.stringify(oauthUrl);
 
+  // iOS: fb://facewebmodal opens the Facebook app home but often skips Business
+  // Login OAuth (config_id). Load Meta's mobile OAuth dialog in Safari instead.
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="0;url=${oauthUrl.replace(/"/g, "&quot;")}" />
   <title>Opening Facebook…</title>
   <style>
     body { font-family: system-ui, sans-serif; padding: 2rem 1.25rem; text-align: center; color: #1f2937; }
@@ -178,22 +181,11 @@ function buildIOSOAuthBridgeHtml(oauthUrl) {
   </style>
 </head>
 <body>
-  <p><strong>Facebook app khul rahi hai…</strong></p>
-  <p>Page choose karein aur permissions allow karein.</p>
-  <p>If nothing happens, <a id="webFallback" href="#">Safari me continue karein</a>.</p>
+  <p><strong>Facebook permissions khul rahi hain…</strong></p>
+  <p>Allow karein aur apna Page choose karein.</p>
+  <p><a href="${oauthUrl.replace(/"/g, "&quot;")}">Yahan tap karein agar screen na khule</a></p>
   <script>
-    (function () {
-      var oauthUrl = ${safeOauthUrl};
-      var fallback = document.getElementById("webFallback");
-      fallback.href = oauthUrl;
-
-      // Facebook iOS app in-app browser (uses existing FB login session)
-      window.location.replace("fb://facewebmodal/f?href=" + encodeURIComponent(oauthUrl));
-
-      window.setTimeout(function () {
-        window.location.replace(oauthUrl);
-      }, 1600);
-    })();
+    window.location.replace(${safeOauthUrl});
   </script>
 </body>
 </html>`;
