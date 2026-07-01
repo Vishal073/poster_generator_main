@@ -7,6 +7,7 @@ const {
   uploadBufferToCloudinary,
   isAllowedBasePosterSource,
   isAllowedPosterSource,
+  isAllowedEventPosterSource,
   getEventPosterRootFolder,
   listBasePostersFromCloudinary,
   getBasePosterFolder,
@@ -20,6 +21,9 @@ const {
   postPosterToInstagramForUser,
   getUserSocialApproveEligibility,
 } = require("./facebookPostService");
+const {
+  savePosterConfigFromGenerateBody,
+} = require("../utils/posterConfigService");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
@@ -452,6 +456,17 @@ async function generatePoster(req, res) {
     }
     if (shouldUploadInstagram && instagramResult?.success) {
       responseMessage = `${responseMessage.replace(/\.$/, "")} and posted to Instagram.`;
+    }
+
+    if (
+      shouldUploadFacebook &&
+      isAllowedEventPosterSource(resolvedPosterSource)
+    ) {
+      try {
+        await savePosterConfigFromGenerateBody(resolvedPosterSource, body);
+      } catch (configError) {
+        console.warn("Failed to save poster config:", getErrorMessage(configError));
+      }
     }
 
     return res.status(200).json({
@@ -939,6 +954,29 @@ router.post(
 
       const successCount = results.filter((r) => r.status === "success").length;
       const errorCount = results.length - successCount;
+
+      if (shouldUploadFacebook) {
+        for (const source of posterSources) {
+          if (!isAllowedEventPosterSource(source)) {
+            continue;
+          }
+
+          try {
+            await savePosterConfigFromGenerateBody(source, {
+              ...body,
+              ...resolvedLayout,
+              textLineStyles: resolvedTextLineStyles,
+              language,
+              includeUserImage,
+            });
+          } catch (configError) {
+            console.warn(
+              "Failed to save bulk poster config:",
+              getErrorMessage(configError),
+            );
+          }
+        }
+      }
 
       return res.status(200).json({
         success: true,
