@@ -104,6 +104,7 @@ router.put("/event-posters/:posterId/config", requireAuth, requireDb, async (req
     }
 
     record.config = toPlainConfig(req.body?.config ?? req.body);
+    record.markModified("config");
     await record.save();
 
     return res.status(200).json({

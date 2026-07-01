@@ -80,40 +80,166 @@ async function findEventPosterBySource(posterSource) {
   return EventPoster.findOne({ $or: query });
 }
 
+function readPlainObject(value) {
+  if (value == null) {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => readPlainObject(entry));
+  }
+
+  if (typeof value !== "object") {
+    return value;
+  }
+
+  if (value._doc && typeof value._doc === "object" && !Array.isArray(value._doc)) {
+    return { ...value._doc };
+  }
+
+  if (typeof value.toObject === "function") {
+    return value.toObject({ flattenMaps: true });
+  }
+
+  return { ...value };
+}
+
+function pickTextLineStyle(style, fallback) {
+  const source = readPlainObject(style) || {};
+
+  return {
+    fontSize:
+      typeof source.fontSize === "number" && Number.isFinite(source.fontSize)
+        ? source.fontSize
+        : fallback.fontSize,
+    fontFamily:
+      typeof source.fontFamily === "string" && source.fontFamily.trim()
+        ? source.fontFamily.trim()
+        : fallback.fontFamily,
+    fontColor:
+      typeof source.fontColor === "string" && source.fontColor.trim()
+        ? source.fontColor.trim()
+        : fallback.fontColor,
+    fontWeight:
+      typeof source.fontWeight === "string" && source.fontWeight.trim()
+        ? source.fontWeight.trim()
+        : fallback.fontWeight,
+  };
+}
+
+function pickLayoutFields(layout, defaults) {
+  const source = readPlainObject(layout) || {};
+
+  return {
+    language:
+      typeof source.language === "string" && source.language.trim()
+        ? source.language.trim()
+        : defaults.language,
+    insetFromBottom:
+      typeof source.insetFromBottom === "number"
+        ? source.insetFromBottom
+        : defaults.insetFromBottom,
+    insetLeft:
+      typeof source.insetLeft === "number" ? source.insetLeft : defaults.insetLeft,
+    insetRight:
+      typeof source.insetRight === "number" ? source.insetRight : defaults.insetRight,
+    imagePosition:
+      typeof source.imagePosition === "string"
+        ? source.imagePosition
+        : defaults.imagePosition,
+    imageWidth:
+      typeof source.imageWidth === "number" ? source.imageWidth : defaults.imageWidth,
+    imageHeight:
+      typeof source.imageHeight === "number" ? source.imageHeight : defaults.imageHeight,
+    imageShape:
+      typeof source.imageShape === "string" ? source.imageShape : defaults.imageShape,
+    imageCornerRadius:
+      typeof source.imageCornerRadius === "number"
+        ? source.imageCornerRadius
+        : defaults.imageCornerRadius,
+    imageGap:
+      typeof source.imageGap === "number" ? source.imageGap : defaults.imageGap,
+    imageMaxSize:
+      typeof source.imageMaxSize === "number" ? source.imageMaxSize : defaults.imageMaxSize,
+    lineGap: typeof source.lineGap === "number" ? source.lineGap : defaults.lineGap,
+    lineGaps: Array.isArray(source.lineGaps)
+      ? [Number(source.lineGaps[0]) || 0, Number(source.lineGaps[1]) || 0]
+      : defaults.lineGaps,
+    fontSize:
+      typeof source.fontSize === "number" ? source.fontSize : defaults.fontSize,
+    fontColor:
+      typeof source.fontColor === "string" ? source.fontColor : defaults.fontColor,
+    fontFamily:
+      typeof source.fontFamily === "string" ? source.fontFamily : defaults.fontFamily,
+    textOpacity:
+      typeof source.textOpacity === "number" ? source.textOpacity : defaults.textOpacity,
+    textBlendMode:
+      typeof source.textBlendMode === "string"
+        ? source.textBlendMode
+        : defaults.textBlendMode,
+    textBlockAlign:
+      typeof source.textBlockAlign === "string"
+        ? source.textBlockAlign
+        : defaults.textBlockAlign,
+    textLineAlignments: Array.isArray(source.textLineAlignments)
+      ? source.textLineAlignments.map((value) => String(value))
+      : defaults.textLineAlignments,
+  };
+}
+
+function pickFacebookFields(facebook, defaults) {
+  const source = readPlainObject(facebook) || {};
+
+  return {
+    uploadToFacebook:
+      typeof source.uploadToFacebook === "boolean"
+        ? source.uploadToFacebook
+        : defaults.uploadToFacebook,
+    uploadToInstagram:
+      typeof source.uploadToInstagram === "boolean"
+        ? source.uploadToInstagram
+        : defaults.uploadToInstagram,
+    sendWhatsApp:
+      typeof source.sendWhatsApp === "boolean"
+        ? source.sendWhatsApp
+        : defaults.sendWhatsApp,
+    facebookCaption:
+      typeof source.facebookCaption === "string"
+        ? source.facebookCaption.trim()
+        : defaults.facebookCaption,
+    instagramCaption:
+      typeof source.instagramCaption === "string"
+        ? source.instagramCaption.trim()
+        : defaults.instagramCaption,
+  };
+}
+
 function toPlainConfig(config) {
-  if (!config) {
+  const raw = readPlainObject(config);
+  if (!raw) {
     return getDefaultPosterConfig();
   }
 
   const defaults = getDefaultPosterConfig();
+
   return {
-    textLineStyles: Array.isArray(config.textLineStyles)
-      ? config.textLineStyles.map((style) => ({ ...style }))
+    textLineStyles: Array.isArray(raw.textLineStyles)
+      ? [0, 1, 2].map((index) =>
+          pickTextLineStyle(raw.textLineStyles[index], defaults.textLineStyles[index]),
+        )
       : defaults.textLineStyles,
-    layout: {
-      ...defaults.layout,
-      ...(config.layout && typeof config.layout === "object" ? config.layout : {}),
-      lineGaps: Array.isArray(config.layout?.lineGaps)
-        ? [...config.layout.lineGaps]
-        : defaults.layout.lineGaps,
-      textLineAlignments: Array.isArray(config.layout?.textLineAlignments)
-        ? [...config.layout.textLineAlignments]
-        : defaults.layout.textLineAlignments,
-    },
+    layout: pickLayoutFields(raw.layout, defaults.layout),
     includeUserImage:
-      typeof config.includeUserImage === "boolean"
-        ? config.includeUserImage
+      typeof raw.includeUserImage === "boolean"
+        ? raw.includeUserImage
         : defaults.includeUserImage,
     addWatermark:
-      typeof config.addWatermark === "boolean" ? config.addWatermark : defaults.addWatermark,
+      typeof raw.addWatermark === "boolean" ? raw.addWatermark : defaults.addWatermark,
     watermarkPosition:
-      typeof config.watermarkPosition === "string" && config.watermarkPosition.trim()
-        ? config.watermarkPosition.trim()
+      typeof raw.watermarkPosition === "string" && raw.watermarkPosition.trim()
+        ? raw.watermarkPosition.trim()
         : defaults.watermarkPosition,
-    facebook: {
-      ...defaults.facebook,
-      ...(config.facebook && typeof config.facebook === "object" ? config.facebook : {}),
-    },
+    facebook: pickFacebookFields(raw.facebook, defaults.facebook),
   };
 }
 
@@ -206,6 +332,7 @@ async function createEventPosterEntry({
     if (format) existing.format = String(format).trim();
     if (config) {
       existing.config = toPlainConfig(config);
+      existing.markModified("config");
     }
     await existing.save();
     return existing;
@@ -376,6 +503,7 @@ async function savePosterConfigForSource(posterSource, configPayload) {
 
   if (record) {
     record.config = normalizedConfig;
+    record.markModified("config");
     await record.save();
     return record;
   }

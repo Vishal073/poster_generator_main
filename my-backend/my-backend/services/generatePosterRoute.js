@@ -459,7 +459,7 @@ async function generatePoster(req, res) {
     }
 
     if (
-      shouldUploadFacebook &&
+      isTruthyParam(body.savePosterConfig) &&
       isAllowedEventPosterSource(resolvedPosterSource)
     ) {
       try {
@@ -955,7 +955,9 @@ router.post(
       const successCount = results.filter((r) => r.status === "success").length;
       const errorCount = results.length - successCount;
 
-      if (shouldUploadFacebook) {
+      const shouldSavePosterConfig = isTruthyParam(body.savePosterConfig);
+
+      if (shouldSavePosterConfig) {
         for (const source of posterSources) {
           if (!isAllowedEventPosterSource(source)) {
             continue;
