@@ -106,7 +106,7 @@ function getDefaultPosterPayload({ name, mobile }) {
     fontColor: "#2a2a2a",
     fontFamily: "Helvetica Neue",
     textOpacity: 0.9,
-    textBlendMode: "multiply",
+    textBlendMode: "source-over",
     addWatermark: true,
   };
 }

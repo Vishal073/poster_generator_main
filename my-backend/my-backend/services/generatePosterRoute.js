@@ -56,7 +56,7 @@ const BULK_DEFAULT_LAYOUT = {
   fontColor: "#2a2a2a",
   fontFamily: "Helvetica Neue",
   textOpacity: 0.9,
-  textBlendMode: "multiply",
+  textBlendMode: "source-over",
   textBlockAlign: "left",
   textLineAlignments: ["left", "left", "left"],
 };
@@ -202,7 +202,7 @@ async function generatePoster(req, res) {
       fontColor = "#2a2a2a",
       fontFamily = "Helvetica Neue",
       textOpacity = 0.9,
-      textBlendMode = "multiply",
+      textBlendMode = "source-over",
       textBlockAlign = "left",
       textLineAlignments,
       posterSource,
@@ -740,7 +740,7 @@ router.post(
         fontColor: pickString(body.fontColor),
         fontFamily: pickString(body.fontFamily),
         textOpacity: pickNumber(body.textOpacity),
-        textBlendMode: pickString(body.textBlendMode, ["multiply", "overlay"]),
+        textBlendMode: pickString(body.textBlendMode, ["source-over", "multiply", "overlay"]),
         textBlockAlign: pickString(body.textBlockAlign, ["left", "center", "right"]),
         textLineAlignments: parseTextLineAlignments(body.textLineAlignments, body.textBlockAlign),
       };

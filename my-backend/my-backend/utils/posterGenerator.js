@@ -1070,11 +1070,10 @@ function getMultilineBlockLayout(
 function applyTextStyle(ctx, fontColor, textOpacity, blendMode) {
   ctx.fillStyle = fontColor;
   ctx.globalAlpha = textOpacity;
-  ctx.globalCompositeOperation = blendMode;
-  ctx.shadowBlur = 1;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 0;
-  ctx.shadowColor = "rgba(0, 0, 0, 0.1)";
+  ctx.globalCompositeOperation =
+    blendMode === "multiply" || blendMode === "overlay" ? blendMode : "source-over";
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
 }
 
 /** Center anchor (legacy absolute layout). `y` = vertical center of the whole text block. */
@@ -1271,7 +1270,7 @@ async function generatePosterImage({
   fontColor = "#2a2a2a",
   fontFamily = "Helvetica Neue",
   textOpacity = 0.9,
-  textBlendMode = "multiply",
+  textBlendMode = "source-over",
   textBlockAlign = "left",
   textLineAlignments,
   language = "en",
@@ -1340,8 +1339,8 @@ async function generatePosterImage({
   if (typeof textOpacity !== "number" || textOpacity < 0.85 || textOpacity > 0.95) {
     throw new Error("textOpacity must be a number between 0.85 and 0.95.");
   }
-  if (!["multiply", "overlay"].includes(textBlendMode)) {
-    throw new Error('textBlendMode must be either "multiply" or "overlay".');
+  if (!["multiply", "overlay", "source-over"].includes(textBlendMode)) {
+    throw new Error('textBlendMode must be "source-over", "multiply", or "overlay".');
   }
   const canUseManualImage =
     !useInsets &&
