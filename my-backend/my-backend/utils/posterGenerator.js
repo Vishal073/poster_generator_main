@@ -865,8 +865,6 @@ function drawResolvedTextBlocks(
     drawOptions.lineGaps ?? resolvedLayout.lineGaps,
     drawOptions.paragraphGap ?? drawOptions.lineGapPx ?? resolvedLayout.paragraphGap
   );
-  const textOpacity = drawOptions.textOpacity;
-  const blendMode = drawOptions.blendMode;
 
   const line1Blocks = resolvedLayout.blocks.filter(
     (block) => (block.lineIndex == null ? 0 : block.lineIndex) === 0
@@ -884,7 +882,7 @@ function drawResolvedTextBlocks(
 
   let y = yTop;
   resolvedLayout.blocks.forEach((block, index) => {
-    applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
+    applyTextStyle(ctx, block.fontColor);
     ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
     const lineIndex = block.lineIndex == null ? index : block.lineIndex;
     const isFirstLine = lineIndex === 0;
@@ -904,10 +902,10 @@ function drawResolvedTextBlocks(
         const startX = getAlignedStartX(lineAlign, refX, refWidth, rowWidth);
         const textX = startX + block.iconDiameter + block.iconGap;
 
-        drawPhoneIconBadge(ctx, startX, iconY, block.iconDiameter, block.fontColor, textOpacity);
+        drawPhoneIconBadge(ctx, startX, iconY, block.iconDiameter, block.fontColor, 1);
 
         ctx.save();
-        applyTextStyle(ctx, block.fontColor, textOpacity, blendMode);
+        applyTextStyle(ctx, block.fontColor);
         ctx.font = `${block.fontWeight} ${block.fontSize}px "${block.fontFamily}"`;
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
@@ -1067,11 +1065,10 @@ function getMultilineBlockLayout(
   };
 }
 
-function applyTextStyle(ctx, fontColor, textOpacity, blendMode) {
+function applyTextStyle(ctx, fontColor) {
   ctx.fillStyle = fontColor;
-  ctx.globalAlpha = textOpacity;
-  ctx.globalCompositeOperation =
-    blendMode === "multiply" || blendMode === "overlay" ? blendMode : "source-over";
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
   ctx.shadowBlur = 0;
   ctx.shadowColor = "transparent";
 }
@@ -1269,7 +1266,7 @@ async function generatePosterImage({
   fontSize = 40,
   fontColor = "#2a2a2a",
   fontFamily = "Helvetica Neue",
-  textOpacity = 0.9,
+  textOpacity = 1,
   textBlendMode = "source-over",
   textBlockAlign = "left",
   textLineAlignments,
@@ -1336,12 +1333,14 @@ async function generatePosterImage({
       throw new Error("insetFromBottom, insetLeft, and insetRight must be non-negative numbers.");
     }
   }
-  if (typeof textOpacity !== "number" || textOpacity < 0.85 || textOpacity > 0.95) {
-    throw new Error("textOpacity must be a number between 0.85 and 0.95.");
+  if (typeof textOpacity !== "number" || textOpacity < 0.5 || textOpacity > 1) {
+    throw new Error("textOpacity must be a number between 0.5 and 1.");
   }
   if (!["multiply", "overlay", "source-over"].includes(textBlendMode)) {
     throw new Error('textBlendMode must be "source-over", "multiply", or "overlay".');
   }
+  textBlendMode = "source-over";
+  textOpacity = 1;
   const canUseManualImage =
     !useInsets &&
     Boolean(userImageSource) &&

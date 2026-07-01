@@ -5,7 +5,7 @@ const DEFAULT_MODIFY_PROMPT = `You are a professional poster designer. Improve t
 Rules:
 - Keep every word of text exactly as shown (names, titles, phone numbers, Hindi/Punjabi text). Do not change, remove, or misspell any text.
 - Keep all faces and profile photos unchanged and recognizable.
-- Match colors, style, and theme to the existing poster design.
+- Preserve exact text colors, font colors, and contrast from the input image. Do not darken, recolor, or blend text with the background.
 - Improve the bottom contact/footer area: better layout, background, spacing, and visual polish. Add design elements (waves, dividers, icons) only if they fit the poster naturally.
 - Improve overall lighting, contrast, and depth. Make it look like a finished campaign poster, not a plain template with text pasted on.`;
 
