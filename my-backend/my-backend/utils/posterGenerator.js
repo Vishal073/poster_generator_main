@@ -6,6 +6,7 @@ const {
   registerPosterFonts,
   WATERMARK_FONT_FAMILY,
 } = require("./languageSupport");
+const { normalizeFontColor, hexToRgb, readStyleStringField, readStyleNumberField } = require("./fontColor");
 
 const DEFAULT_POSTER_WATERMARK_PATH = path.join(
   __dirname,
@@ -665,7 +666,10 @@ function drawPhoneIconBadge(ctx, x, y, diameter, bgColor, opacity = 1) {
 
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fillStyle = bgColor;
+  const badgeRgb = hexToRgb(normalizeFontColor(bgColor, bgColor));
+  ctx.fillStyle = badgeRgb
+    ? `rgb(${badgeRgb.r}, ${badgeRgb.g}, ${badgeRgb.b})`
+    : normalizeFontColor(bgColor, bgColor);
   ctx.fill();
 
   drawPhoneHandsetIcon(ctx, cx, cy, diameter * 0.72);
@@ -710,21 +714,15 @@ function normalizeTextLineStyles(entries, textLineStyles, defaults) {
     const style = textLineStyles[lineIndex] || textLineStyles[textLineStyles.length - 1] || {};
     return {
       fontSize:
-        typeof style.fontSize === "number" && style.fontSize > 0
-          ? style.fontSize
+        readStyleNumberField(style, "fontSize") > 0
+          ? readStyleNumberField(style, "fontSize")
           : defaults.fontSize,
-      fontFamily:
-        typeof style.fontFamily === "string" && style.fontFamily.trim()
-          ? style.fontFamily.trim()
-          : defaults.fontFamily,
-      fontColor:
-        typeof style.fontColor === "string" && style.fontColor.trim()
-          ? style.fontColor.trim()
-          : defaults.fontColor,
-      fontWeight:
-        typeof style.fontWeight === "string" && style.fontWeight.trim()
-          ? style.fontWeight.trim()
-          : "normal",
+      fontFamily: readStyleStringField(style, "fontFamily") || defaults.fontFamily,
+      fontColor: normalizeFontColor(
+        readStyleStringField(style, "fontColor"),
+        defaults.fontColor,
+      ),
+      fontWeight: readStyleStringField(style, "fontWeight") || "normal",
     };
   });
 }
@@ -1066,7 +1064,11 @@ function getMultilineBlockLayout(
 }
 
 function applyTextStyle(ctx, fontColor) {
-  ctx.fillStyle = fontColor;
+  const normalized = normalizeFontColor(fontColor, fontColor);
+  const rgb = hexToRgb(normalized);
+  ctx.fillStyle = rgb
+    ? `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`
+    : normalized;
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = "source-over";
   ctx.shadowBlur = 0;
@@ -1372,7 +1374,7 @@ async function generatePosterImage({
   const H = posterImage.height;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
-  ctx.antialias = "subpixel";
+  ctx.antialias = "gray";
 
   ctx.drawImage(posterImage, 0, 0, W, H);
 

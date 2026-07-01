@@ -24,6 +24,11 @@ const {
 const {
   savePosterConfigFromGenerateBody,
 } = require("../utils/posterConfigService");
+const {
+  normalizeFontColor,
+  readStyleStringField,
+  readStyleNumberField,
+} = require("../utils/fontColor");
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
@@ -589,21 +594,15 @@ function parseTextLineStyles(input, fallback) {
 
     return {
       fontSize:
-        typeof style.fontSize === "number" && style.fontSize > 0
-          ? style.fontSize
+        readStyleNumberField(style, "fontSize") > 0
+          ? readStyleNumberField(style, "fontSize")
           : base.fontSize,
-      fontFamily:
-        typeof style.fontFamily === "string" && style.fontFamily.trim()
-          ? style.fontFamily.trim()
-          : base.fontFamily,
-      fontColor:
-        typeof style.fontColor === "string" && style.fontColor.trim()
-          ? style.fontColor.trim()
-          : base.fontColor,
-      fontWeight:
-        typeof style.fontWeight === "string" && style.fontWeight.trim()
-          ? style.fontWeight.trim()
-          : base.fontWeight,
+      fontFamily: readStyleStringField(style, "fontFamily") || base.fontFamily,
+      fontColor: normalizeFontColor(
+        readStyleStringField(style, "fontColor"),
+        base.fontColor,
+      ),
+      fontWeight: readStyleStringField(style, "fontWeight") || base.fontWeight,
     };
   });
 }
