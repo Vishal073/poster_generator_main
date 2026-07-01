@@ -24,6 +24,7 @@ const {
   fetchUserPages,
   enrichPagesWithInstagram,
   fetchInstagramAccountForPage,
+  fetchPageById,
   postImageToPage,
   debugAccessToken,
   buildEmptyPagesHelpMessage,
@@ -33,6 +34,7 @@ const {
   postPosterForUser,
   postPosterToInstagramForUser,
   buildSelectedPageSnapshot,
+  toPlainFacebookPage,
   listPostsForUser,
   deletePostForUser,
   getFacebookStatusByUserIds,
@@ -89,22 +91,15 @@ function buildOAuthConnectUrl(userId, returnTo = "admin", options = {}, req = nu
 }
 
 function sanitizePagesForStorage(pages) {
-  return (Array.isArray(pages) ? pages : []).map((page) => ({
-    pageId: String(page.pageId || ""),
-    pageName: typeof page.pageName === "string" ? page.pageName : "Unnamed Page",
-    pageAccessToken: typeof page.pageAccessToken === "string" ? page.pageAccessToken : "",
-    instagramAccount: page.instagramAccount?.igUserId
-      ? {
-          igUserId: String(page.instagramAccount.igUserId),
-          username:
-            typeof page.instagramAccount.username === "string"
-              ? page.instagramAccount.username
-              : "",
-          name:
-            typeof page.instagramAccount.name === "string" ? page.instagramAccount.name : "",
-        }
-      : null,
-  }));
+  return (Array.isArray(pages) ? pages : [])
+    .map((page) => toPlainFacebookPage(page))
+    .filter(Boolean)
+    .map((page) => ({
+      pageId: page.pageId,
+      pageName: page.pageName,
+      pageAccessToken: page.pageAccessToken,
+      instagramAccount: page.instagramAccount?.igUserId ? page.instagramAccount : null,
+    }));
 }
 
 function isValidObjectId(value) {
@@ -670,7 +665,7 @@ async function syncConnectionPagesFromFacebook(connection) {
   if (connection.includeInstagramPermissions) {
     pages = await enrichPagesWithInstagram(rawPages, connection.userAccessToken);
   }
-  connection.pages = pages;
+  connection.pages = sanitizePagesForStorage(pages);
 
   logFb("pages.sync_done", {
     userId: String(connection.userId),
@@ -692,20 +687,21 @@ async function syncConnectionPagesFromFacebook(connection) {
 }
 
 function formatPageForApi(page, includeInstagram = true) {
-  if (!page) {
+  const plain = toPlainFacebookPage(page);
+  if (!plain) {
     return null;
   }
 
   return {
-    pageId: page.pageId,
-    pageName: page.pageName,
-    pageAccessToken: page.pageAccessToken,
+    pageId: plain.pageId,
+    pageName: plain.pageName,
+    pageAccessToken: plain.pageAccessToken,
     instagramAccount:
-      includeInstagram && page.instagramAccount?.igUserId
+      includeInstagram && plain.instagramAccount?.igUserId
       ? {
-          igUserId: page.instagramAccount.igUserId,
-          username: page.instagramAccount.username || "",
-          name: page.instagramAccount.name || "",
+          igUserId: plain.instagramAccount.igUserId,
+          username: plain.instagramAccount.username || "",
+          name: plain.instagramAccount.name || "",
         }
       : null,
   };
@@ -864,11 +860,16 @@ async function saveSelectedPage(req, res) {
       });
     }
 
-    let selectedPage = connection.pages.find((page) => page.pageId === pageId);
+    const findStoredPage = (targetPageId) =>
+      connection.pages.find(
+        (page) => toPlainFacebookPage(page)?.pageId === targetPageId,
+      );
+
+    let selectedPage = findStoredPage(pageId);
     if (!selectedPage) {
       try {
         await syncConnectionPagesFromFacebook(connection);
-        selectedPage = connection.pages.find((page) => page.pageId === pageId);
+        selectedPage = findStoredPage(pageId);
       } catch (syncError) {
         logFbWarn("pages.save_sync_failed", {
           userId: String(connection.userId),
@@ -882,7 +883,9 @@ async function saveSelectedPage(req, res) {
       logFbWarn("pages.save_not_found", {
         userId: String(connection.userId),
         pageId,
-        availablePageIds: (connection.pages || []).map((p) => p.pageId),
+        availablePageIds: (connection.pages || []).map(
+          (page) => toPlainFacebookPage(page)?.pageId,
+        ),
       });
       return res.status(404).json({
         success: false,
@@ -890,26 +893,54 @@ async function saveSelectedPage(req, res) {
       });
     }
 
+    let plainPage = toPlainFacebookPage(selectedPage);
+    if (!plainPage?.pageAccessToken) {
+      const refetched = await fetchPageById(pageId, connection.userAccessToken);
+      if (refetched) {
+        plainPage = refetched;
+      }
+    }
+
+    if (!plainPage?.pageAccessToken) {
+      return res.status(502).json({
+        success: false,
+        message:
+          "Could not load Page access token. Tap Connect / reconnect Facebook and try again.",
+      });
+    }
+
     const freshInstagram = connection.includeInstagramPermissions
       ? await fetchInstagramAccountForPage({
-          pageId: selectedPage.pageId,
-          pageAccessToken: selectedPage.pageAccessToken,
+          pageId: plainPage.pageId,
+          pageAccessToken: plainPage.pageAccessToken,
           userAccessToken: connection.userAccessToken,
         })
       : null;
 
-    const pageIndex = connection.pages.findIndex((page) => page.pageId === pageId);
+    const pageIndex = connection.pages.findIndex(
+      (page) => toPlainFacebookPage(page)?.pageId === pageId,
+    );
     if (pageIndex >= 0) {
-      connection.pages[pageIndex].instagramAccount = freshInstagram;
-      selectedPage = connection.pages[pageIndex];
+      connection.pages[pageIndex] = {
+        ...plainPage,
+        instagramAccount: freshInstagram,
+      };
     }
 
     const previousPageId = connection.selectedPage?.pageId || null;
 
-    connection.selectedPage = buildSelectedPageSnapshot({
-      ...selectedPage,
+    const selectedSnapshot = buildSelectedPageSnapshot({
+      ...plainPage,
       instagramAccount: freshInstagram,
     });
+    if (!selectedSnapshot) {
+      return res.status(500).json({
+        success: false,
+        message: "Could not prepare selected Page for saving. Please try again.",
+      });
+    }
+
+    connection.selectedPage = selectedSnapshot;
 
     // Keep saved connections until explicitly removed by admin.
     connection.expiresAt = getConnectionExpiresAt(connection.selectedPage);
@@ -917,7 +948,7 @@ async function saveSelectedPage(req, res) {
 
     const message =
       previousPageId && previousPageId !== pageId
-        ? `Facebook Page updated to ${selectedPage.pageName}.`
+        ? `Facebook Page updated to ${plainPage.pageName}.`
         : "Facebook Page saved successfully.";
 
     const instagramNote =
@@ -931,7 +962,7 @@ async function saveSelectedPage(req, res) {
     logFb("pages.save_success", {
       userId: String(connection.userId),
       pageId,
-      pageName: selectedPage.pageName,
+      pageName: plainPage.pageName,
       previousPageId,
       instagramUsername: connection.selectedPage?.instagramAccount?.username || null,
     });

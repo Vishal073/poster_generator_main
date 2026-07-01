@@ -41,16 +41,59 @@ async function getFacebookConnectionForUser(userId) {
   return connection;
 }
 
-function buildSelectedPageSnapshot(page) {
+function toPlainFacebookPage(page) {
   if (!page) {
     return null;
   }
 
+  const plain =
+    typeof page.toObject === "function"
+      ? page.toObject({ depopulate: true })
+      : typeof page.toJSON === "function"
+        ? page.toJSON()
+        : page;
+
+  const pageId = String(plain.pageId || plain.id || "").trim();
+  const pageName =
+    (typeof plain.pageName === "string" && plain.pageName.trim()) ||
+    (typeof plain.name === "string" && plain.name.trim()) ||
+    "Unnamed Page";
+  const pageAccessToken =
+    (typeof plain.pageAccessToken === "string" && plain.pageAccessToken.trim()) ||
+    (typeof plain.access_token === "string" && plain.access_token.trim()) ||
+    "";
+
   return {
-    pageId: page.pageId,
-    pageName: page.pageName,
-    pageAccessToken: page.pageAccessToken,
-    instagramAccount: page.instagramAccount?.igUserId ? page.instagramAccount : null,
+    pageId,
+    pageName,
+    pageAccessToken,
+    instagramAccount: plain.instagramAccount?.igUserId
+      ? {
+          igUserId: String(plain.instagramAccount.igUserId),
+          username:
+            typeof plain.instagramAccount.username === "string"
+              ? plain.instagramAccount.username
+              : "",
+          name:
+            typeof plain.instagramAccount.name === "string"
+              ? plain.instagramAccount.name
+              : "",
+        }
+      : null,
+  };
+}
+
+function buildSelectedPageSnapshot(page) {
+  const plain = toPlainFacebookPage(page);
+  if (!plain?.pageId || !plain.pageName || !plain.pageAccessToken) {
+    return null;
+  }
+
+  return {
+    pageId: plain.pageId,
+    pageName: plain.pageName,
+    pageAccessToken: plain.pageAccessToken,
+    instagramAccount: plain.instagramAccount?.igUserId ? plain.instagramAccount : null,
   };
 }
 
@@ -311,6 +354,7 @@ module.exports = {
   approvePosterForUser,
   getUserSocialApproveEligibility,
   buildSelectedPageSnapshot,
+  toPlainFacebookPage,
   listPostsForUser,
   deletePostForUser,
   getFacebookStatusByUserIds,

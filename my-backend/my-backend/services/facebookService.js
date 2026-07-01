@@ -1034,4 +1034,5 @@ module.exports = {
   debugAccessToken,
   buildEmptyPagesHelpMessage,
   extractPageIdsFromGranularScopes,
+  fetchPageById,
 };
