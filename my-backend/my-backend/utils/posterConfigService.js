@@ -140,21 +140,37 @@ function formatEventPosterRecord(record) {
 async function findEventPosterByLookup({ posterId, imageUrl, publicId }) {
   const normalizedPosterId = typeof posterId === "string" ? posterId.trim() : "";
   const normalizedImageUrl = normalizeImageUrl(imageUrl);
-  const normalizedPublicId = normalizePublicId(publicId);
+  const normalizedPublicId =
+    normalizePublicId(publicId) || extractPublicIdFromPosterSource(imageUrl);
+
+  const query = [];
 
   if (normalizedPosterId) {
-    return EventPoster.findOne({ posterId: normalizedPosterId });
+    query.push({ posterId: normalizedPosterId });
   }
 
   if (normalizedImageUrl) {
-    return EventPoster.findOne({ imageUrl: normalizedImageUrl });
+    query.push({ imageUrl: normalizedImageUrl });
+
+    try {
+      const decodedUrl = decodeURIComponent(normalizedImageUrl);
+      if (decodedUrl !== normalizedImageUrl) {
+        query.push({ imageUrl: decodedUrl });
+      }
+    } catch {
+      // Ignore malformed URI sequences.
+    }
   }
 
   if (normalizedPublicId) {
-    return EventPoster.findOne({ publicId: normalizedPublicId });
+    query.push({ publicId: normalizedPublicId });
   }
 
-  return null;
+  if (query.length === 0) {
+    return null;
+  }
+
+  return EventPoster.findOne({ $or: query });
 }
 
 async function createEventPosterEntry({
