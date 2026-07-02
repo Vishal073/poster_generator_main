@@ -8,3 +8,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: FRONTEND_URL
+        value: https://admin.gcrgraphix.com
+      - key: API_BASE_URL
+        value: https://api.gcrgraphix.com
+      - key: CORS_ORIGINS
+        value: https://admin.gcrgraphix.com,https://gcrgraphix.com,https://www.gcrgraphix.com,https://poster-generator-admin-portal.onrender.com,http://localhost:5173

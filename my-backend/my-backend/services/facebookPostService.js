@@ -6,6 +6,9 @@ const {
   postImageToInstagram,
   listPagePosts,
   deletePagePost,
+  updatePagePost,
+  listInstagramMedia,
+  deleteInstagramMedia,
 } = require("./facebookService");
 
 function isValidObjectId(value) {
@@ -261,6 +264,127 @@ async function deletePostForUser({ userId, postId }) {
   };
 }
 
+async function updatePostForUser({ userId, postId, message }) {
+  if (!postId || typeof postId !== "string" || !postId.trim()) {
+    const error = new Error("postId is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (typeof message !== "string") {
+    const error = new Error("message is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+
+  const result = await updatePagePost({
+    postId: postId.trim(),
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+    message,
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    postId: postId.trim(),
+    caption: message,
+    updated: result.updated,
+  };
+}
+
+async function listInstagramPostsForUser({ userId, limit = 25 }) {
+  const connection = await getFacebookConnectionForUser(userId);
+  const instagramAccount = connection.selectedPage?.instagramAccount;
+
+  if (!instagramAccount?.igUserId) {
+    return {
+      userId: String(connection.userId),
+      connected: false,
+      igUserId: null,
+      username: null,
+      posts: [],
+      paging: null,
+    };
+  }
+
+  const result = await listInstagramMedia({
+    igUserId: instagramAccount.igUserId,
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+    limit,
+  });
+
+  return {
+    userId: String(connection.userId),
+    connected: true,
+    igUserId: instagramAccount.igUserId,
+    username: instagramAccount.username || null,
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    posts: result.posts,
+    paging: result.paging,
+  };
+}
+
+async function deleteInstagramPostForUser({ userId, mediaId }) {
+  if (!mediaId || typeof mediaId !== "string" || !mediaId.trim()) {
+    const error = new Error("mediaId is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+  const instagramAccount = connection.selectedPage?.instagramAccount;
+
+  if (!instagramAccount?.igUserId) {
+    const error = new Error("This user has no Instagram account linked to their Facebook Page.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const result = await deleteInstagramMedia({
+    mediaId: mediaId.trim(),
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+  });
+
+  return {
+    userId: String(connection.userId),
+    igUserId: instagramAccount.igUserId,
+    username: instagramAccount.username || null,
+    mediaId: mediaId.trim(),
+    deleted: result.deleted,
+  };
+}
+
+async function listSocialPostsForUser({ userId, limit = 25 }) {
+  const facebook = await listPostsForUser({ userId, limit });
+  let instagram = {
+    userId: String(userId),
+    connected: false,
+    igUserId: null,
+    username: null,
+    posts: [],
+    paging: null,
+  };
+
+  try {
+    instagram = await listInstagramPostsForUser({ userId, limit });
+  } catch (error) {
+    console.warn(
+      "[Social posts] Instagram list skipped:",
+      error?.message || String(error),
+    );
+  }
+
+  return {
+    userId: String(userId),
+    facebook,
+    instagram,
+  };
+}
+
 /**
  * Batch lookup Facebook link status for user list in admin portal.
  */
@@ -356,7 +480,11 @@ module.exports = {
   buildSelectedPageSnapshot,
   toPlainFacebookPage,
   listPostsForUser,
+  updatePostForUser,
   deletePostForUser,
+  listInstagramPostsForUser,
+  deleteInstagramPostForUser,
+  listSocialPostsForUser,
   getFacebookStatusByUserIds,
   disconnectFacebookForUser,
   buildFacebookConnectUrl,

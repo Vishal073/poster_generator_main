@@ -938,6 +938,104 @@ async function deletePagePost({ postId, pageAccessToken }) {
 }
 
 /**
+ * Update caption/message on a Facebook Page post (requires pages_manage_posts).
+ */
+async function updatePagePost({ postId, pageAccessToken, message }) {
+  if (!postId || !pageAccessToken) {
+    const error = new Error("postId and pageAccessToken are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const response = await axios.post(`${GRAPH_BASE_URL}/${postId}`, null, {
+      params: {
+        message: typeof message === "string" ? message : "",
+        access_token: pageAccessToken,
+      },
+      timeout: 30000,
+    });
+
+    return {
+      updated: response.data?.success !== false,
+      raw: response.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to update Facebook Page post.");
+  }
+}
+
+/**
+ * List recent Instagram media for a linked Business/Creator account.
+ */
+async function listInstagramMedia({ igUserId, pageAccessToken, limit = 25 }) {
+  if (!igUserId || !pageAccessToken) {
+    const error = new Error("igUserId and pageAccessToken are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const response = await axios.get(`${GRAPH_BASE_URL}/${igUserId}/media`, {
+      params: {
+        fields: "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp",
+        access_token: pageAccessToken,
+        limit: Math.min(Math.max(Number(limit) || 25, 1), 50),
+      },
+      timeout: 30000,
+    });
+
+    const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+
+    return {
+      posts: rows.map((row) => ({
+        id: String(row.id || ""),
+        caption: typeof row.caption === "string" ? row.caption : "",
+        mediaType: typeof row.media_type === "string" ? row.media_type : null,
+        imageUrl:
+          typeof row.media_url === "string"
+            ? row.media_url
+            : typeof row.thumbnail_url === "string"
+              ? row.thumbnail_url
+              : null,
+        permalinkUrl: typeof row.permalink === "string" ? row.permalink : null,
+        createdTime: row.timestamp || null,
+      })),
+      paging: response.data?.paging || null,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to list Instagram posts.");
+  }
+}
+
+/**
+ * Delete a published Instagram media item.
+ */
+async function deleteInstagramMedia({ mediaId, pageAccessToken }) {
+  if (!mediaId || !pageAccessToken) {
+    const error = new Error("mediaId and pageAccessToken are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const response = await axios.delete(`${GRAPH_BASE_URL}/${mediaId}`, {
+      params: {
+        access_token: pageAccessToken,
+      },
+      timeout: 30000,
+    });
+
+    return {
+      deleted: response.data?.success === true,
+      raw: response.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to delete Instagram post.");
+  }
+}
+
+/**
  * Publish an image to Instagram (Business/Creator linked to the Facebook Page).
  * Uses the Page access token.
  */
@@ -1031,6 +1129,9 @@ module.exports = {
   postImageToInstagram,
   listPagePosts,
   deletePagePost,
+  updatePagePost,
+  listInstagramMedia,
+  deleteInstagramMedia,
   debugAccessToken,
   buildEmptyPagesHelpMessage,
   extractPageIdsFromGranularScopes,

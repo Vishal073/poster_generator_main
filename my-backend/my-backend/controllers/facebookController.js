@@ -36,7 +36,11 @@ const {
   buildSelectedPageSnapshot,
   toPlainFacebookPage,
   listPostsForUser,
+  updatePostForUser,
   deletePostForUser,
+  listInstagramPostsForUser,
+  deleteInstagramPostForUser,
+  listSocialPostsForUser,
   getFacebookStatusByUserIds,
   disconnectFacebookForUser,
   buildFacebookConnectUrl,
@@ -1108,6 +1112,34 @@ async function postFacebookForUser(req, res) {
 }
 
 /**
+ * GET /facebook/social-posts/:userId
+ * List recent Facebook Page posts and Instagram media for the user.
+ */
+async function listSocialPostsForUserHandler(req, res) {
+  try {
+    const userId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
+    const limitRaw =
+      typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : 25;
+
+    await resolveAppUserId(userId);
+
+    const result = await listSocialPostsForUser({
+      userId,
+      limit: Number.isFinite(limitRaw) ? limitRaw : 25,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Social posts fetched successfully.",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Facebook OAuth] listSocialPostsForUser failed:", error.message);
+    return sendError(res, error, "Unable to list social posts for this user.");
+  }
+}
+
+/**
  * GET /facebook/posts/:userId
  * List recent posts on the user's selected Facebook Page.
  */
@@ -1132,6 +1164,101 @@ async function listFacebookPostsForUser(req, res) {
   } catch (error) {
     console.error("[Facebook OAuth] listFacebookPostsForUser failed:", error.message);
     return sendError(res, error, "Unable to list Facebook Page posts for this user.");
+  }
+}
+
+/**
+ * PATCH /facebook/posts/:userId/:postId
+ * Update caption/message on a Facebook Page post.
+ */
+async function updateFacebookPostForUser(req, res) {
+  try {
+    const userId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
+    const postId = typeof req.params.postId === "string" ? req.params.postId.trim() : "";
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const message =
+      typeof body.message === "string"
+        ? body.message
+        : typeof body.caption === "string"
+          ? body.caption
+          : null;
+
+    await resolveAppUserId(userId);
+
+    if (message === null) {
+      return res.status(400).json({
+        success: false,
+        message: "message (caption) is required in the request body.",
+      });
+    }
+
+    const result = await updatePostForUser({ userId, postId, message });
+
+    return res.status(200).json({
+      success: true,
+      message: "Facebook post updated successfully.",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Facebook OAuth] updateFacebookPostForUser failed:", error.message);
+    return sendError(res, error, "Unable to update Facebook post for this user.");
+  }
+}
+
+/**
+ * GET /instagram/posts/:userId
+ * List recent Instagram media for the user's linked account.
+ */
+async function listInstagramPostsForUserHandler(req, res) {
+  try {
+    const userId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
+    const limitRaw =
+      typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : 25;
+
+    await resolveAppUserId(userId);
+
+    const result = await listInstagramPostsForUser({
+      userId,
+      limit: Number.isFinite(limitRaw) ? limitRaw : 25,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: result.connected
+        ? "Instagram posts fetched successfully."
+        : "No Instagram account linked to this user's Facebook Page.",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Facebook OAuth] listInstagramPostsForUser failed:", error.message);
+    return sendError(res, error, "Unable to list Instagram posts for this user.");
+  }
+}
+
+/**
+ * DELETE /instagram/posts/:userId/:mediaId
+ * Delete a post from the user's linked Instagram account.
+ */
+async function deleteInstagramPostForUserHandler(req, res) {
+  try {
+    const userId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
+    const mediaId =
+      typeof req.params.mediaId === "string" ? req.params.mediaId.trim() : "";
+
+    await resolveAppUserId(userId);
+
+    const result = await deleteInstagramPostForUser({ userId, mediaId });
+
+    return res.status(200).json({
+      success: true,
+      message: result.deleted
+        ? "Instagram post deleted successfully."
+        : "Delete request sent to Instagram.",
+      ...result,
+    });
+  } catch (error) {
+    console.error("[Facebook OAuth] deleteInstagramPostForUser failed:", error.message);
+    return sendError(res, error, "Unable to delete Instagram post for this user.");
   }
 }
 
@@ -1318,6 +1445,10 @@ module.exports = {
   postFacebookForUser,
   postInstagramForUser,
   listFacebookPostsForUser,
+  listSocialPostsForUserHandler,
+  updateFacebookPostForUser,
   deleteFacebookPostForUser,
+  listInstagramPostsForUserHandler,
+  deleteInstagramPostForUserHandler,
   postFacebookImage,
 };

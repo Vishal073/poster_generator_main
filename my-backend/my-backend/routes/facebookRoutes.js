@@ -11,7 +11,11 @@ const {
   postFacebookForUser,
   postFacebookImage,
   listFacebookPostsForUser,
+  listSocialPostsForUserHandler,
+  updateFacebookPostForUser,
   deleteFacebookPostForUser,
+  listInstagramPostsForUserHandler,
+  deleteInstagramPostForUserHandler,
 } = require("../controllers/facebookController");
 
 const router = express.Router();
@@ -42,9 +46,15 @@ router.get("/facebook/connect-url/:userId", getFacebookConnectUrl);
 // One-click post using saved tokens for app user
 router.post("/facebook/post-for-user", postFacebookForUser);
 
-// List / delete posts for a user's connected Page
+// List / edit / delete posts for a user's connected Page
+router.get("/facebook/social-posts/:userId", listSocialPostsForUserHandler);
 router.get("/facebook/posts/:userId", listFacebookPostsForUser);
+router.patch("/facebook/posts/:userId/:postId", updateFacebookPostForUser);
 router.delete("/facebook/posts/:userId/:postId", deleteFacebookPostForUser);
+
+// Instagram media for linked Business account
+router.get("/instagram/posts/:userId", listInstagramPostsForUserHandler);
+router.delete("/instagram/posts/:userId/:mediaId", deleteInstagramPostForUserHandler);
 
 // Low-level post with explicit page tokens (testing)
 router.post("/facebook/post-image", postFacebookImage);

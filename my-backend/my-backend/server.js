@@ -22,11 +22,26 @@ const app = express();
 
 app.set("trust proxy", true);
 
-const allowedOrigins = (process.env.CORS_ORIGINS ||
-  "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:5174")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const defaultAllowedOrigins = [
+  "https://admin.gcrgraphix.com",
+  "https://gcrgraphix.com",
+  "https://www.gcrgraphix.com",
+  "https://poster-generator-admin-portal.onrender.com",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+];
+
+const allowedOrigins = [
+  ...defaultAllowedOrigins,
+  ...(process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+].filter((origin, index, list) => list.indexOf(origin) === index);
 
 function isAllowedOrigin(origin) {
   if (!origin) {
@@ -34,6 +49,10 @@ function isAllowedOrigin(origin) {
   }
 
   if (allowedOrigins.includes(origin)) {
+    return true;
+  }
+
+  if (/^https:\/\/([a-z0-9-]+\.)*gcrgraphix\.com$/.test(origin)) {
     return true;
   }
 
