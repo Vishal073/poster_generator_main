@@ -51,6 +51,17 @@ function isUrl(value) {
   return /^https?:\/\//i.test(value);
 }
 
+/** Frontend uses "center"; canvas layout uses "top" for the same placement. */
+function normalizeImagePosition(value) {
+  if (value === "center") {
+    return "top";
+  }
+  if (value === "left" || value === "right" || value === "top") {
+    return value;
+  }
+  return "left";
+}
+
 /**
  * node-canvas `loadImage(url)` uses a request some CDNs block (403). Fetch with
  * normal browser-like headers, then decode from buffer.
@@ -1178,7 +1189,7 @@ function computeInsetFooterLayout(
   let imageY = 0;
   let textLeft = contentLeft;
   let textMaxWidth = contentWidth;
-  const position = imagePosition || "left";
+  const position = normalizeImagePosition(imagePosition);
 
   if (hasUserImage) {
     let width =
@@ -1360,12 +1371,14 @@ async function generatePosterImage({
       throw new Error('imageShape must be either "circle" or "rectangle".');
     }
   }
+  imagePosition = normalizeImagePosition(imagePosition);
+
   if (useInsets && userImageSource) {
     if (!["circle", "rectangle"].includes(imageShape)) {
       throw new Error('imageShape must be either "circle" or "rectangle".');
     }
     if (!["left", "right", "top"].includes(imagePosition)) {
-      throw new Error('imagePosition must be either "left", "right", or "top".');
+      throw new Error('imagePosition must be either "left", "right", "top", or "center".');
     }
   }
 

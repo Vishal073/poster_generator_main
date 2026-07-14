@@ -138,6 +138,20 @@ function resolveUserImageSource(userImageSource, includeUserImage) {
   return undefined;
 }
 
+function normalizeImagePosition(value, fallback = "left") {
+  if (typeof value !== "string" || !value.trim()) {
+    return fallback;
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === "center") {
+    return "top";
+  }
+  if (trimmed === "left" || trimmed === "right" || trimmed === "top") {
+    return trimmed;
+  }
+  return fallback;
+}
+
 async function applyPosterEnhancement(buffer, enhancePriority) {
   try {
     return await enhancePosterBuffer(buffer, {
@@ -278,7 +292,7 @@ async function generatePoster(req, res) {
         imageHeight,
         imageShape,
         imageCornerRadius,
-        imagePosition,
+        imagePosition: normalizeImagePosition(imagePosition),
         insetFromBottom,
         insetLeft,
         insetRight,
@@ -740,7 +754,10 @@ router.post(
         insetFromBottom: pickNumber(body.insetFromBottom),
         insetLeft: pickNumber(body.insetLeft),
         insetRight: pickNumber(body.insetRight),
-        imagePosition: pickString(body.imagePosition, ["left", "right", "top"]),
+        imagePosition: normalizeImagePosition(
+          pickString(body.imagePosition, ["left", "right", "top", "center"]),
+          undefined
+        ),
         imageWidth: pickNumber(body.imageWidth),
         imageHeight: pickNumber(body.imageHeight),
         imageShape: pickString(body.imageShape, ["circle", "rectangle"]),
