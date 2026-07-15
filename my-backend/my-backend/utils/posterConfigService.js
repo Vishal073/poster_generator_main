@@ -199,6 +199,14 @@ function pickFacebookFields(facebook, defaults) {
       typeof source.uploadToInstagram === "boolean"
         ? source.uploadToInstagram
         : defaults.uploadToInstagram,
+    uploadToFacebookStory:
+      typeof source.uploadToFacebookStory === "boolean"
+        ? source.uploadToFacebookStory
+        : defaults.uploadToFacebookStory,
+    uploadToInstagramStory:
+      typeof source.uploadToInstagramStory === "boolean"
+        ? source.uploadToInstagramStory
+        : defaults.uploadToInstagramStory,
     sendWhatsApp:
       typeof source.sendWhatsApp === "boolean"
         ? source.sendWhatsApp
@@ -235,6 +243,10 @@ function toPlainConfig(config) {
         : defaults.includeUserImage,
     addWatermark:
       typeof raw.addWatermark === "boolean" ? raw.addWatermark : defaults.addWatermark,
+    showPhoneIcon:
+      typeof raw.showPhoneIcon === "boolean"
+        ? raw.showPhoneIcon
+        : defaults.showPhoneIcon,
     watermarkPosition:
       typeof raw.watermarkPosition === "string" && raw.watermarkPosition.trim()
         ? raw.watermarkPosition.trim()
@@ -461,6 +473,26 @@ function extractConfigFromGenerateBody(body) {
       .trim()
       .toLowerCase(),
   );
+  const uploadToFacebookStory = ["true", "1", "yes", "y"].includes(
+    String(
+      body.uploadToFacebookStory ??
+        body.postToFacebookStory ??
+        body.facebookStory ??
+        "",
+    )
+      .trim()
+      .toLowerCase(),
+  );
+  const uploadToInstagramStory = ["true", "1", "yes", "y"].includes(
+    String(
+      body.uploadToInstagramStory ??
+        body.postToInstagramStory ??
+        body.instagramStory ??
+        "",
+    )
+      .trim()
+      .toLowerCase(),
+  );
   const sendWhatsApp = !["false", "0", "no", "n"].includes(
     String(body.sendWhatsApp ?? body.sendToWhatsApp ?? body.sendWhatsapp ?? body.whatsapp ?? "true")
       .trim()
@@ -472,6 +504,7 @@ function extractConfigFromGenerateBody(body) {
     layout,
     includeUserImage: body.includeUserImage !== false,
     addWatermark: body.addWatermark !== false,
+    showPhoneIcon: body.showPhoneIcon !== false,
     watermarkPosition:
       typeof body.watermarkPosition === "string" && body.watermarkPosition.trim()
         ? body.watermarkPosition.trim()
@@ -479,6 +512,8 @@ function extractConfigFromGenerateBody(body) {
     facebook: {
       uploadToFacebook,
       uploadToInstagram,
+      uploadToFacebookStory,
+      uploadToInstagramStory,
       sendWhatsApp,
       facebookCaption:
         typeof body.facebookCaption === "string"

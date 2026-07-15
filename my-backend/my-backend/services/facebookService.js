@@ -1036,6 +1036,62 @@ async function deleteInstagramMedia({ mediaId, pageAccessToken }) {
 }
 
 /**
+ * Publish a photo as a Facebook Page Story (24h).
+ * 1) Upload unpublished photo via /{page-id}/photos
+ * 2) Publish via /{page-id}/photo_stories
+ */
+async function postPhotoStoryToPage({ pageId, pageAccessToken, imageUrl }) {
+  if (!pageId || !pageAccessToken || !imageUrl) {
+    const error = new Error("pageId, pageAccessToken, and imageUrl are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const uploadResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/photos`,
+      null,
+      {
+        params: {
+          url: imageUrl,
+          published: false,
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    const photoId = uploadResponse.data?.id || uploadResponse.data?.photo_id || null;
+    if (!photoId) {
+      const error = new Error("Facebook did not return a photo_id for the story upload.");
+      error.statusCode = 502;
+      throw error;
+    }
+
+    const storyResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/photo_stories`,
+      null,
+      {
+        params: {
+          photo_id: photoId,
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    return {
+      postId: storyResponse.data?.post_id || storyResponse.data?.id || null,
+      photoId: String(photoId),
+      success: storyResponse.data?.success !== false,
+      raw: storyResponse.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post photo story to Facebook Page.");
+  }
+}
+
+/**
  * Publish an image to Instagram (Business/Creator linked to the Facebook Page).
  * Uses the Page access token.
  */
@@ -1105,6 +1161,172 @@ async function postImageToInstagram({ igUserId, pageAccessToken, imageUrl, capti
   }
 }
 
+/**
+ * Publish an image as an Instagram Story (media_type=STORIES).
+ * Captions are not supported on Stories via the Content Publishing API.
+ */
+async function postImageStoryToInstagram({ igUserId, pageAccessToken, imageUrl }) {
+  if (!igUserId || !pageAccessToken || !imageUrl) {
+    const error = new Error("igUserId, pageAccessToken, and imageUrl are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const createResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media`,
+      null,
+      {
+        params: {
+          image_url: imageUrl,
+          media_type: "STORIES",
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    const creationId = createResponse.data?.id;
+    if (!creationId) {
+      const error = new Error("Instagram did not return a Stories media container id.");
+      error.statusCode = 502;
+      throw error;
+    }
+
+    await waitForInstagramMediaContainer(creationId, pageAccessToken);
+
+    const publishResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media_publish`,
+      null,
+      {
+        params: {
+          creation_id: creationId,
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    const mediaId =
+      publishResponse.data?.id ||
+      publishResponse.data?.media_id ||
+      publishResponse.data?.post_id ||
+      null;
+
+    return {
+      mediaId: mediaId ? String(mediaId) : null,
+      creationId: String(creationId),
+      raw: publishResponse.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post image story to Instagram.");
+  }
+}
+
+async function postVideoToPage({ pageId, pageAccessToken, videoUrl, caption }) {
+  if (!pageId || !pageAccessToken || !videoUrl) {
+    const error = new Error("pageId, pageAccessToken, and videoUrl are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const response = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/videos`,
+      null,
+      {
+        params: {
+          file_url: videoUrl,
+          description: caption || "",
+          access_token: pageAccessToken,
+        },
+        timeout: 120000,
+      },
+    );
+
+    return {
+      postId: response.data?.id || response.data?.post_id || null,
+      raw: response.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post video to Facebook Page.");
+  }
+}
+
+/**
+ * Publish a reel to Instagram (Business/Creator linked to the Facebook Page).
+ */
+async function postReelToInstagram({ igUserId, pageAccessToken, videoUrl, caption }) {
+  if (!igUserId || !pageAccessToken || !videoUrl) {
+    const error = new Error("igUserId, pageAccessToken, and videoUrl are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const createResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media`,
+      null,
+      {
+        params: {
+          media_type: "REELS",
+          video_url: videoUrl,
+          caption: caption || "",
+          share_to_feed: true,
+          access_token: pageAccessToken,
+        },
+        timeout: 120000,
+      },
+    );
+
+    const creationId = createResponse.data?.id;
+    if (!creationId) {
+      const error = new Error("Instagram did not return a reel container id.");
+      error.statusCode = 502;
+      throw error;
+    }
+
+    await waitForInstagramMediaContainer(creationId, pageAccessToken, {
+      maxAttempts: 30,
+      delayMs: 3000,
+    });
+
+    const publishResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media_publish`,
+      null,
+      {
+        params: {
+          creation_id: creationId,
+          access_token: pageAccessToken,
+        },
+        timeout: 120000,
+      },
+    );
+
+    const mediaId =
+      publishResponse.data?.id ||
+      publishResponse.data?.media_id ||
+      publishResponse.data?.post_id ||
+      null;
+
+    if (!mediaId) {
+      logFbWarn("instagram.publish_missing_media_id", {
+        igUserId,
+        creationId: String(creationId),
+        response: publishResponse.data || null,
+      });
+    }
+
+    return {
+      mediaId: mediaId ? String(mediaId) : null,
+      creationId: String(creationId),
+      raw: publishResponse.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post reel to Instagram.");
+  }
+}
+
 module.exports = {
   FACEBOOK_SCOPES,
   FACEBOOK_INSTAGRAM_SCOPES,
@@ -1126,7 +1348,11 @@ module.exports = {
   enrichPagesWithInstagram,
   fetchInstagramAccountForPage,
   postImageToPage,
+  postPhotoStoryToPage,
   postImageToInstagram,
+  postImageStoryToInstagram,
+  postVideoToPage,
+  postReelToInstagram,
   listPagePosts,
   deletePagePost,
   updatePagePost,

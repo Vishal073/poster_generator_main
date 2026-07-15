@@ -19,6 +19,8 @@ const { queueReadyPosterForDownload } = require("./whatsappPosterDelivery");
 const {
   postPosterForUser,
   postPosterToInstagramForUser,
+  postPosterStoryForUser,
+  postPosterStoryToInstagramForUser,
   getUserSocialApproveEligibility,
 } = require("./facebookPostService");
 const {
@@ -310,6 +312,7 @@ async function generatePoster(req, res) {
         textLineAlignments: resolvedTextLineAlignments,
         posterSource: resolvedPosterSource,
         language,
+        showPhoneIcon: !isFalsyParam(body.showPhoneIcon),
         addWatermark: body.addWatermark,
         watermarkPosition: body.watermarkPosition,
       });
@@ -394,6 +397,16 @@ async function generatePoster(req, res) {
     const shouldUploadInstagram = isTruthyParam(
       body.uploadToInstagram ?? body.postToInstagram ?? body.instagram,
     );
+    const shouldUploadFacebookStory = isTruthyParam(
+      body.uploadToFacebookStory ??
+        body.postToFacebookStory ??
+        body.facebookStory,
+    );
+    const shouldUploadInstagramStory = isTruthyParam(
+      body.uploadToInstagramStory ??
+        body.postToInstagramStory ??
+        body.instagramStory,
+    );
 
     if (shouldUploadFacebook && !resolvedUserId) {
       return res.status(400).json({
@@ -406,6 +419,20 @@ async function generatePoster(req, res) {
       return res.status(400).json({
         success: false,
         message: "userId is required when uploadToInstagram is true.",
+      });
+    }
+
+    if (shouldUploadFacebookStory && !resolvedUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "userId is required when uploadToFacebookStory is true.",
+      });
+    }
+
+    if (shouldUploadInstagramStory && !resolvedUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "userId is required when uploadToInstagramStory is true.",
       });
     }
 
@@ -461,6 +488,44 @@ async function generatePoster(req, res) {
       }
     }
 
+    let facebookStoryResult;
+    if (shouldUploadFacebookStory && resolvedUserId) {
+      try {
+        const posted = await postPosterStoryForUser({
+          userId: resolvedUserId,
+          imageUrl: uploadResult.imageUrl,
+        });
+        facebookStoryResult = {
+          success: true,
+          ...posted,
+        };
+      } catch (error) {
+        facebookStoryResult = {
+          success: false,
+          message: getErrorMessage(error),
+        };
+      }
+    }
+
+    let instagramStoryResult;
+    if (shouldUploadInstagramStory && resolvedUserId) {
+      try {
+        const posted = await postPosterStoryToInstagramForUser({
+          userId: resolvedUserId,
+          imageUrl: uploadResult.imageUrl,
+        });
+        instagramStoryResult = {
+          success: true,
+          ...posted,
+        };
+      } catch (error) {
+        instagramStoryResult = {
+          success: false,
+          message: getErrorMessage(error),
+        };
+      }
+    }
+
     // Gmail send disabled. To re-enable, call sendPosterEmail(...) here.
     // const emailResult = await sendPosterEmail({ toEmail: email, posterBuffer: posterResult.buffer, fileName: imageName });
 
@@ -475,6 +540,12 @@ async function generatePoster(req, res) {
     }
     if (shouldUploadInstagram && instagramResult?.success) {
       responseMessage = `${responseMessage.replace(/\.$/, "")} and posted to Instagram.`;
+    }
+    if (shouldUploadFacebookStory && facebookStoryResult?.success) {
+      responseMessage = `${responseMessage.replace(/\.$/, "")} and posted to Facebook Story.`;
+    }
+    if (shouldUploadInstagramStory && instagramStoryResult?.success) {
+      responseMessage = `${responseMessage.replace(/\.$/, "")} and posted to Instagram Story.`;
     }
 
     if (
@@ -497,6 +568,8 @@ async function generatePoster(req, res) {
       sendWhatsApp: shouldSendWhatsApp,
       uploadToFacebook: shouldUploadFacebook,
       uploadToInstagram: shouldUploadInstagram,
+      uploadToFacebookStory: shouldUploadFacebookStory,
+      uploadToInstagramStory: shouldUploadInstagramStory,
       imageName,
       fileName: imageName,
       imageUrl: uploadResult.imageUrl,
@@ -510,6 +583,8 @@ async function generatePoster(req, res) {
       whatsapp: whatsappResult,
       facebook: facebookResult,
       instagram: instagramResult,
+      facebookStory: facebookStoryResult,
+      instagramStory: instagramStoryResult,
     });
   } catch (error) {
     return res.status(500).json({
@@ -726,6 +801,16 @@ router.post(
       const shouldUploadInstagram = isTruthyParam(
         body.uploadToInstagram ?? body.postToInstagram ?? body.instagram,
       );
+      const shouldUploadFacebookStory = isTruthyParam(
+        body.uploadToFacebookStory ??
+          body.postToFacebookStory ??
+          body.facebookStory,
+      );
+      const shouldUploadInstagramStory = isTruthyParam(
+        body.uploadToInstagramStory ??
+          body.postToInstagramStory ??
+          body.instagramStory,
+      );
       const includeUserImage = !isFalsyParam(body.includeUserImage);
       const posterSources = resolvePosterSources(body);
       const language =
@@ -879,6 +964,7 @@ router.post(
             posterSource: userPosterSource,
             language,
             ...resolvedLayout,
+            showPhoneIcon: !isFalsyParam(body.showPhoneIcon),
             addWatermark: body.addWatermark,
             watermarkPosition: body.watermarkPosition,
           });
@@ -939,6 +1025,38 @@ router.post(
             }
           }
 
+          let facebookStoryResult;
+          if (shouldUploadFacebookStory) {
+            try {
+              const posted = await postPosterStoryForUser({
+                userId: String(userId),
+                imageUrl: uploadResult.imageUrl,
+              });
+              facebookStoryResult = { success: true, ...posted };
+            } catch (error) {
+              facebookStoryResult = {
+                success: false,
+                message: getErrorMessage(error),
+              };
+            }
+          }
+
+          let instagramStoryResult;
+          if (shouldUploadInstagramStory) {
+            try {
+              const posted = await postPosterStoryToInstagramForUser({
+                userId: String(userId),
+                imageUrl: uploadResult.imageUrl,
+              });
+              instagramStoryResult = { success: true, ...posted };
+            } catch (error) {
+              instagramStoryResult = {
+                success: false,
+                message: getErrorMessage(error),
+              };
+            }
+          }
+
           results.push({
             userId,
             name: user.name,
@@ -956,6 +1074,8 @@ router.post(
             aiModel: enhancement.aiModel || undefined,
             facebook: facebookResult,
             instagram: instagramResult,
+            facebookStory: facebookStoryResult,
+            instagramStory: instagramStoryResult,
           });
         } catch (error) {
           results.push({

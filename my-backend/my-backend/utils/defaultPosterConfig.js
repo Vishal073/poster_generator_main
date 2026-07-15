@@ -30,6 +30,8 @@ const DEFAULT_LAYOUT = {
 const DEFAULT_FACEBOOK = {
   uploadToFacebook: false,
   uploadToInstagram: false,
+  uploadToFacebookStory: false,
+  uploadToInstagramStory: false,
   sendWhatsApp: true,
   facebookCaption: "",
   instagramCaption: "",
@@ -41,6 +43,7 @@ function getDefaultPosterConfig() {
     layout: { ...DEFAULT_LAYOUT, lineGaps: [...DEFAULT_LAYOUT.lineGaps], textLineAlignments: [...DEFAULT_LAYOUT.textLineAlignments] },
     includeUserImage: true,
     addWatermark: true,
+    showPhoneIcon: true,
     watermarkPosition: "top-right",
     facebook: { ...DEFAULT_FACEBOOK },
   };

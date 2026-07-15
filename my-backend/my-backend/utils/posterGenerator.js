@@ -540,8 +540,8 @@ function drawUserPhoto(ctx, userImage, imageX, imageY, imageWidth, imageHeight, 
 
 const PHONE_ICON_LINE_INDEX = 2;
 
-function shouldShowPhoneIcon(lineIndex) {
-  return lineIndex === PHONE_ICON_LINE_INDEX;
+function shouldShowPhoneIcon(lineIndex, enabled = true) {
+  return Boolean(enabled) && lineIndex === PHONE_ICON_LINE_INDEX;
 }
 
 function getPhoneIconMetrics(fontSize) {
@@ -738,14 +738,23 @@ function normalizeTextLineStyles(entries, textLineStyles, defaults) {
   });
 }
 
-function getStyledMultilineLayout(ctx, entries, lineStyles, maxWidth, lineGap, lineGaps, paragraphGap) {
+function getStyledMultilineLayout(
+  ctx,
+  entries,
+  lineStyles,
+  maxWidth,
+  lineGap,
+  lineGaps,
+  paragraphGap,
+  phoneIconEnabled = true,
+) {
   const blocks = [];
   const minFontSize = 12;
   const normalizedLineGaps = normalizeLineGaps(lineGaps, paragraphGap);
 
   entries.forEach((entry, index) => {
     const style = lineStyles[index];
-    const showPhoneIcon = shouldShowPhoneIcon(entry.lineIndex);
+    const showPhoneIcon = shouldShowPhoneIcon(entry.lineIndex, phoneIconEnabled);
     const iconMetrics = showPhoneIcon ? getPhoneIconMetrics(style.fontSize) : null;
     const fitWidth = showPhoneIcon ? Math.max(40, maxWidth - iconMetrics.prefixWidth) : maxWidth;
     const fitted = fitSingleLineText(
@@ -792,8 +801,19 @@ function buildResolvedTextLayout(ctx, name, textLines, textLineStyles, maxWidth,
     fontColor,
   });
 
+  const phoneIconEnabled = options.showPhoneIcon !== false;
+
   if (resolvedStyles.length) {
-    return getStyledMultilineLayout(ctx, entries, resolvedStyles, maxWidth, lineGap, lineGaps, paragraphGap);
+    return getStyledMultilineLayout(
+      ctx,
+      entries,
+      resolvedStyles,
+      maxWidth,
+      lineGap,
+      lineGaps,
+      paragraphGap,
+      phoneIconEnabled,
+    );
   }
 
   const minFontSize = 16;
@@ -1284,6 +1304,7 @@ async function generatePosterImage({
   textBlockAlign = "left",
   textLineAlignments,
   language = "en",
+  showPhoneIcon = true,
   addWatermark = true,
   watermarkSource,
   watermarkWidth = 220,
@@ -1420,7 +1441,15 @@ async function generatePosterImage({
       textLines,
       textLineStyles,
       layout.textMaxWidth,
-      { fontSize, fontColor, fontFamily, lineGap, paragraphGap, lineGaps: normalizedLineGaps }
+      {
+        fontSize,
+        fontColor,
+        fontFamily,
+        lineGap,
+        paragraphGap,
+        lineGaps: normalizedLineGaps,
+        showPhoneIcon,
+      }
     );
     const textHeight = resolvedTextLayout.totalHeight;
     const textTop = layout.contentBottomY - textHeight;
@@ -1472,6 +1501,7 @@ async function generatePosterImage({
       lineGap,
       paragraphGap,
       lineGaps: normalizedLineGaps,
+      showPhoneIcon,
     });
   }
 

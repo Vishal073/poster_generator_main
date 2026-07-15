@@ -40,6 +40,8 @@ const facebookConfigSchema = new mongoose.Schema(
   {
     uploadToFacebook: { type: Boolean, default: false },
     uploadToInstagram: { type: Boolean, default: false },
+    uploadToFacebookStory: { type: Boolean, default: false },
+    uploadToInstagramStory: { type: Boolean, default: false },
     sendWhatsApp: { type: Boolean, default: true },
     facebookCaption: { type: String, default: "", trim: true },
     instagramCaption: { type: String, default: "", trim: true },
@@ -53,6 +55,7 @@ const posterConfigSchema = new mongoose.Schema(
     layout: { type: layoutSchema, default: undefined },
     includeUserImage: { type: Boolean, default: true },
     addWatermark: { type: Boolean, default: true },
+    showPhoneIcon: { type: Boolean, default: true },
     watermarkPosition: { type: String, default: "top-right" },
     facebook: { type: facebookConfigSchema, default: undefined },
   },
