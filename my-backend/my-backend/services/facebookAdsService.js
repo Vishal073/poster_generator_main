@@ -212,6 +212,8 @@ async function createPausedBuyNowCampaign({ adAccountId, accessToken, name }) {
           objective: "OUTCOME_TRAFFIC",
           status: "PAUSED",
           special_ad_categories: JSON.stringify([]),
+          // Required when budget is on ad sets (ABO), not campaign CBO.
+          is_adset_budget_sharing_enabled: false,
           access_token: accessToken,
         },
         timeout: 60000,
