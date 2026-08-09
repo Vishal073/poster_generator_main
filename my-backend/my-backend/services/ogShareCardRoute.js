@@ -23,32 +23,9 @@ OgShareCardSchema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 6
 const OgShareCard =
   mongoose.models.OgShareCard || mongoose.model("OgShareCard", OgShareCardSchema);
 
-/**
- * Facebook must scrape a public https host. Never use API_BASE_URL here —
- * local .env often sets that to http://localhost:5000 for OAuth, and Meta
- * cannot scrape localhost (blank preview image).
- */
+/** Always public — Facebook cannot scrape localhost. */
 function getPublicApiBase() {
-  const raw = (
-    process.env.OG_SHARE_PUBLIC_BASE ||
-    process.env.PUBLIC_OG_BASE_URL ||
-    DEFAULT_PUBLIC_API_BASE
-  )
-    .trim()
-    .replace(/\/$/, "");
-  try {
-    const parsed = new URL(raw);
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.hostname === "localhost" ||
-      parsed.hostname === "127.0.0.1"
-    ) {
-      return DEFAULT_PUBLIC_API_BASE;
-    }
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return DEFAULT_PUBLIC_API_BASE;
-  }
+  return "https://api.gcrgraphix.com";
 }
 
 function normalizeHttpUrl(value) {
