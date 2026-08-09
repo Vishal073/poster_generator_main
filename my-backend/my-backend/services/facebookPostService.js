@@ -202,16 +202,32 @@ async function postPosterForUser({
       };
     } catch (error) {
       const msg = String(error?.message || "");
-      const missingSetup =
-        /FACEBOOK_ADS_ACCESS_TOKEN|ads_management|Missing Permission|#200|#100/i.test(
-          msg,
-        ) || error?.facebook?.code === 200 || error?.facebook?.code === 100;
-      if (missingSetup) {
+      const tokenMissing =
+        !String(process.env.FACEBOOK_ADS_ACCESS_TOKEN || "").trim() &&
+        /FACEBOOK_ADS_ACCESS_TOKEN/i.test(msg);
+      if (tokenMissing) {
         const wrapped = new Error(
-          "Buy Now needs a Business system-user ads token. Set FACEBOOK_ADS_ACCESS_TOKEN + FACEBOOK_AD_ACCOUNT_ID in .env (ads scopes cannot be requested via normal Facebook Login on this app).",
+          "Buy Now needs FACEBOOK_ADS_ACCESS_TOKEN + FACEBOOK_AD_ACCOUNT_ID on the backend (Render env). Ads scopes cannot be requested via normal Facebook Login.",
         );
         wrapped.statusCode = 403;
         wrapped.cause = error;
+        throw wrapped;
+      }
+
+      // Surface real Meta permission errors (Page not assigned to system user, etc.)
+      if (
+        /Permissions error|required permission|not visible to you|access this profile/i.test(
+          msg,
+        ) ||
+        error?.facebook?.code === 200 ||
+        error?.facebook?.code === 10
+      ) {
+        const wrapped = new Error(
+          `Buy Now ads permission failed: ${msg}. In Business Manager, assign the System User to (1) the Ad Account (MANAGE/ADVERTISE) and (2) the Facebook Page (ADVERTISE + CREATE_CONTENT), then regenerate the token with ads_management.`,
+        );
+        wrapped.statusCode = 403;
+        wrapped.cause = error;
+        wrapped.facebook = error?.facebook || null;
         throw wrapped;
       }
       throw error;

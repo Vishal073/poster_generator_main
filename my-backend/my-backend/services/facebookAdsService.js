@@ -4,12 +4,20 @@ const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
 function getGraphErrorMessage(error) {
-  return (
-    error?.response?.data?.error?.message ||
-    error?.response?.data?.error?.error_user_msg ||
-    error?.message ||
-    String(error)
-  );
+  const fb = error?.response?.data?.error;
+  if (fb && typeof fb === "object") {
+    const parts = [
+      fb.error_user_msg,
+      fb.error_user_title,
+      fb.message,
+      fb.code != null ? `code ${fb.code}` : null,
+      fb.error_subcode != null ? `subcode ${fb.error_subcode}` : null,
+    ].filter(Boolean);
+    if (parts.length) {
+      return parts.join(" — ");
+    }
+  }
+  return error?.message || String(error);
 }
 
 function wrapAdsError(error, fallback) {
@@ -374,17 +382,38 @@ async function createBuyNowAdForPage({
     console.warn(
       "[facebook-ads] BUY_NOW creative failed, retrying SHOP_NOW:",
       getGraphErrorMessage(buyNowError),
+      buyNowError?.facebook || null,
     );
-    creative = await createBuyNowCreative({
-      adAccountId: accountId,
-      pageId,
-      imageHash,
-      imageUrl: poster,
-      message: String(message || "").trim() || "Shop now",
-      buyUrl: link,
-      accessToken,
-      ctaType: "SHOP_NOW",
-    });
+    try {
+      creative = await createBuyNowCreative({
+        adAccountId: accountId,
+        pageId,
+        imageHash,
+        imageUrl: poster,
+        message: String(message || "").trim() || "Shop now",
+        buyUrl: link,
+        accessToken,
+        ctaType: "SHOP_NOW",
+      });
+    } catch (shopNowError) {
+      console.error(
+        "[facebook-ads] SHOP_NOW creative also failed:",
+        getGraphErrorMessage(shopNowError),
+        {
+          pageId,
+          adAccountId: accountId,
+          tokenSource,
+          facebook: shopNowError?.facebook || null,
+        },
+      );
+      const wrapped = new Error(
+        `Buy Now creative Permissions error for Page ${pageId} on ${accountId}. Assign System User to this Page with ADVERTISE (+ CREATE_CONTENT) and to the Ad Account with ADVERTISE/MANAGE, then regenerate token. Meta: ${getGraphErrorMessage(shopNowError)}`,
+      );
+      wrapped.statusCode = 403;
+      wrapped.facebook = shopNowError?.facebook || buyNowError?.facebook || null;
+      wrapped.cause = shopNowError;
+      throw wrapped;
+    }
   }
 
   const campaignId = await createPausedBuyNowCampaign({
