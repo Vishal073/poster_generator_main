@@ -108,8 +108,7 @@ function buildSelectedPageSnapshot(page) {
 }
 
 /**
- * Append product URL to organic photo/video message (fallback only).
- * Prefer Marketing API Buy Now when ads permissions are available.
+ * Append product URL to organic photo/video message (free — no ads).
  */
 function buildPhotoMessage(caption = "", shareLink = "") {
   const message = typeof caption === "string" ? caption.trim() : "";
@@ -133,13 +132,18 @@ function buildPhotoMessage(caption = "", shareLink = "") {
 
   if (!message) return link;
   if (message.includes(link)) return message;
-  return `${message}\n\n${link}`;
+  return `${message}\n\nBuy now: ${link}`;
+}
+
+function isBuyNowAdsEnabled() {
+  const raw = process.env.FACEBOOK_BUY_NOW_ADS_ENABLED;
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 /**
  * Post a public image URL to the Facebook Page saved for this app user.
- * - No shareLink: organic /photos post
- * - With shareLink: Marketing API Buy Now ad (PAUSED) with BUY_NOW CTA
+ * Default (free): organic /photos with optional product link in caption.
+ * Optional paid CTA: set FACEBOOK_BUY_NOW_ADS_ENABLED=1 + ads token/account.
  */
 async function postPosterForUser({
   userId,
@@ -166,7 +170,7 @@ async function postPosterForUser({
   const link = typeof shareLink === "string" ? shareLink.trim() : "";
   const captionText = typeof caption === "string" ? caption.trim() : "";
 
-  if (link) {
+  if (link && isBuyNowAdsEnabled()) {
     try {
       const adResult = await createBuyNowAdForPage({
         userAccessToken: connection.userAccessToken || "",
@@ -207,14 +211,13 @@ async function postPosterForUser({
         /FACEBOOK_ADS_ACCESS_TOKEN/i.test(msg);
       if (tokenMissing) {
         const wrapped = new Error(
-          "Buy Now needs FACEBOOK_ADS_ACCESS_TOKEN + FACEBOOK_AD_ACCOUNT_ID on the backend (Render env). Ads scopes cannot be requested via normal Facebook Login.",
+          "Buy Now ads need FACEBOOK_ADS_ACCESS_TOKEN + FACEBOOK_AD_ACCOUNT_ID (only when FACEBOOK_BUY_NOW_ADS_ENABLED=1).",
         );
         wrapped.statusCode = 403;
         wrapped.cause = error;
         throw wrapped;
       }
 
-      // Surface real Meta permission errors (Page not assigned to system user, etc.)
       if (
         /Permissions error|required permission|not visible to you|access this profile/i.test(
           msg,
@@ -223,7 +226,7 @@ async function postPosterForUser({
         error?.facebook?.code === 10
       ) {
         const wrapped = new Error(
-          `Buy Now ads permission failed: ${msg}. In Business Manager, assign the System User to (1) the Ad Account (MANAGE/ADVERTISE) and (2) the Facebook Page (ADVERTISE + CREATE_CONTENT), then regenerate the token with ads_management.`,
+          `Buy Now ads permission failed: ${msg}. Or turn off FACEBOOK_BUY_NOW_ADS_ENABLED for free organic posts with the link in caption.`,
         );
         wrapped.statusCode = 403;
         wrapped.cause = error;
@@ -234,10 +237,11 @@ async function postPosterForUser({
     }
   }
 
-  const message = buildPhotoMessage(captionText, "");
+  const message = buildPhotoMessage(captionText, link);
   console.log("[facebook] photo caption built", {
     userId: String(userId),
-    hasShareLink: false,
+    hasShareLink: Boolean(link),
+    freeOrganic: true,
     captionLength: message.length,
     captionPreview: message.slice(0, 200),
   });
@@ -255,8 +259,11 @@ async function postPosterForUser({
     pageName,
     postId: result.postId,
     caption: message || null,
-    shareLink: null,
+    shareLink: link || null,
     format: result.format || "photo",
+    message: link
+      ? "Posted free organic photo with Buy Now link in caption (no ads / no spend)."
+      : undefined,
   };
 }
 
