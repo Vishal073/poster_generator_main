@@ -18,6 +18,7 @@ const { router: shareImageRoute } = require("./services/shareImageRoute");
 const { router: eventPosterRoute } = require("./services/eventPosterRoute");
 const { router: reelsRoute } = require("./services/reelsRoute");
 const { router: musicRoute } = require("./services/musicRoute");
+const { router: ogShareCardRoute } = require("./services/ogShareCardRoute");
 const FacebookConnection = require("./models/FacebookConnection");
 
 const app = express();
@@ -104,6 +105,7 @@ app.use(shareImageRoute);
 app.use(eventPosterRoute);
 app.use(reelsRoute);
 app.use(musicRoute);
+app.use(ogShareCardRoute);
 app.use(whatsappFlowRoute);
 app.use(facebookRoutes);
 

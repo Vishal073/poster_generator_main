@@ -1018,6 +1018,8 @@ async function postLinkCardToPage({
   pageAccessToken,
   link,
   message = "",
+  name = "",
+  description = "",
   imageUrl = "",
   ctaType = "SHOP_NOW",
 }) {
@@ -1048,6 +1050,9 @@ async function postLinkCardToPage({
   }
 
   const caption = typeof message === "string" ? message.trim() : "";
+  const linkName = typeof name === "string" ? name.trim() : "";
+  const linkDescription =
+    typeof description === "string" ? description.trim() : "";
   const picture = String(imageUrl || "").trim();
 
   async function postOnce(withCta) {
@@ -1056,7 +1061,13 @@ async function postLinkCardToPage({
     if (caption) {
       form.set("message", caption);
     }
-    // Soft override for preview image when destination OG tags are weak.
+    if (linkName) {
+      form.set("name", linkName);
+    }
+    if (linkDescription) {
+      form.set("description", linkDescription);
+    }
+    // Soft override; OG scrape of link usually wins (we point link at our OG card).
     if (picture && /^https?:\/\//i.test(picture)) {
       form.set("picture", picture);
     }
@@ -1077,6 +1088,7 @@ async function postLinkCardToPage({
       ctaType: withCta ? ctaType : null,
       link: finalLink.slice(0, 160),
       hasPicture: Boolean(picture),
+      hasName: Boolean(linkName),
       captionLength: caption.length,
     });
 

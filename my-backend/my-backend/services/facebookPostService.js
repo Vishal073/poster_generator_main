@@ -3,6 +3,7 @@ const FacebookConnection = require("../models/FacebookConnection");
 const FacebookOAuthState = require("../models/FacebookOAuthState");
 const {
   postImageToPage,
+  postLinkCardToPage,
   postPhotoStoryToPage,
   postImageToInstagram,
   postImageStoryToInstagram,
@@ -17,6 +18,7 @@ const {
   deleteInstagramMedia,
 } = require("./facebookService");
 const { createBuyNowAdForPage } = require("./facebookAdsService");
+const { buildOgShareCardUrl } = require("./ogShareCardRoute");
 
 function isValidObjectId(value) {
   if (typeof value !== "string" || !mongoose.Types.ObjectId.isValid(value)) {
@@ -256,16 +258,61 @@ async function postPosterForUser({
   }
 
   if (link) {
-    // Poster must show: use photo post + tappable product URL in caption.
-    // Organic /feed?link= cards usually scrape the shop URL's OG image, not our poster.
-    const message = buildPhotoMessage(captionText, link);
-    console.log("[facebook] photo + product link (free organic)", {
-      userId: String(userId),
-      hasShareLink: true,
-      captionLength: message.length,
-      captionPreview: message.slice(0, 200),
+    const cardTitle =
+      captionText.split("\n").map((line) => line.trim()).find(Boolean) ||
+      "Shop now";
+    const ogCardUrl = buildOgShareCardUrl({
+      destinationUrl: link,
+      imageUrl: imageUrl.trim(),
+      title: cardTitle,
+      description: captionText || "Tap Shop now to continue.",
     });
 
+    if (ogCardUrl) {
+      try {
+        const linkResult = await postLinkCardToPage({
+          pageId,
+          pageAccessToken,
+          link: ogCardUrl,
+          message: captionText,
+          name: cardTitle,
+          description: "Tap Shop now",
+          imageUrl: imageUrl.trim(),
+          ctaType: "SHOP_NOW",
+        });
+
+        console.log("[facebook] Amazon-style Shop now link card posted", {
+          userId: String(userId),
+          postId: linkResult.postId,
+          format: linkResult.format,
+          ogCardUrl: ogCardUrl.slice(0, 120),
+          shopLink: link,
+        });
+
+        return {
+          userId: String(connection.userId),
+          pageId,
+          pageName,
+          postId: linkResult.postId,
+          caption: captionText || null,
+          shareLink: link,
+          format: linkResult.format,
+          message:
+            "Posted free Amazon-style link card with your poster + Shop now (tap opens your product URL). No Ads Manager / no spend.",
+        };
+      } catch (linkError) {
+        console.warn(
+          "[facebook] Shop now link card failed, falling back to photo + caption:",
+          linkError?.message || linkError,
+        );
+      }
+    } else {
+      console.warn(
+        "[facebook] OG share card URL unavailable (set API_BASE_URL). Falling back to photo + caption link.",
+      );
+    }
+
+    const message = buildPhotoMessage(captionText, link);
     const result = await postImageToPage({
       pageId,
       pageAccessToken,
@@ -282,7 +329,7 @@ async function postPosterForUser({
       shareLink: link,
       format: result.format || "photo_with_message",
       message:
-        "Posted free organic photo with your poster image + Buy Now link in caption (tap the link). No Ads Manager / no spend.",
+        "Posted free organic photo with poster + Buy Now link in caption. No ads spend.",
     };
   }
 
