@@ -1,0 +1,14 @@
+{
+  "id": "medical",
+  "name": "Medical",
+  "description": "Clean and calm informational reels with minimal movement.",
+  "animationPool": ["zoom_in", "ken_burns", "pan_right", "slide_down"],
+  "transitionPool": ["fade", "cross_dissolve"],
+  "musicPool": ["calm_corporate_1", "clean_soft_1"],
+  "voicePool": ["female_hindi_neutral", "male_hindi_informative"],
+  "rules": {
+    "pace": "slow",
+    "maxAggressiveTransitions": 0,
+    "avoidBackToBackSameAnimation": true
+  }
+}

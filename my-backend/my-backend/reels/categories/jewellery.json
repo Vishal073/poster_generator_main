@@ -1,0 +1,20 @@
+{
+  "id": "jewellery",
+  "name": "Jewellery",
+  "description": "Luxury reels with elegant motion and softer transitions.",
+  "animationPool": [
+    "zoom_in",
+    "zoom_out",
+    "ken_burns",
+    "pan_right",
+    "slide_down"
+  ],
+  "transitionPool": ["fade", "cross_dissolve", "blur"],
+  "musicPool": ["luxury_1", "soft_gold_1"],
+  "voicePool": ["female_hindi_premium", "male_hindi_premium"],
+  "rules": {
+    "pace": "slow",
+    "maxAggressiveTransitions": 0,
+    "avoidBackToBackSameAnimation": true
+  }
+}

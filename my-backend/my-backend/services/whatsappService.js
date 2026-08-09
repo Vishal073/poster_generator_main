@@ -104,6 +104,32 @@ async function waitForTwilioMessageReady(messageSid, options = {}) {
   return null;
 }
 
+async function sendReelWhatsApp({ toMobile, videoUrl, body }) {
+  if (!videoUrl || typeof videoUrl !== "string") {
+    throw new Error("A public video URL is required for WhatsApp delivery.");
+  }
+
+  const { client, from } = getTwilioClient();
+  const payload = {
+    from,
+    to: formatWhatsAppNumber(toMobile),
+    mediaUrl: [videoUrl],
+  };
+
+  if (body && typeof body === "string") {
+    payload.body = body;
+  }
+
+  const message = await client.messages.create(payload);
+
+  return {
+    sid: message.sid,
+    status: message.status,
+    to: message.to,
+    from: message.from,
+  };
+}
+
 async function sendPosterWhatsApp({ toMobile, imageUrl, body }) {
   if (!imageUrl || typeof imageUrl !== "string") {
     throw new Error("A public image URL is required for WhatsApp delivery.");
@@ -192,6 +218,7 @@ module.exports = {
   formatWhatsAppNumber,
   sendWhatsAppContentTemplate,
   sendPosterWhatsApp,
+  sendReelWhatsApp,
   sendWhatsAppText,
   waitForTwilioMessageReady,
 };

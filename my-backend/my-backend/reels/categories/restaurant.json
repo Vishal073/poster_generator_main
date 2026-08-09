@@ -1,0 +1,27 @@
+{
+  "id": "restaurant",
+  "name": "Restaurant",
+  "description": "Fast and energetic food reels with stronger transitions.",
+  "animationPool": [
+    "pan_left",
+    "pan_right",
+    "zoom_in",
+    "slide_up",
+    "slide_down",
+    "ken_burns"
+  ],
+  "transitionPool": [
+    "fade",
+    "slide_left",
+    "slide_right",
+    "push",
+    "cross_dissolve"
+  ],
+  "musicPool": ["food_energetic_1", "food_energetic_2"],
+  "voicePool": ["female_hinglish_fast", "male_hindi_offer"],
+  "rules": {
+    "pace": "fast",
+    "maxAggressiveTransitions": 2,
+    "avoidBackToBackSameAnimation": true
+  }
+}

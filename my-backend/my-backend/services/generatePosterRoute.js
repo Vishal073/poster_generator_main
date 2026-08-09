@@ -21,8 +21,17 @@ const {
   postPosterToInstagramForUser,
   postPosterStoryForUser,
   postPosterStoryToInstagramForUser,
+  postReelForUser,
+  postReelToInstagramForUser,
   getUserSocialApproveEligibility,
 } = require("./facebookPostService");
+const { queueReadyReelForDownload } = require("./whatsappReelDelivery");
+const {
+  uploadImageWithAudioVideo,
+  downloadAudioFromUrl,
+  prepareAudioBuffer,
+  isAudioUpload,
+} = require("./imageAudioVideoService");
 const {
   savePosterConfigFromGenerateBody,
 } = require("../utils/posterConfigService");
@@ -34,6 +43,67 @@ const {
 // const { sendPosterEmail } = require("./emailService"); // Gmail sending is disabled.
 
 const router = express.Router();
+
+const optionalPosterAudioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname !== "audio" && file.fieldname !== "song") {
+      return cb(new Error("Unexpected file field for generate-poster."));
+    }
+    if (!isAudioUpload(file)) {
+      return cb(new Error("Only audio files are allowed for song/audio."));
+    }
+    cb(null, true);
+  },
+}).fields([
+  { name: "audio", maxCount: 1 },
+  { name: "song", maxCount: 1 },
+]);
+
+function parseGeneratePosterRequest(req, res, next) {
+  const contentType = String(req.headers["content-type"] || "");
+  if (!contentType.includes("multipart/form-data")) {
+    return next();
+  }
+
+  return optionalPosterAudioUpload(req, res, (error) => {
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        message: error instanceof Error ? error.message : "Invalid audio upload.",
+      });
+    }
+
+    try {
+      if (typeof req.body?.payload === "string" && req.body.payload.trim()) {
+        const parsed = JSON.parse(req.body.payload);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("payload must be a JSON object.");
+        }
+        req.body = parsed;
+      }
+
+      const audioFile =
+        (Array.isArray(req.files?.audio) && req.files.audio[0]) ||
+        (Array.isArray(req.files?.song) && req.files.song[0]) ||
+        null;
+      req.audioFile = audioFile;
+      return next();
+    } catch (parseError) {
+      return res.status(400).json({
+        success: false,
+        message:
+          parseError instanceof Error
+            ? parseError.message
+            : "Invalid payload JSON for generate-poster.",
+      });
+    }
+  });
+}
+
 
 // Hard cap on how many users can be processed per bulk request. Each poster
 // is ~3-6 seconds of CPU + Cloudinary upload; Render's free tier kills HTTP
@@ -86,11 +156,16 @@ const basePosterUpload = multer({
 });
 
 function getErrorMessage(error) {
-  if (error instanceof Error) {
+  if (error instanceof Error && error.message) {
     return error.message;
   }
-  if (error && typeof error === "object" && typeof error.message === "string") {
-    return error.message;
+  if (error && typeof error === "object") {
+    if (typeof error.message === "string" && error.message.trim()) {
+      return error.message;
+    }
+    if (error.error && typeof error.error.message === "string") {
+      return error.error.message;
+    }
   }
   if (typeof error === "string") {
     return error;
@@ -107,7 +182,8 @@ function getPosterFileName({ mobileValue, email, fallbackName }) {
           .trim()
           .replace(/\.png$/i, "");
 
-  return `${normalizedIdentifier || `poster-${Date.now()}`}.png`;
+  // Unique public_id each run so we never overwrite with a bad/test image.
+  return `${normalizedIdentifier || "poster"}-${Date.now()}.png`;
 }
 
 function isTruthyParam(value) {
@@ -335,15 +411,85 @@ async function generatePoster(req, res) {
       fallbackName: posterResult.fileName,
     });
     let uploadResult;
+    let uploadedBuffer = enhancement.buffer;
     try {
       uploadResult = await uploadPosterToCloudinary(enhancement.buffer, imageName);
     } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: "Poster generated, but Cloudinary upload failed.",
-        imageName,
-        error: getErrorMessage(error),
-      });
+      // AI-enhanced PNGs can be huge and time out; fall back to the original poster.
+      const canFallback =
+        enhancement.buffer !== posterResult.buffer &&
+        Buffer.isBuffer(posterResult.buffer);
+      if (!canFallback) {
+        return res.status(500).json({
+          success: false,
+          message: "Poster generated, but Cloudinary upload failed.",
+          imageName,
+          error: getErrorMessage(error),
+        });
+      }
+
+      console.warn(
+        "[generate-poster] Cloudinary upload timed out/failed for enhanced poster; retrying original buffer:",
+        getErrorMessage(error),
+      );
+      try {
+        uploadResult = await uploadPosterToCloudinary(
+          posterResult.buffer,
+          imageName,
+        );
+        uploadedBuffer = posterResult.buffer;
+      } catch (fallbackError) {
+        return res.status(500).json({
+          success: false,
+          message: "Poster generated, but Cloudinary upload failed.",
+          imageName,
+          error: getErrorMessage(fallbackError),
+        });
+      }
+    }
+
+    let videoUrl = null;
+    const audioFile = req.audioFile || null;
+    const audioUrlField =
+      typeof body.audioUrl === "string" && body.audioUrl.trim()
+        ? body.audioUrl.trim()
+        : typeof body.songUrl === "string" && body.songUrl.trim()
+          ? body.songUrl.trim()
+          : "";
+
+    if (audioFile?.buffer || audioUrlField) {
+      try {
+        let audioBuffer;
+        let audioFileName;
+        if (audioFile?.buffer) {
+          audioBuffer = audioFile.buffer;
+          audioFileName = audioFile.originalname;
+        } else {
+          const downloaded = await downloadAudioFromUrl(audioUrlField);
+          audioBuffer = downloaded.buffer;
+          audioFileName = downloaded.fileName;
+        }
+
+        const prepared = await prepareAudioBuffer(audioBuffer, audioFileName);
+        const videoUpload = await uploadImageWithAudioVideo({
+          imageBuffer: uploadedBuffer,
+          audioBuffer: prepared.buffer,
+          imageFileName: imageName,
+          audioFileName: prepared.fileName,
+          folder: process.env.CLOUDINARY_POSTER_AUDIO_FOLDER || "poster-with-audio",
+          publicFileName: `poster-audio-${Date.now()}.mp4`,
+          audioAlreadyPrepared: true,
+        });
+        videoUrl = videoUpload.videoUrl;
+      } catch (error) {
+        return res.status(502).json({
+          success: false,
+          message: "Poster generated, but attaching song failed.",
+          imageName,
+          imageUrl: uploadResult.imageUrl,
+          error: getErrorMessage(error),
+        });
+      }
     }
 
     const resolvedUserId =
@@ -366,20 +512,34 @@ async function generatePoster(req, res) {
             : typeof body.caption === "string"
               ? body.caption
               : "";
-        whatsappResult = await queueReadyPosterForDownload({
-          toMobile: mobileValue,
-          name: waUser?.name || name || username || "Customer",
-          mobile: mobileValue,
-          posterResult: {
-            imageName,
-            imageUrl: uploadResult.imageUrl,
-            cloudinaryPublicId: uploadResult.publicId,
-          },
-          userId: resolvedUserId || undefined,
-          caption: posterCaption,
-          canApproveSocial: socialEligibility.canApprove,
-          lastInboundAt: waUser?.whatsappLastInboundAt || null,
-        });
+        if (videoUrl) {
+          whatsappResult = await queueReadyReelForDownload({
+            toMobile: mobileValue,
+            name: waUser?.name || name || username || "Customer",
+            mobile: mobileValue,
+            reelResult: {
+              videoUrl,
+              message: posterCaption || "Here is your poster",
+            },
+            lastInboundAt: waUser?.whatsappLastInboundAt || null,
+            message: posterCaption || "Here is your poster",
+          });
+        } else {
+          whatsappResult = await queueReadyPosterForDownload({
+            toMobile: mobileValue,
+            name: waUser?.name || name || username || "Customer",
+            mobile: mobileValue,
+            posterResult: {
+              imageName,
+              imageUrl: uploadResult.imageUrl,
+              cloudinaryPublicId: uploadResult.publicId,
+            },
+            userId: resolvedUserId || undefined,
+            caption: posterCaption,
+            canApproveSocial: socialEligibility.canApprove,
+            lastInboundAt: waUser?.whatsappLastInboundAt || null,
+          });
+        }
       } catch (error) {
         return res.status(502).json({
           success: false,
@@ -436,19 +596,65 @@ async function generatePoster(req, res) {
       });
     }
 
+    const feedCaption =
+      typeof body.facebookCaption === "string"
+        ? body.facebookCaption
+        : typeof body.caption === "string"
+          ? body.caption
+          : "";
+
+    const shareLinkRaw =
+      typeof body.shareLink === "string"
+        ? body.shareLink
+        : typeof body.shopUrl === "string"
+          ? body.shopUrl
+          : typeof body.link === "string"
+            ? body.link
+            : typeof body.websiteUrl === "string"
+              ? body.websiteUrl
+              : "";
+    const shareLink = String(shareLinkRaw || "").trim();
+    console.log("[generate-poster] facebook share fields", {
+      hasFacebookCaption: Boolean(String(feedCaption || "").trim()),
+      shareLinkRawType: typeof body.shareLink,
+      shopUrlType: typeof body.shopUrl,
+      shareLinkPresent: Boolean(shareLink),
+      shareLinkPreview: shareLink.slice(0, 80),
+      bodyKeys: Object.keys(body || {}).slice(0, 40),
+    });
+    if (shareLink) {
+      try {
+        const parsed = new URL(shareLink);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          return res.status(400).json({
+            success: false,
+            message: "shareLink must be a valid http(s) URL.",
+          });
+        }
+      } catch {
+        return res.status(400).json({
+          success: false,
+          message: "shareLink must be a valid http(s) URL.",
+        });
+      }
+    }
+
     let facebookResult;
     if (shouldUploadFacebook && resolvedUserId) {
       try {
-        const posted = await postPosterForUser({
-          userId: resolvedUserId,
-          imageUrl: uploadResult.imageUrl,
-          caption:
-            typeof body.facebookCaption === "string"
-              ? body.facebookCaption
-              : typeof body.caption === "string"
-                ? body.caption
-                : "",
-        });
+        const posted = videoUrl
+          ? await postReelForUser({
+              userId: resolvedUserId,
+              videoUrl,
+              caption: feedCaption,
+              shareLink,
+            })
+          : await postPosterForUser({
+              userId: resolvedUserId,
+              imageUrl: uploadResult.imageUrl,
+              caption: feedCaption,
+              shareLink,
+            });
         facebookResult = {
           success: true,
           ...posted,
@@ -461,21 +667,29 @@ async function generatePoster(req, res) {
       }
     }
 
+    const instagramCaption =
+      typeof body.instagramCaption === "string"
+        ? body.instagramCaption
+        : typeof body.facebookCaption === "string"
+          ? body.facebookCaption
+          : typeof body.caption === "string"
+            ? body.caption
+            : "";
+
     let instagramResult;
     if (shouldUploadInstagram && resolvedUserId) {
       try {
-        const posted = await postPosterToInstagramForUser({
-          userId: resolvedUserId,
-          imageUrl: uploadResult.imageUrl,
-          caption:
-            typeof body.instagramCaption === "string"
-              ? body.instagramCaption
-              : typeof body.facebookCaption === "string"
-                ? body.facebookCaption
-                : typeof body.caption === "string"
-                  ? body.caption
-                  : "",
-        });
+        const posted = videoUrl
+          ? await postReelToInstagramForUser({
+              userId: resolvedUserId,
+              videoUrl,
+              caption: instagramCaption,
+            })
+          : await postPosterToInstagramForUser({
+              userId: resolvedUserId,
+              imageUrl: uploadResult.imageUrl,
+              caption: instagramCaption,
+            });
         instagramResult = {
           success: true,
           ...posted,
@@ -573,6 +787,8 @@ async function generatePoster(req, res) {
       imageName,
       fileName: imageName,
       imageUrl: uploadResult.imageUrl,
+      videoUrl: videoUrl || undefined,
+      hasAudio: Boolean(videoUrl),
       cloudinaryPublicId: uploadResult.publicId,
       enhancePriority: enhancement.enhancePriority,
       enhanceApplied: enhancement.enhanceApplied,
@@ -595,7 +811,7 @@ async function generatePoster(req, res) {
   }
 }
 
-router.post("/generate-poster", generatePoster);
+router.post("/generate-poster", parseGeneratePosterRequest, generatePoster);
 
 router.get("/base-posters", async (req, res) => {
   try {
@@ -787,6 +1003,7 @@ router.post(
   "/generate-posters/bulk",
   requireAuth,
   requireDb,
+  parseGeneratePosterRequest,
   async (req, res) => {
     try {
       const body =
@@ -872,6 +1089,42 @@ router.post(
         body.textLineStyles,
         BULK_DEFAULT_TEXT_STYLES
       );
+
+      let sharedAudioBuffer = null;
+      let sharedAudioFileName = "bulk-audio.mp3";
+      const bulkAudioFile = req.audioFile || null;
+      const bulkAudioUrl =
+        typeof body.audioUrl === "string" && body.audioUrl.trim()
+          ? body.audioUrl.trim()
+          : typeof body.songUrl === "string" && body.songUrl.trim()
+            ? body.songUrl.trim()
+            : "";
+
+      let sharedAudioPrepared = false;
+      if (bulkAudioFile?.buffer || bulkAudioUrl) {
+        try {
+          let rawBuffer;
+          let rawName = sharedAudioFileName;
+          if (bulkAudioFile?.buffer) {
+            rawBuffer = bulkAudioFile.buffer;
+            rawName = bulkAudioFile.originalname || rawName;
+          } else {
+            const downloaded = await downloadAudioFromUrl(bulkAudioUrl);
+            rawBuffer = downloaded.buffer;
+            rawName = downloaded.fileName || rawName;
+          }
+          const prepared = await prepareAudioBuffer(rawBuffer, rawName);
+          sharedAudioBuffer = prepared.buffer;
+          sharedAudioFileName = prepared.fileName;
+          sharedAudioPrepared = true;
+        } catch (error) {
+          return res.status(502).json({
+            success: false,
+            message: "Failed to prepare song for bulk posters.",
+            error: getErrorMessage(error),
+          });
+        }
+      }
 
       if (posterSources.length === 0) {
         return res.status(400).json({
@@ -985,15 +1238,69 @@ router.post(
             imageName
           );
 
+          let videoUrl = null;
+          if (sharedAudioBuffer) {
+            try {
+              const videoUpload = await uploadImageWithAudioVideo({
+                imageBuffer: enhancement.buffer,
+                audioBuffer: sharedAudioBuffer,
+                imageFileName: imageName,
+                audioFileName: sharedAudioFileName,
+                folder:
+                  process.env.CLOUDINARY_POSTER_AUDIO_FOLDER ||
+                  "poster-with-audio",
+                publicFileName: `bulk-audio-${userId}-${Date.now()}.mp4`,
+                audioAlreadyPrepared: sharedAudioPrepared,
+              });
+              videoUrl = videoUpload.videoUrl;
+            } catch (error) {
+              results.push({
+                userId,
+                name: user.name,
+                mobile: user.mobileNumber,
+                status: "error",
+                message: `Poster generated, but attaching song failed: ${getErrorMessage(error)}`,
+                imageUrl: uploadResult.imageUrl,
+                cloudinaryPublicId: uploadResult.publicId,
+              });
+              continue;
+            }
+          }
+
+          const feedCaption =
+            typeof body.facebookCaption === "string" ? body.facebookCaption : "";
+          const shareLinkRaw =
+            typeof body.shareLink === "string"
+              ? body.shareLink
+              : typeof body.shopUrl === "string"
+                ? body.shopUrl
+                : typeof body.link === "string"
+                  ? body.link
+                  : typeof body.websiteUrl === "string"
+                    ? body.websiteUrl
+                    : "";
+          const shareLink = String(shareLinkRaw || "").trim();
+          const instagramCaption =
+            typeof body.instagramCaption === "string"
+              ? body.instagramCaption
+              : feedCaption;
+
           let facebookResult;
           if (shouldUploadFacebook) {
             try {
-              const posted = await postPosterForUser({
-                userId: String(userId),
-                imageUrl: uploadResult.imageUrl,
-                caption:
-                  typeof body.facebookCaption === "string" ? body.facebookCaption : "",
-              });
+              const posted = videoUrl
+                ? await postReelForUser({
+                    userId: String(userId),
+                    videoUrl,
+                    caption: feedCaption,
+                    shareLink,
+                  })
+                : await postPosterForUser({
+                    userId: String(userId),
+                    imageUrl: uploadResult.imageUrl,
+                    caption: feedCaption,
+                    shareLink,
+                  });
               facebookResult = { success: true, ...posted };
             } catch (error) {
               facebookResult = {
@@ -1006,16 +1313,17 @@ router.post(
           let instagramResult;
           if (shouldUploadInstagram) {
             try {
-              const posted = await postPosterToInstagramForUser({
-                userId: String(userId),
-                imageUrl: uploadResult.imageUrl,
-                caption:
-                  typeof body.instagramCaption === "string"
-                    ? body.instagramCaption
-                    : typeof body.facebookCaption === "string"
-                      ? body.facebookCaption
-                      : "",
-              });
+              const posted = videoUrl
+                ? await postReelToInstagramForUser({
+                    userId: String(userId),
+                    videoUrl,
+                    caption: instagramCaption,
+                  })
+                : await postPosterToInstagramForUser({
+                    userId: String(userId),
+                    imageUrl: uploadResult.imageUrl,
+                    caption: instagramCaption,
+                  });
               instagramResult = { success: true, ...posted };
             } catch (error) {
               instagramResult = {
@@ -1064,6 +1372,8 @@ router.post(
             status: "success",
             posterSource: userPosterSource,
             imageUrl: uploadResult.imageUrl,
+            videoUrl: videoUrl || undefined,
+            hasAudio: Boolean(videoUrl),
             cloudinaryPublicId: uploadResult.publicId,
             imageName,
             enhancePriority: enhancement.enhancePriority,

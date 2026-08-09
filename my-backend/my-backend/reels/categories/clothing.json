@@ -1,0 +1,31 @@
+{
+  "id": "clothing",
+  "name": "Clothing",
+  "description": "Festive sale and fashion reels with energetic but smooth movement.",
+  "animationPool": [
+    "zoom_in",
+    "zoom_out",
+    "pan_left",
+    "pan_right",
+    "ken_burns",
+    "slide_up"
+  ],
+  "transitionPool": [
+    "fade",
+    "cross_dissolve",
+    "slide_left",
+    "slide_right",
+    "push"
+  ],
+  "musicPool": [
+    "https://res.cloudinary.com/di5yny8zy/video/upload/v1783418315/prettyjohn1-fashion-507165_qaojtr.mp3"
+  ],
+  "voicePool": [
+    "https://res.cloudinary.com/di5yny8zy/video/upload/v1783446615/ElevenLabs_2026-07-07T17_04_38_Monika_Sogam_-_Deep_and_Clear_pvc_sp95_s60_sb50_se0_b_m2_a5jrlv.mp3"
+  ],
+  "rules": {
+    "pace": "medium-fast",
+    "maxAggressiveTransitions": 1,
+    "avoidBackToBackSameAnimation": true
+  }
+}

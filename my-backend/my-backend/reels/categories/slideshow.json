@@ -1,0 +1,27 @@
+{
+  "id": "slideshow",
+  "name": "Soft Slideshow",
+  "description": "Calm catalogue-style slides with soft dissolves and gentle motion.",
+  "animationPool": [
+    "ken_burns",
+    "pan_left",
+    "pan_right",
+    "zoom_in",
+    "zoom_out"
+  ],
+  "transitionPool": [
+    "fade",
+    "cross_dissolve"
+  ],
+  "musicPool": [
+    "https://res.cloudinary.com/di5yny8zy/video/upload/v1783418315/prettyjohn1-fashion-507165_qaojtr.mp3"
+  ],
+  "voicePool": [
+    "https://res.cloudinary.com/di5yny8zy/video/upload/v1783446615/ElevenLabs_2026-07-07T17_04_38_Monika_Sogam_-_Deep_and_Clear_pvc_sp95_s60_sb50_se0_b_m2_a5jrlv.mp3"
+  ],
+  "rules": {
+    "pace": "slow",
+    "maxAggressiveTransitions": 0,
+    "avoidBackToBackSameAnimation": true
+  }
+}

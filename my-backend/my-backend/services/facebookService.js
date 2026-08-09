@@ -8,7 +8,6 @@ const {
   summarizePages,
   summarizeGranularScopes,
 } = require("./facebookDebugLog");
-
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
@@ -21,6 +20,19 @@ const FACEBOOK_SCOPES = (
 ).trim();
 
 const FACEBOOK_INSTAGRAM_SCOPES = ["instagram_basic", "instagram_content_publish"];
+
+// These are Marketing API scopes — invalid on standard Facebook Login dialog.
+const FACEBOOK_ADS_SCOPES = ["ads_management", "ads_read"];
+
+/**
+ * Meta now rejects legacy instagram_basic / instagram_content_publish on many apps
+ * ("Invalid Scopes"). Keep Instagram OAuth off unless explicitly re-enabled after
+ * migrating to supported Instagram Login / Business scopes.
+ */
+function isInstagramOAuthScopesEnabled() {
+  const raw = process.env.FACEBOOK_ALLOW_INSTAGRAM_OAUTH_SCOPES;
+  return raw === "1" || raw === "true" || raw === "yes";
+}
 
 function isScopeBasedOAuthForced() {
   const raw = process.env.FACEBOOK_OAUTH_FORCE_SCOPES;
@@ -85,9 +97,16 @@ function buildOAuthScopes(includeInstagram = false) {
   const baseScopes = FACEBOOK_SCOPES.split(",")
     .map((scope) => scope.trim())
     .filter(Boolean)
-    .filter((scope) => !FACEBOOK_INSTAGRAM_SCOPES.includes(scope));
+    .filter((scope) => !FACEBOOK_INSTAGRAM_SCOPES.includes(scope))
+    .filter((scope) => !FACEBOOK_ADS_SCOPES.includes(scope));
 
-  if (!includeInstagram) {
+  if (!includeInstagram || !isInstagramOAuthScopesEnabled()) {
+    if (includeInstagram && !isInstagramOAuthScopesEnabled()) {
+      logFbWarn("oauth.instagram_scopes_skipped", {
+        reason:
+          "Legacy instagram_basic/instagram_content_publish are Invalid Scopes on this app. Set FACEBOOK_ALLOW_INSTAGRAM_OAUTH_SCOPES=1 only after Meta accepts them.",
+      });
+    }
     return baseScopes.join(",");
   }
 
@@ -858,26 +877,111 @@ async function fetchUserPages(userAccessToken) {
 }
 
 /**
- * Post an image to a Facebook Page feed using the Page access token.
+ * Post an image to a Facebook Page as an organic photo.
+ *
+ * - No caption: direct POST /photos (published).
+ * - With caption/link: upload unpublished photo, then POST /feed with
+ *   message + attached_media so the text (including product URL) actually
+ *   shows on the Page post. Never use /feed?link= (that becomes a link card).
  */
-async function postImageToPage({ pageId, pageAccessToken, imageUrl, caption }) {
+async function postImageToPage({
+  pageId,
+  pageAccessToken,
+  imageUrl,
+  caption,
+}) {
+  const message = typeof caption === "string" ? caption.trim() : "";
+  const photoUrl = String(imageUrl || "").trim();
+
   try {
-    const response = await axios.post(
-      `${GRAPH_BASE_URL}/${pageId}/photos`,
-      null,
-      {
-        params: {
-          url: imageUrl,
-          caption: caption || "",
-          access_token: pageAccessToken,
+    if (!message) {
+      const form = new URLSearchParams();
+      form.set("url", photoUrl);
+      form.set("access_token", pageAccessToken);
+
+      logFb("facebook.photo_post_request", {
+        pageId,
+        mode: "photos_only",
+        imageUrl: photoUrl.slice(0, 120),
+        captionLength: 0,
+      });
+
+      const response = await axios.post(
+        `${GRAPH_BASE_URL}/${pageId}/photos`,
+        form.toString(),
+        {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          timeout: 60000,
         },
-        timeout: 30000,
+      );
+      return {
+        postId: response.data?.post_id || response.data?.id || null,
+        photoId: response.data?.id || null,
+        format: "photo",
+        caption: null,
+        raw: response.data,
+      };
+    }
+
+    // 1) Upload photo unpublished so we can attach it to a feed post with message.
+    const uploadForm = new URLSearchParams();
+    uploadForm.set("url", photoUrl);
+    uploadForm.set("published", "false");
+    uploadForm.set("access_token", pageAccessToken);
+
+    const uploadResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/photos`,
+      uploadForm.toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        timeout: 60000,
+      },
+    );
+
+    const photoId =
+      uploadResponse.data?.id || uploadResponse.data?.photo_id || null;
+    if (!photoId) {
+      const error = new Error("Facebook did not return a photo id.");
+      error.statusCode = 502;
+      throw error;
+    }
+
+    // 2) Create Page post with image + message text (product URL lives here).
+    const feedForm = new URLSearchParams();
+    feedForm.set("message", message);
+    feedForm.set(
+      "attached_media[0]",
+      JSON.stringify({ media_fbid: String(photoId) }),
+    );
+    feedForm.set("access_token", pageAccessToken);
+
+    logFb("facebook.photo_post_request", {
+      pageId,
+      mode: "photo_with_message",
+      imageUrl: photoUrl.slice(0, 120),
+      photoId: String(photoId),
+      captionLength: message.length,
+      captionPreview: message.slice(0, 160),
+    });
+
+    const feedResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/feed`,
+      feedForm.toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        timeout: 60000,
       },
     );
 
     return {
-      postId: response.data?.id || response.data?.post_id || null,
-      raw: response.data,
+      postId: feedResponse.data?.id || feedResponse.data?.post_id || null,
+      photoId: String(photoId),
+      format: "photo_with_message",
+      caption: message,
+      raw: {
+        photo: uploadResponse.data,
+        feed: feedResponse.data,
+      },
     };
   } catch (error) {
     throw wrapGraphError(error, "Failed to post image to Facebook Page.");
@@ -1223,12 +1327,19 @@ async function postImageStoryToInstagram({ igUserId, pageAccessToken, imageUrl }
   }
 }
 
-async function postVideoToPage({ pageId, pageAccessToken, videoUrl, caption }) {
+async function postVideoToPage({
+  pageId,
+  pageAccessToken,
+  videoUrl,
+  caption,
+}) {
   if (!pageId || !pageAccessToken || !videoUrl) {
     const error = new Error("pageId, pageAccessToken, and videoUrl are required.");
     error.statusCode = 400;
     throw error;
   }
+
+  const message = typeof caption === "string" ? caption.trim() : "";
 
   try {
     const response = await axios.post(
@@ -1237,7 +1348,7 @@ async function postVideoToPage({ pageId, pageAccessToken, videoUrl, caption }) {
       {
         params: {
           file_url: videoUrl,
-          description: caption || "",
+          description: message,
           access_token: pageAccessToken,
         },
         timeout: 120000,
@@ -1246,6 +1357,7 @@ async function postVideoToPage({ pageId, pageAccessToken, videoUrl, caption }) {
 
     return {
       postId: response.data?.id || response.data?.post_id || null,
+      format: "video",
       raw: response.data,
     };
   } catch (error) {
@@ -1327,6 +1439,186 @@ async function postReelToInstagram({ igUserId, pageAccessToken, videoUrl, captio
   }
 }
 
+/**
+ * Publish a multi-image carousel to Instagram.
+ */
+async function postCarouselToInstagram({
+  igUserId,
+  pageAccessToken,
+  imageUrls,
+  caption = "",
+}) {
+  if (!igUserId || !pageAccessToken) {
+    const error = new Error("igUserId and pageAccessToken are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const urls = Array.isArray(imageUrls)
+    ? imageUrls.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+
+  if (urls.length < 2) {
+    const error = new Error("Instagram carousel needs at least 2 public image URLs.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (urls.length > 10) {
+    const error = new Error("Instagram carousel supports a maximum of 10 images.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const childIds = [];
+    for (const imageUrl of urls) {
+      const createResponse = await axios.post(
+        `${GRAPH_BASE_URL}/${igUserId}/media`,
+        null,
+        {
+          params: {
+            image_url: imageUrl,
+            is_carousel_item: true,
+            access_token: pageAccessToken,
+          },
+          timeout: 60000,
+        },
+      );
+      const creationId = createResponse.data?.id;
+      if (!creationId) {
+        const error = new Error("Instagram did not return a carousel item id.");
+        error.statusCode = 502;
+        throw error;
+      }
+      await waitForInstagramMediaContainer(creationId, pageAccessToken);
+      childIds.push(String(creationId));
+    }
+
+    const carouselResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media`,
+      null,
+      {
+        params: {
+          media_type: "CAROUSEL",
+          children: childIds.join(","),
+          caption: caption || "",
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    const carouselId = carouselResponse.data?.id;
+    if (!carouselId) {
+      const error = new Error("Instagram did not return a carousel container id.");
+      error.statusCode = 502;
+      throw error;
+    }
+
+    await waitForInstagramMediaContainer(carouselId, pageAccessToken);
+
+    const publishResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${igUserId}/media_publish`,
+      null,
+      {
+        params: {
+          creation_id: carouselId,
+          access_token: pageAccessToken,
+        },
+        timeout: 60000,
+      },
+    );
+
+    return {
+      mediaId:
+        publishResponse.data?.id ||
+        publishResponse.data?.media_id ||
+        null,
+      creationId: String(carouselId),
+      childIds,
+      raw: publishResponse.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post carousel to Instagram.");
+  }
+}
+
+/**
+ * Publish multiple photos as one Facebook Page feed post.
+ */
+async function postMultiPhotoToPage({
+  pageId,
+  pageAccessToken,
+  imageUrls,
+  caption = "",
+}) {
+  if (!pageId || !pageAccessToken) {
+    const error = new Error("pageId and pageAccessToken are required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const urls = Array.isArray(imageUrls)
+    ? imageUrls.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+
+  if (urls.length < 2) {
+    const error = new Error("Facebook multi-photo post needs at least 2 image URLs.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const photoIds = [];
+    for (const imageUrl of urls) {
+      const uploadResponse = await axios.post(
+        `${GRAPH_BASE_URL}/${pageId}/photos`,
+        null,
+        {
+          params: {
+            url: imageUrl,
+            published: false,
+            access_token: pageAccessToken,
+          },
+          timeout: 60000,
+        },
+      );
+      const photoId = uploadResponse.data?.id || uploadResponse.data?.photo_id;
+      if (!photoId) {
+        const error = new Error("Facebook did not return a photo id for carousel upload.");
+        error.statusCode = 502;
+        throw error;
+      }
+      photoIds.push(String(photoId));
+    }
+
+    const params = new URLSearchParams();
+    params.append("message", caption || "");
+    params.append("access_token", pageAccessToken);
+    photoIds.forEach((photoId, index) => {
+      params.append(
+        `attached_media[${index}]`,
+        JSON.stringify({ media_fbid: photoId }),
+      );
+    });
+
+    const feedResponse = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/feed`,
+      params,
+      { timeout: 60000 },
+    );
+
+    return {
+      postId: feedResponse.data?.id || feedResponse.data?.post_id || null,
+      photoIds,
+      raw: feedResponse.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post multi-photo carousel to Facebook Page.");
+  }
+}
+
 module.exports = {
   FACEBOOK_SCOPES,
   FACEBOOK_INSTAGRAM_SCOPES,
@@ -1351,8 +1643,10 @@ module.exports = {
   postPhotoStoryToPage,
   postImageToInstagram,
   postImageStoryToInstagram,
+  postCarouselToInstagram,
   postVideoToPage,
   postReelToInstagram,
+  postMultiPhotoToPage,
   listPagePosts,
   deletePagePost,
   updatePagePost,

@@ -5,7 +5,17 @@ const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
 const { sendWhatsAppImageSmart } = require("./whatsappTemplateService");
-const { postPosterForUser } = require("./facebookPostService");
+const {
+  postPosterForUser,
+  postReelForUser,
+} = require("./facebookPostService");
+const { queueReadyReelForDownload } = require("./whatsappReelDelivery");
+const {
+  uploadImageWithAudioVideo,
+  downloadAudioFromUrl,
+  prepareAudioBuffer,
+  isAudioUpload,
+} = require("./imageAudioVideoService");
 const {
   composeShareImageWithAi,
   isAiProviderConfigured,
@@ -27,12 +37,41 @@ const imageUpload = multer({
   },
 });
 
+const shareMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === "image") {
+      if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+        return cb(new Error("Only image files are allowed for image."));
+      }
+      return cb(null, true);
+    }
+
+    if (file.fieldname === "audio" || file.fieldname === "song") {
+      if (!isAudioUpload(file)) {
+        return cb(new Error("Only audio files are allowed for song/audio."));
+      }
+      return cb(null, true);
+    }
+
+    return cb(new Error(`Unexpected file field: ${file.fieldname}`));
+  },
+});
+
 function getErrorMessage(error) {
-  if (error instanceof Error) {
+  if (error instanceof Error && error.message) {
     return error.message;
   }
-  if (error && typeof error === "object" && typeof error.message === "string") {
-    return error.message;
+  if (error && typeof error === "object") {
+    if (typeof error.message === "string" && error.message.trim()) {
+      return error.message;
+    }
+    if (error.error && typeof error.error.message === "string") {
+      return error.error.message;
+    }
   }
   if (typeof error === "string") {
     return error;
@@ -83,10 +122,15 @@ async function resolveShareImageBuffer(req) {
       ? req.body
       : {};
 
-  if (req.file?.buffer) {
+  const imageFile =
+    req.file ||
+    (Array.isArray(req.files?.image) ? req.files.image[0] : null) ||
+    (Array.isArray(req.files) ? req.files.find((file) => file.fieldname === "image") : null);
+
+  if (imageFile?.buffer) {
     return {
-      buffer: req.file.buffer,
-      originalName: req.file.originalname,
+      buffer: imageFile.buffer,
+      originalName: imageFile.originalname,
       source: "upload",
     };
   }
@@ -111,6 +155,22 @@ async function resolveShareImageBuffer(req) {
     source: "imageUrl",
     imageUrl,
   };
+}
+
+function getAudioFile(req) {
+  if (Array.isArray(req.files?.audio) && req.files.audio[0]) {
+    return req.files.audio[0];
+  }
+  if (Array.isArray(req.files?.song) && req.files.song[0]) {
+    return req.files.song[0];
+  }
+  if (Array.isArray(req.files)) {
+    return (
+      req.files.find((file) => file.fieldname === "audio" || file.fieldname === "song") ||
+      null
+    );
+  }
+  return null;
 }
 
 /**
@@ -229,13 +289,18 @@ router.post(
 /**
  * POST /users/:id/share-image
  * multipart: image (file) OR field imageUrl (Cloudinary URL from generate-ai)
+ * optional: audio / song (file) — image becomes a video with the song
  * fields: sendWhatsApp, uploadToFacebook, caption, whatsappMessage
  */
 router.post(
   "/users/:id/share-image",
   requireAuth,
   requireDb,
-  imageUpload.single("image"),
+  shareMediaUpload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "audio", maxCount: 1 },
+    { name: "song", maxCount: 1 },
+  ]),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -285,6 +350,33 @@ router.post(
       );
       const caption =
         typeof body.caption === "string" ? body.caption.trim() : "";
+      const shareLinkRaw =
+        typeof body.shareLink === "string"
+          ? body.shareLink
+          : typeof body.shopUrl === "string"
+            ? body.shopUrl
+            : typeof body.link === "string"
+              ? body.link
+              : typeof body.websiteUrl === "string"
+                ? body.websiteUrl
+                : "";
+      const shareLink = String(shareLinkRaw || "").trim();
+      if (shareLink) {
+        try {
+          const parsed = new URL(shareLink);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            return res.status(400).json({
+              success: false,
+              message: "shareLink must be a valid http(s) URL.",
+            });
+          }
+        } catch {
+          return res.status(400).json({
+            success: false,
+            message: "shareLink must be a valid http(s) URL.",
+          });
+        }
+      }
       const whatsappMessage =
         typeof body.whatsappMessage === "string" && body.whatsappMessage.trim()
           ? body.whatsappMessage.trim()
@@ -299,6 +391,17 @@ router.post(
 
       let imageUrl = imageInput.imageUrl;
       let uploadResult;
+      let videoUrl = null;
+      const audioFile = getAudioFile(req);
+      const audioUrlField =
+        typeof body.audioUrl === "string" && body.audioUrl.trim()
+          ? body.audioUrl.trim()
+          : typeof body.songUrl === "string" && body.songUrl.trim()
+            ? body.songUrl.trim()
+            : "";
+      const hasAudioFile = Boolean(audioFile?.buffer);
+      const hasAudioUrl = Boolean(audioUrlField);
+      const hasAudio = hasAudioFile || hasAudioUrl;
 
       if (imageInput.source === "imageUrl" && imageUrl) {
         uploadResult = {
@@ -326,23 +429,76 @@ router.post(
         }
         imageUrl = uploadResult.imageUrl;
       }
+
+      if (hasAudio) {
+        try {
+          let audioBuffer;
+          let audioFileName;
+          if (hasAudioFile) {
+            audioBuffer = audioFile.buffer;
+            audioFileName = audioFile.originalname;
+          } else {
+            const downloaded = await downloadAudioFromUrl(audioUrlField);
+            audioBuffer = downloaded.buffer;
+            audioFileName = downloaded.fileName;
+          }
+
+          const prepared = await prepareAudioBuffer(audioBuffer, audioFileName);
+          const videoUpload = await uploadImageWithAudioVideo({
+            imageBuffer: imageInput.buffer,
+            audioBuffer: prepared.buffer,
+            imageFileName: imageInput.originalName,
+            audioFileName: prepared.fileName,
+            folder: process.env.CLOUDINARY_SHARE_AUDIO_FOLDER || "shared-with-audio",
+            publicFileName: `share-audio-${user.mobileNumber || user._id}-${Date.now()}.mp4`,
+            audioAlreadyPrepared: true,
+          });
+          videoUrl = videoUpload.videoUrl;
+        } catch (error) {
+          return res.status(502).json({
+            success: false,
+            message: "Image uploaded, but attaching song failed.",
+            imageUrl,
+            cloudinaryPublicId: uploadResult.publicId,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+
       let whatsappResult;
       let facebookResult;
 
       if (sendWhatsApp) {
         try {
-          whatsappResult = await sendWhatsAppImageSmart({
-            toMobile: user.mobileNumber,
-            name: user.name,
-            imageUrl,
-            body: whatsappMessage,
-            lastInboundAt: user.whatsappLastInboundAt,
-          });
+          if (videoUrl) {
+            whatsappResult = await queueReadyReelForDownload({
+              toMobile: user.mobileNumber,
+              name: user.name,
+              mobile: user.mobileNumber,
+              reelResult: {
+                videoUrl,
+                message: whatsappMessage,
+              },
+              lastInboundAt: user.whatsappLastInboundAt,
+              message: whatsappMessage,
+            });
+          } else {
+            whatsappResult = await sendWhatsAppImageSmart({
+              toMobile: user.mobileNumber,
+              name: user.name,
+              imageUrl,
+              body: whatsappMessage,
+              lastInboundAt: user.whatsappLastInboundAt,
+            });
+          }
         } catch (error) {
           return res.status(502).json({
             success: false,
-            message: "Image uploaded, but WhatsApp delivery failed.",
+            message: videoUrl
+              ? "Video with song uploaded, but WhatsApp delivery failed."
+              : "Image uploaded, but WhatsApp delivery failed.",
             imageUrl,
+            videoUrl: videoUrl || undefined,
             cloudinaryPublicId: uploadResult.publicId,
             error: getErrorMessage(error),
           });
@@ -351,14 +507,25 @@ router.post(
 
       if (uploadToFacebook) {
         try {
-          const posted = await postPosterForUser({
-            userId: String(user._id),
-            imageUrl,
-            caption,
-          });
+          const posted = videoUrl
+            ? await postReelForUser({
+                userId: String(user._id),
+                videoUrl,
+                caption,
+                shareLink,
+              })
+            : await postPosterForUser({
+                userId: String(user._id),
+                imageUrl,
+                caption,
+                shareLink,
+              });
           facebookResult = { success: true, ...posted };
         } catch (error) {
-          const statusCode = error.statusCode === 404 || error.statusCode === 400 ? error.statusCode : 502;
+          const statusCode =
+            error.statusCode === 404 || error.statusCode === 400
+              ? error.statusCode
+              : 502;
           facebookResult = {
             success: false,
             message: getErrorMessage(error),
@@ -366,8 +533,11 @@ router.post(
           if (sendWhatsApp && whatsappResult) {
             return res.status(statusCode).json({
               success: false,
-              message: "Image sent on WhatsApp, but Facebook upload failed.",
+              message: videoUrl
+                ? "Video sent on WhatsApp, but Facebook upload failed."
+                : "Image sent on WhatsApp, but Facebook upload failed.",
               imageUrl,
+              videoUrl: videoUrl || undefined,
               cloudinaryPublicId: uploadResult.publicId,
               whatsapp: whatsappResult,
               facebook: facebookResult,
@@ -377,6 +547,7 @@ router.post(
             success: false,
             message: facebookResult.message || "Facebook upload failed.",
             imageUrl,
+            videoUrl: videoUrl || undefined,
             cloudinaryPublicId: uploadResult.publicId,
             facebook: facebookResult,
           });
@@ -384,7 +555,20 @@ router.post(
       }
 
       let message = "Image uploaded successfully.";
-      if (sendWhatsApp && uploadToFacebook && facebookResult?.success) {
+      if (videoUrl) {
+        if (sendWhatsApp && uploadToFacebook && facebookResult?.success) {
+          message = "Image with song sent on WhatsApp and posted to Facebook.";
+        } else if (sendWhatsApp) {
+          message =
+            whatsappResult?.mode === "direct"
+              ? "Video with song sent on WhatsApp (24-hour window was open)."
+              : "WhatsApp template sent, then video with song delivered.";
+        } else if (facebookResult?.success) {
+          message = "Image with song posted to Facebook as a video.";
+        } else {
+          message = "Image with song uploaded successfully.";
+        }
+      } else if (sendWhatsApp && uploadToFacebook && facebookResult?.success) {
         message = "Image sent on WhatsApp and posted to Facebook.";
       } else if (sendWhatsApp) {
         message =
@@ -402,6 +586,8 @@ router.post(
         name: user.name,
         mobile: user.mobileNumber,
         imageUrl,
+        videoUrl: videoUrl || undefined,
+        hasAudio: Boolean(videoUrl),
         cloudinaryPublicId: uploadResult.publicId,
         sendWhatsApp,
         uploadToFacebook,

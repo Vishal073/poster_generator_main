@@ -16,6 +16,8 @@ const { router: whatsappFlowRoute } = require("./services/whatsappFlowRoute");
 const facebookRoutes = require("./routes/facebookRoutes");
 const { router: shareImageRoute } = require("./services/shareImageRoute");
 const { router: eventPosterRoute } = require("./services/eventPosterRoute");
+const { router: reelsRoute } = require("./services/reelsRoute");
+const { router: musicRoute } = require("./services/musicRoute");
 const FacebookConnection = require("./models/FacebookConnection");
 
 const app = express();
@@ -100,6 +102,8 @@ app.use(generatePosterRoute);
 app.use(userRoute);
 app.use(shareImageRoute);
 app.use(eventPosterRoute);
+app.use(reelsRoute);
+app.use(musicRoute);
 app.use(whatsappFlowRoute);
 app.use(facebookRoutes);
 
@@ -147,9 +151,15 @@ async function startServer() {
   console.log("MongoDB Connected");
   await removeFacebookConnectionTtlIndex();
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
   });
+  // Song attach / bulk with audio needs longer than default ~2m sockets.
+  server.timeout = Number(process.env.HTTP_SERVER_TIMEOUT_MS) || 600000;
+  server.headersTimeout = Number(process.env.HTTP_HEADERS_TIMEOUT_MS) || 610000;
+  if (typeof server.requestTimeout === "number" || "requestTimeout" in server) {
+    server.requestTimeout = Number(process.env.HTTP_REQUEST_TIMEOUT_MS) || 600000;
+  }
 }
 
 startServer().catch((err) => {

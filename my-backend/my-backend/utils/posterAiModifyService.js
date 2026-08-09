@@ -47,7 +47,7 @@ async function resizeToMatchOriginal(modifiedBuffer, originalBuffer) {
 
   return sharp(modifiedBuffer)
     .resize(original.width, original.height, { fit: "fill" })
-    .png()
+    .jpeg({ quality: 82, mozjpeg: true, progressive: true })
     .toBuffer();
 }
 

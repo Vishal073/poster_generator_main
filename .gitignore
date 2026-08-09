@@ -3,3 +3,5 @@
 **/public/generated-posters/
 .DS_Store
 __MACOSX/
+
+my-backend/my-backend/uploads/

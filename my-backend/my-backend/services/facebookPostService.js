@@ -6,14 +6,17 @@ const {
   postPhotoStoryToPage,
   postImageToInstagram,
   postImageStoryToInstagram,
+  postCarouselToInstagram,
   postVideoToPage,
   postReelToInstagram,
+  postMultiPhotoToPage,
   listPagePosts,
   deletePagePost,
   updatePagePost,
   listInstagramMedia,
   deleteInstagramMedia,
 } = require("./facebookService");
+const { createBuyNowAdForPage } = require("./facebookAdsService");
 
 function isValidObjectId(value) {
   if (typeof value !== "string" || !mongoose.Types.ObjectId.isValid(value)) {
@@ -105,9 +108,45 @@ function buildSelectedPageSnapshot(page) {
 }
 
 /**
- * Post a public image URL to the Facebook Page saved for this app user.
+ * Append product URL to organic photo/video message (fallback only).
+ * Prefer Marketing API Buy Now when ads permissions are available.
  */
-async function postPosterForUser({ userId, imageUrl, caption = "" }) {
+function buildPhotoMessage(caption = "", shareLink = "") {
+  const message = typeof caption === "string" ? caption.trim() : "";
+  let raw = typeof shareLink === "string" ? shareLink.trim() : "";
+  if (!raw) return message;
+
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = `https://${raw}`;
+  }
+
+  let link = raw;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return message;
+    }
+    link = parsed.toString();
+  } catch {
+    return message;
+  }
+
+  if (!message) return link;
+  if (message.includes(link)) return message;
+  return `${message}\n\n${link}`;
+}
+
+/**
+ * Post a public image URL to the Facebook Page saved for this app user.
+ * - No shareLink: organic /photos post
+ * - With shareLink: Marketing API Buy Now ad (PAUSED) with BUY_NOW CTA
+ */
+async function postPosterForUser({
+  userId,
+  imageUrl,
+  caption = "",
+  shareLink = "",
+}) {
   if (!isValidObjectId(userId)) {
     const error = new Error("userId must be a valid MongoDB User _id.");
     error.statusCode = 400;
@@ -121,19 +160,87 @@ async function postPosterForUser({ userId, imageUrl, caption = "" }) {
   }
 
   const connection = await getFacebookConnectionForUser(userId);
+  const pageId = connection.selectedPage.pageId;
+  const pageName = connection.selectedPage.pageName;
+  const pageAccessToken = connection.selectedPage.pageAccessToken;
+  const link = typeof shareLink === "string" ? shareLink.trim() : "";
+  const captionText = typeof caption === "string" ? caption.trim() : "";
+
+  if (link) {
+    try {
+      const adResult = await createBuyNowAdForPage({
+        userAccessToken: connection.userAccessToken || "",
+        pageId,
+        imageUrl: imageUrl.trim(),
+        buyUrl: link,
+        message: captionText,
+      });
+
+      console.log("[facebook] Buy Now ad created", {
+        userId: String(userId),
+        adId: adResult.adId,
+        creativeId: adResult.creativeId,
+        status: adResult.status,
+        tokenSource: adResult.tokenSource,
+      });
+
+      return {
+        userId: String(connection.userId),
+        pageId,
+        pageName,
+        postId: adResult.adId,
+        shareLink: adResult.buyUrl,
+        caption: captionText || null,
+        format: adResult.format,
+        adAccountId: adResult.adAccountId,
+        campaignId: adResult.campaignId,
+        adSetId: adResult.adSetId,
+        adId: adResult.adId,
+        creativeId: adResult.creativeId,
+        adStatus: adResult.status,
+        message: adResult.message,
+      };
+    } catch (error) {
+      const msg = String(error?.message || "");
+      const missingSetup =
+        /FACEBOOK_ADS_ACCESS_TOKEN|ads_management|Missing Permission|#200|#100/i.test(
+          msg,
+        ) || error?.facebook?.code === 200 || error?.facebook?.code === 100;
+      if (missingSetup) {
+        const wrapped = new Error(
+          "Buy Now needs a Business system-user ads token. Set FACEBOOK_ADS_ACCESS_TOKEN + FACEBOOK_AD_ACCOUNT_ID in .env (ads scopes cannot be requested via normal Facebook Login on this app).",
+        );
+        wrapped.statusCode = 403;
+        wrapped.cause = error;
+        throw wrapped;
+      }
+      throw error;
+    }
+  }
+
+  const message = buildPhotoMessage(captionText, "");
+  console.log("[facebook] photo caption built", {
+    userId: String(userId),
+    hasShareLink: false,
+    captionLength: message.length,
+    captionPreview: message.slice(0, 200),
+  });
 
   const result = await postImageToPage({
-    pageId: connection.selectedPage.pageId,
-    pageAccessToken: connection.selectedPage.pageAccessToken,
+    pageId,
+    pageAccessToken,
     imageUrl: imageUrl.trim(),
-    caption: typeof caption === "string" ? caption.trim() : "",
+    caption: message,
   });
 
   return {
     userId: String(connection.userId),
-    pageId: connection.selectedPage.pageId,
-    pageName: connection.selectedPage.pageName,
+    pageId,
+    pageName,
     postId: result.postId,
+    caption: message || null,
+    shareLink: null,
+    format: result.format || "photo",
   };
 }
 
@@ -178,6 +285,84 @@ async function postPosterToInstagramForUser({ userId, imageUrl, caption = "" }) 
     igUserId: instagramAccount.igUserId,
     username: instagramAccount.username || null,
     mediaId: result.mediaId,
+  };
+}
+
+async function postCarouselForUser({ userId, imageUrls, caption = "" }) {
+  if (!isValidObjectId(userId)) {
+    const error = new Error("userId must be a valid MongoDB User _id.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const urls = Array.isArray(imageUrls)
+    ? imageUrls.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (urls.length < 2) {
+    const error = new Error("At least 2 image URLs are required for a carousel.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+  const result = await postMultiPhotoToPage({
+    pageId: connection.selectedPage.pageId,
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+    imageUrls: urls,
+    caption: typeof caption === "string" ? caption.trim() : "",
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    postId: result.postId,
+    photoIds: result.photoIds,
+  };
+}
+
+async function postCarouselToInstagramForUser({ userId, imageUrls, caption = "" }) {
+  if (!isValidObjectId(userId)) {
+    const error = new Error("userId must be a valid MongoDB User _id.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const urls = Array.isArray(imageUrls)
+    ? imageUrls.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (urls.length < 2) {
+    const error = new Error("At least 2 image URLs are required for an Instagram carousel.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+  const instagramAccount = connection.selectedPage?.instagramAccount;
+
+  if (!instagramAccount?.igUserId) {
+    const error = new Error(
+      "No Instagram Business account is linked to this user's Facebook Page. Link Instagram to the Page in Meta, then reconnect Facebook.",
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const result = await postCarouselToInstagram({
+    igUserId: instagramAccount.igUserId,
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+    imageUrls: urls,
+    caption: typeof caption === "string" ? caption.trim() : "",
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    igUserId: instagramAccount.igUserId,
+    username: instagramAccount.username || null,
+    mediaId: result.mediaId,
+    childIds: result.childIds,
   };
 }
 
@@ -257,7 +442,12 @@ async function postPosterStoryToInstagramForUser({ userId, imageUrl }) {
   };
 }
 
-async function postReelForUser({ userId, videoUrl, caption = "" }) {
+async function postReelForUser({
+  userId,
+  videoUrl,
+  caption = "",
+  shareLink = "",
+}) {
   if (!isValidObjectId(userId)) {
     const error = new Error("userId must be a valid MongoDB User _id.");
     error.statusCode = 400;
@@ -271,12 +461,13 @@ async function postReelForUser({ userId, videoUrl, caption = "" }) {
   }
 
   const connection = await getFacebookConnectionForUser(userId);
+  const message = buildPhotoMessage(caption, shareLink);
 
   const result = await postVideoToPage({
     pageId: connection.selectedPage.pageId,
     pageAccessToken: connection.selectedPage.pageAccessToken,
     videoUrl: videoUrl.trim(),
-    caption: typeof caption === "string" ? caption.trim() : "",
+    caption: message,
   });
 
   return {
@@ -284,6 +475,7 @@ async function postReelForUser({ userId, videoUrl, caption = "" }) {
     pageId: connection.selectedPage.pageId,
     pageName: connection.selectedPage.pageName,
     postId: result.postId,
+    shareLink: shareLink?.trim() || null,
   };
 }
 
@@ -626,6 +818,8 @@ function buildFacebookConnectUrl(userId, apiBaseUrl, req) {
 module.exports = {
   postPosterForUser,
   postPosterToInstagramForUser,
+  postCarouselForUser,
+  postCarouselToInstagramForUser,
   postPosterStoryForUser,
   postPosterStoryToInstagramForUser,
   postReelForUser,
