@@ -25,13 +25,32 @@ const FACEBOOK_INSTAGRAM_SCOPES = ["instagram_basic", "instagram_content_publish
 const FACEBOOK_ADS_SCOPES = ["ads_management", "ads_read"];
 
 /**
- * Meta now rejects legacy instagram_basic / instagram_content_publish on many apps
- * ("Invalid Scopes"). Keep Instagram OAuth off unless explicitly re-enabled after
- * migrating to supported Instagram Login / Business scopes.
+ * Instagram scopes for Facebook Login (Page-linked IG):
+ * instagram_basic, instagram_content_publish.
+ * Set FACEBOOK_ALLOW_INSTAGRAM_OAUTH_SCOPES=0 to force-disable if Meta returns Invalid Scopes.
+ * Override list via FACEBOOK_INSTAGRAM_SCOPES.
  */
 function isInstagramOAuthScopesEnabled() {
   const raw = process.env.FACEBOOK_ALLOW_INSTAGRAM_OAUTH_SCOPES;
+  if (raw === "0" || raw === "false" || raw === "no") {
+    return false;
+  }
+  // Default ON so Include Instagram actually requests IG permissions.
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return true;
+  }
   return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function getInstagramOAuthScopes() {
+  const raw = process.env.FACEBOOK_INSTAGRAM_SCOPES;
+  if (typeof raw === "string" && raw.trim()) {
+    return raw
+      .split(",")
+      .map((scope) => scope.trim())
+      .filter(Boolean);
+  }
+  return FACEBOOK_INSTAGRAM_SCOPES;
 }
 
 function isScopeBasedOAuthForced() {
@@ -94,24 +113,25 @@ function resolveOAuthAuthParams(options = {}) {
 }
 
 function buildOAuthScopes(includeInstagram = false) {
+  const instagramScopes = getInstagramOAuthScopes();
   const baseScopes = FACEBOOK_SCOPES.split(",")
     .map((scope) => scope.trim())
     .filter(Boolean)
-    .filter((scope) => !FACEBOOK_INSTAGRAM_SCOPES.includes(scope))
+    .filter((scope) => !instagramScopes.includes(scope))
     .filter((scope) => !FACEBOOK_ADS_SCOPES.includes(scope));
 
   if (!includeInstagram || !isInstagramOAuthScopesEnabled()) {
     if (includeInstagram && !isInstagramOAuthScopesEnabled()) {
       logFbWarn("oauth.instagram_scopes_skipped", {
         reason:
-          "Legacy instagram_basic/instagram_content_publish are Invalid Scopes on this app. Set FACEBOOK_ALLOW_INSTAGRAM_OAUTH_SCOPES=1 only after Meta accepts them.",
+          "FACEBOOK_ALLOW_INSTAGRAM_OAUTH_SCOPES is disabled. Set to 1 (or unset) to request Instagram permissions.",
       });
     }
     return baseScopes.join(",");
   }
 
   const merged = [...baseScopes];
-  for (const scope of FACEBOOK_INSTAGRAM_SCOPES) {
+  for (const scope of instagramScopes) {
     if (!merged.includes(scope)) {
       merged.push(scope);
     }
