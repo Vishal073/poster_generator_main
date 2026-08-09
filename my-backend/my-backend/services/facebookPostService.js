@@ -261,7 +261,7 @@ async function postPosterForUser({
     const cardTitle =
       captionText.split("\n").map((line) => line.trim()).find(Boolean) ||
       "Shop now";
-    const ogCardUrl = buildOgShareCardUrl({
+    const ogCardUrl = await buildOgShareCardUrl({
       destinationUrl: link,
       imageUrl: imageUrl.trim(),
       title: cardTitle,

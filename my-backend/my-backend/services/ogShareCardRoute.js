@@ -1,22 +1,28 @@
 const express = require("express");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 
 const router = express.Router();
 
 const DEFAULT_PUBLIC_API_BASE = "https://api.gcrgraphix.com";
 
-function getSigningSecret() {
-  return (
-    process.env.OG_SHARE_CARD_SECRET ||
-    process.env.FACEBOOK_APP_SECRET ||
-    process.env.JWT_SECRET ||
-    "gcr-og-share-card"
-  );
-}
+const OgShareCardSchema = new mongoose.Schema(
+  {
+    code: { type: String, required: true, unique: true, index: true },
+    destinationUrl: { type: String, required: true },
+    imageUrl: { type: String, required: true },
+    title: { type: String, default: "Shop now" },
+    description: { type: String, default: "" },
+  },
+  { timestamps: true },
+);
 
-/**
- * Facebook must scrape a public https URL (not localhost).
- */
+// Auto-clean old cards after 60 days
+OgShareCardSchema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 60 });
+
+const OgShareCard =
+  mongoose.models.OgShareCard || mongoose.model("OgShareCard", OgShareCardSchema);
+
 function getPublicApiBase() {
   const raw =
     process.env.API_BASE_URL ||
@@ -26,46 +32,16 @@ function getPublicApiBase() {
   let base = String(raw || "")
     .trim()
     .replace(/\/$/, "");
-  if (!base) {
-    base = DEFAULT_PUBLIC_API_BASE;
-  }
+  if (!base) base = DEFAULT_PUBLIC_API_BASE;
   try {
     const host = new URL(base).hostname;
-    if (
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      host.endsWith(".local")
-    ) {
+    if (host === "localhost" || host === "127.0.0.1" || host.endsWith(".local")) {
       return DEFAULT_PUBLIC_API_BASE;
     }
   } catch {
     return DEFAULT_PUBLIC_API_BASE;
   }
   return base;
-}
-
-function toBase64Url(value) {
-  return Buffer.from(value, "utf8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
-
-function fromBase64Url(value) {
-  const padded = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
-  const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  return Buffer.from(padded + pad, "base64").toString("utf8");
-}
-
-function signPayload(payloadB64) {
-  return crypto
-    .createHmac("sha256", getSigningSecret())
-    .update(payloadB64)
-    .digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
 }
 
 function normalizeHttpUrl(value) {
@@ -85,23 +61,22 @@ function normalizeHttpUrl(value) {
   }
 }
 
-/**
- * Prefer 1200x630 banner for Amazon-style full-width link preview.
- */
 function toOgBannerImage(imageUrl) {
   const raw = normalizeHttpUrl(imageUrl);
   if (!raw) return "";
   try {
     const parsed = new URL(raw);
-    if (!/res\.cloudinary\.com$/i.test(parsed.hostname) && !/\.cloudinary\.com$/i.test(parsed.hostname)) {
+    if (!/\.cloudinary\.com$/i.test(parsed.hostname)) {
       return raw;
     }
-    // .../upload/v123/x.jpg  OR  .../upload/folder/x.jpg
     if (parsed.pathname.includes("/upload/")) {
-      parsed.pathname = parsed.pathname.replace(
-        /\/upload\//,
-        "/upload/c_fill,w_1200,h_630,g_auto,f_jpg,q_auto/",
-      );
+      // Avoid double-transform if already present
+      if (!/\/upload\/c_fill,w_1200,h_630/.test(parsed.pathname)) {
+        parsed.pathname = parsed.pathname.replace(
+          /\/upload\//,
+          "/upload/c_fill,w_1200,h_630,g_auto,f_jpg,q_auto/",
+        );
+      }
       return parsed.toString();
     }
     return raw;
@@ -119,66 +94,8 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-/**
- * Build a public URL Facebook can scrape for OG tags (poster image)
- * while humans/taps redirect to the real shop URL.
- */
-function buildOgShareCardUrl({
-  destinationUrl,
-  imageUrl,
-  title = "",
-  description = "",
-}) {
-  const dest = normalizeHttpUrl(destinationUrl);
-  const image = toOgBannerImage(imageUrl);
-  if (!dest || !image) {
-    return null;
-  }
-
-  const apiBase = getPublicApiBase();
-  const payload = {
-    u: dest,
-    i: image,
-    t: String(title || "Shop now").slice(0, 120),
-    d: String(description || title || "Tap Shop now to continue.").slice(0, 200),
-  };
-  const payloadB64 = toBase64Url(JSON.stringify(payload));
-  const signature = signPayload(payloadB64);
-  return `${apiBase}/og/s/${payloadB64}.${signature}`;
-}
-
-function decodeOgShareCardToken(token) {
-  const raw = String(token || "").trim();
-  const dot = raw.lastIndexOf(".");
-  if (dot <= 0) return null;
-  const payloadB64 = raw.slice(0, dot);
-  const signature = raw.slice(dot + 1);
-  if (!payloadB64 || !signature) return null;
-  const expected = signPayload(payloadB64);
-  const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(fromBase64Url(payloadB64));
-    const dest = normalizeHttpUrl(parsed.u);
-    const image = normalizeHttpUrl(parsed.i);
-    if (!dest || !image) return null;
-    return {
-      destinationUrl: dest,
-      imageUrl: image,
-      title: String(parsed.t || "Shop now").slice(0, 120),
-      description: String(parsed.d || "").slice(0, 200),
-    };
-  } catch {
-    return null;
-  }
-}
-
 function isSocialCrawler(userAgent = "") {
-  return /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|meta-externalagent/i.test(
+  return /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|meta-externalagent|Googlebot/i.test(
     String(userAgent || ""),
   );
 }
@@ -197,20 +114,25 @@ function renderOgHtml({ title, description, imageUrl, destinationUrl, pageUrl })
   <title>${safeTitle}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="GCR Graphix" />
   <meta property="og:title" content="${safeTitle}" />
   <meta property="og:description" content="${safeDesc}" />
   <meta property="og:image" content="${safeImage}" />
   <meta property="og:image:secure_url" content="${safeImage}" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
+  <meta property="og:image:type" content="image/jpeg" />
   <meta property="og:url" content="${safePage}" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${safeTitle}" />
   <meta name="twitter:description" content="${safeDesc}" />
   <meta name="twitter:image" content="${safeImage}" />
+  <link rel="image_src" href="${safeImage}" />
+  <meta http-equiv="refresh" content="0;url=${safeDest}" />
 </head>
 <body style="font-family:system-ui,sans-serif;padding:24px;background:#111;color:#fff">
   <p>${safeTitle}</p>
+  <p><img src="${safeImage}" alt="" width="600" style="max-width:100%;height:auto" /></p>
   <p><a href="${safeDest}" style="color:#9cf">Continue to shop</a></p>
   <script>location.replace(${JSON.stringify(destinationUrl)});</script>
 </body>
@@ -218,43 +140,77 @@ function renderOgHtml({ title, description, imageUrl, destinationUrl, pageUrl })
 }
 
 /**
- * GET /og/s/:token
- * Facebook crawler → OG HTML with poster image
- * Humans → redirect to shop URL
+ * Create a DB-backed public OG URL so local + Render share the same Mongo record
+ * (no HMAC secret mismatch).
  */
-router.get("/og/s/:token", (req, res) => {
-  const decoded = decodeOgShareCardToken(req.params.token);
-  if (!decoded) {
-    return res.status(400).type("html").send("<p>Invalid or expired share link.</p>");
+async function buildOgShareCardUrl({
+  destinationUrl,
+  imageUrl,
+  title = "",
+  description = "",
+}) {
+  const dest = normalizeHttpUrl(destinationUrl);
+  const image = toOgBannerImage(imageUrl);
+  if (!dest || !image) {
+    return null;
   }
 
-  const pageUrl = `${getPublicApiBase()}/og/s/${req.params.token}`;
-  const ua = req.get("user-agent") || "";
+  const code = crypto.randomBytes(12).toString("hex");
+  await OgShareCard.create({
+    code,
+    destinationUrl: dest,
+    imageUrl: image,
+    title: String(title || "Shop now").slice(0, 120),
+    description: String(description || title || "Tap Shop now to continue.").slice(0, 200),
+  });
 
-  // Always serve OG HTML to crawlers; redirect people to the shop.
-  if (!isSocialCrawler(ua)) {
-    return res.redirect(302, decoded.destinationUrl);
+  return `${getPublicApiBase()}/og/s/${code}`;
+}
+
+async function loadOgShareCard(code) {
+  const raw = String(code || "").trim();
+  if (!raw || raw.length > 80) return null;
+  return OgShareCard.findOne({ code: raw }).lean();
+}
+
+/**
+ * GET /og/s/:code
+ * Always return 200 HTML with og:image so Facebook scrape never misses the poster.
+ * Humans are redirected via meta-refresh + JS to the shop URL.
+ */
+router.get("/og/s/:code", async (req, res) => {
+  try {
+    const card = await loadOgShareCard(req.params.code);
+    if (!card) {
+      return res
+        .status(404)
+        .type("html")
+        .send("<p>Share link not found. Create a new Facebook post from the app.</p>");
+    }
+
+    const pageUrl = `${getPublicApiBase()}/og/s/${card.code}`;
+    const html = renderOgHtml({
+      title: card.title,
+      description: card.description,
+      imageUrl: card.imageUrl,
+      destinationUrl: card.destinationUrl,
+      pageUrl,
+    });
+
+    return res
+      .status(200)
+      .type("html")
+      .set("Cache-Control", "public, max-age=60")
+      .send(html);
+  } catch (error) {
+    console.error("[og-share] serve failed", error?.message || error);
+    return res.status(500).type("html").send("<p>Share link error.</p>");
   }
-
-  res
-    .status(200)
-    .type("html")
-    .set("Cache-Control", "public, max-age=300")
-    .send(
-      renderOgHtml({
-        title: decoded.title,
-        description: decoded.description,
-        imageUrl: decoded.imageUrl,
-        destinationUrl: decoded.destinationUrl,
-        pageUrl,
-      }),
-    );
 });
 
 module.exports = {
   router,
   buildOgShareCardUrl,
-  decodeOgShareCardToken,
   getPublicApiBase,
   toOgBannerImage,
 };
