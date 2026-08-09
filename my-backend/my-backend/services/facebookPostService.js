@@ -268,47 +268,49 @@ async function postPosterForUser({
       description: captionText || "Tap Shop now to continue.",
     });
 
-    if (ogCardUrl) {
-      try {
-        const linkResult = await postLinkCardToPage({
-          pageId,
-          pageAccessToken,
-          link: ogCardUrl,
-          message: captionText,
-          name: cardTitle,
-          description: "Tap Shop now",
-          imageUrl: imageUrl.trim(),
-          ctaType: "SHOP_NOW",
-        });
+    if (!ogCardUrl) {
+      const error = new Error(
+        "Could not build Shop now preview URL. Set API_BASE_URL=https://api.gcrgraphix.com on the backend.",
+      );
+      error.statusCode = 500;
+      throw error;
+    }
 
-        console.log("[facebook] Amazon-style Shop now link card posted", {
-          userId: String(userId),
-          postId: linkResult.postId,
-          format: linkResult.format,
-          ogCardUrl: ogCardUrl.slice(0, 120),
-          shopLink: link,
-        });
+    try {
+      // Tarika 1: /feed + link + call_to_action SHOP_NOW
+      // link = our public OG page (poster as og:image 1200x630), tap redirects to shop.
+      const linkResult = await postLinkCardToPage({
+        pageId,
+        pageAccessToken,
+        link: ogCardUrl,
+        message: captionText || cardTitle,
+        ctaType: "SHOP_NOW",
+      });
 
-        return {
-          userId: String(connection.userId),
-          pageId,
-          pageName,
-          postId: linkResult.postId,
-          caption: captionText || null,
-          shareLink: link,
-          format: linkResult.format,
-          message:
-            "Posted free Amazon-style link card with your poster + Shop now (tap opens your product URL). No Ads Manager / no spend.",
-        };
-      } catch (linkError) {
-        console.warn(
-          "[facebook] Shop now link card failed, falling back to photo + caption:",
-          linkError?.message || linkError,
-        );
-      }
-    } else {
+      console.log("[facebook] Tarika1 Shop now feed link posted", {
+        userId: String(userId),
+        postId: linkResult.postId,
+        format: linkResult.format,
+        ogCardUrl: ogCardUrl.slice(0, 160),
+        shopLink: link,
+      });
+
+      return {
+        userId: String(connection.userId),
+        pageId,
+        pageName,
+        postId: linkResult.postId,
+        caption: captionText || null,
+        shareLink: link,
+        previewUrl: ogCardUrl,
+        format: linkResult.format,
+        message:
+          "Posted Tarika-1 free link card (Shop now). Poster comes from OG scrape. Debug: developers.facebook.com/tools/debug → paste previewUrl → Scrape Again.",
+      };
+    } catch (linkError) {
       console.warn(
-        "[facebook] OG share card URL unavailable (set API_BASE_URL). Falling back to photo + caption link.",
+        "[facebook] Tarika1 link+CTA failed, falling back to photo + caption:",
+        linkError?.message || linkError,
       );
     }
 
@@ -329,7 +331,7 @@ async function postPosterForUser({
       shareLink: link,
       format: result.format || "photo_with_message",
       message:
-        "Posted free organic photo with poster + Buy Now link in caption. No ads spend.",
+        "Shop now link-card failed on this Page, so posted photo + link in caption instead. Check backend logs / Facebook Sharing Debugger.",
     };
   }
 

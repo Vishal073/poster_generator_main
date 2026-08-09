@@ -3,6 +3,8 @@ const crypto = require("crypto");
 
 const router = express.Router();
 
+const DEFAULT_PUBLIC_API_BASE = "https://api.gcrgraphix.com";
+
 function getSigningSecret() {
   return (
     process.env.OG_SHARE_CARD_SECRET ||
@@ -12,15 +14,34 @@ function getSigningSecret() {
   );
 }
 
+/**
+ * Facebook must scrape a public https URL (not localhost).
+ */
 function getPublicApiBase() {
   const raw =
     process.env.API_BASE_URL ||
     process.env.BACKEND_PUBLIC_URL ||
     process.env.RENDER_EXTERNAL_URL ||
-    "";
-  return String(raw || "")
+    DEFAULT_PUBLIC_API_BASE;
+  let base = String(raw || "")
     .trim()
     .replace(/\/$/, "");
+  if (!base) {
+    base = DEFAULT_PUBLIC_API_BASE;
+  }
+  try {
+    const host = new URL(base).hostname;
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host.endsWith(".local")
+    ) {
+      return DEFAULT_PUBLIC_API_BASE;
+    }
+  } catch {
+    return DEFAULT_PUBLIC_API_BASE;
+  }
+  return base;
 }
 
 function toBase64Url(value) {
@@ -64,6 +85,31 @@ function normalizeHttpUrl(value) {
   }
 }
 
+/**
+ * Prefer 1200x630 banner for Amazon-style full-width link preview.
+ */
+function toOgBannerImage(imageUrl) {
+  const raw = normalizeHttpUrl(imageUrl);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (!/res\.cloudinary\.com$/i.test(parsed.hostname) && !/\.cloudinary\.com$/i.test(parsed.hostname)) {
+      return raw;
+    }
+    // .../upload/v123/x.jpg  OR  .../upload/folder/x.jpg
+    if (parsed.pathname.includes("/upload/")) {
+      parsed.pathname = parsed.pathname.replace(
+        /\/upload\//,
+        "/upload/c_fill,w_1200,h_630,g_auto,f_jpg,q_auto/",
+      );
+      return parsed.toString();
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -84,16 +130,12 @@ function buildOgShareCardUrl({
   description = "",
 }) {
   const dest = normalizeHttpUrl(destinationUrl);
-  const image = normalizeHttpUrl(imageUrl);
+  const image = toOgBannerImage(imageUrl);
   if (!dest || !image) {
     return null;
   }
 
   const apiBase = getPublicApiBase();
-  if (!apiBase) {
-    return null;
-  }
-
   const payload = {
     u: dest,
     i: image,
@@ -136,7 +178,7 @@ function decodeOgShareCardToken(token) {
 }
 
 function isSocialCrawler(userAgent = "") {
-  return /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp/i.test(
+  return /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|meta-externalagent/i.test(
     String(userAgent || ""),
   );
 }
@@ -158,6 +200,9 @@ function renderOgHtml({ title, description, imageUrl, destinationUrl, pageUrl })
   <meta property="og:title" content="${safeTitle}" />
   <meta property="og:description" content="${safeDesc}" />
   <meta property="og:image" content="${safeImage}" />
+  <meta property="og:image:secure_url" content="${safeImage}" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
   <meta property="og:url" content="${safePage}" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${safeTitle}" />
@@ -186,6 +231,7 @@ router.get("/og/s/:token", (req, res) => {
   const pageUrl = `${getPublicApiBase()}/og/s/${req.params.token}`;
   const ua = req.get("user-agent") || "";
 
+  // Always serve OG HTML to crawlers; redirect people to the shop.
   if (!isSocialCrawler(ua)) {
     return res.redirect(302, decoded.destinationUrl);
   }
@@ -193,7 +239,7 @@ router.get("/og/s/:token", (req, res) => {
   res
     .status(200)
     .type("html")
-    .set("Cache-Control", "public, max-age=86400")
+    .set("Cache-Control", "public, max-age=300")
     .send(
       renderOgHtml({
         title: decoded.title,
@@ -209,4 +255,6 @@ module.exports = {
   router,
   buildOgShareCardUrl,
   decodeOgShareCardToken,
+  getPublicApiBase,
+  toOgBannerImage,
 };

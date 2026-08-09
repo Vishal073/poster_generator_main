@@ -1009,18 +1009,39 @@ async function postImageToPage({
 }
 
 /**
- * Free Amazon-style organic link card (no Ads Manager).
- * POST /{page-id}/feed with link + message + optional SHOP_NOW CTA.
- * Tap opens the product URL. No ad account / billing required.
+ * Tarika 1: organic /feed link post + call_to_action SHOP_NOW (no Ads Manager).
+ * Image comes from Open Graph scrape of `link` (use our /og/s poster card URL).
+ * Exact shape:
+ *   message, link, call_to_action={type:SHOP_NOW,value:{link}}
  */
+async function scrapeFacebookUrl({ url, accessToken }) {
+  try {
+    await axios.post(
+      GRAPH_BASE_URL,
+      null,
+      {
+        params: {
+          id: url,
+          scrape: true,
+          access_token: accessToken,
+        },
+        timeout: 30000,
+      },
+    );
+    logFb("facebook.og_scrape_ok", { url: String(url).slice(0, 160) });
+  } catch (error) {
+    logFbWarn("facebook.og_scrape_failed", {
+      url: String(url).slice(0, 160),
+      reason: getGraphErrorDetails(error)?.message || String(error?.message || error),
+    });
+  }
+}
+
 async function postLinkCardToPage({
   pageId,
   pageAccessToken,
   link,
   message = "",
-  name = "",
-  description = "",
-  imageUrl = "",
   ctaType = "SHOP_NOW",
 }) {
   const normalizedLink = String(link || "").trim();
@@ -1050,27 +1071,16 @@ async function postLinkCardToPage({
   }
 
   const caption = typeof message === "string" ? message.trim() : "";
-  const linkName = typeof name === "string" ? name.trim() : "";
-  const linkDescription =
-    typeof description === "string" ? description.trim() : "";
-  const picture = String(imageUrl || "").trim();
+
+  // Warm Facebook's OG cache before creating the post (Debugger "Scrape Again").
+  await scrapeFacebookUrl({ url: finalLink, accessToken: pageAccessToken });
 
   async function postOnce(withCta) {
     const form = new URLSearchParams();
-    form.set("link", finalLink);
     if (caption) {
       form.set("message", caption);
     }
-    if (linkName) {
-      form.set("name", linkName);
-    }
-    if (linkDescription) {
-      form.set("description", linkDescription);
-    }
-    // Soft override; OG scrape of link usually wins (we point link at our OG card).
-    if (picture && /^https?:\/\//i.test(picture)) {
-      form.set("picture", picture);
-    }
+    form.set("link", finalLink);
     if (withCta && ctaType) {
       form.set(
         "call_to_action",
@@ -1084,11 +1094,10 @@ async function postLinkCardToPage({
 
     logFb("facebook.link_card_request", {
       pageId,
+      mode: "tarika1_feed_link_cta",
       withCta: Boolean(withCta),
       ctaType: withCta ? ctaType : null,
       link: finalLink.slice(0, 160),
-      hasPicture: Boolean(picture),
-      hasName: Boolean(linkName),
       captionLength: caption.length,
     });
 
