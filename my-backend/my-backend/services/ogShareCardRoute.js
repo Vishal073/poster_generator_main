@@ -23,25 +23,32 @@ OgShareCardSchema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 6
 const OgShareCard =
   mongoose.models.OgShareCard || mongoose.model("OgShareCard", OgShareCardSchema);
 
+/**
+ * Facebook must scrape a public https host. Never use API_BASE_URL here —
+ * local .env often sets that to http://localhost:5000 for OAuth, and Meta
+ * cannot scrape localhost (blank preview image).
+ */
 function getPublicApiBase() {
-  const raw =
-    process.env.API_BASE_URL ||
-    process.env.BACKEND_PUBLIC_URL ||
-    process.env.RENDER_EXTERNAL_URL ||
-    DEFAULT_PUBLIC_API_BASE;
-  let base = String(raw || "")
+  const raw = (
+    process.env.OG_SHARE_PUBLIC_BASE ||
+    process.env.PUBLIC_OG_BASE_URL ||
+    DEFAULT_PUBLIC_API_BASE
+  )
     .trim()
     .replace(/\/$/, "");
-  if (!base) base = DEFAULT_PUBLIC_API_BASE;
   try {
-    const host = new URL(base).hostname;
-    if (host === "localhost" || host === "127.0.0.1" || host.endsWith(".local")) {
+    const parsed = new URL(raw);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1"
+    ) {
       return DEFAULT_PUBLIC_API_BASE;
     }
+    return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return DEFAULT_PUBLIC_API_BASE;
   }
-  return base;
 }
 
 function normalizeHttpUrl(value) {
@@ -164,7 +171,18 @@ async function buildOgShareCardUrl({
     description: String(description || title || "Tap Shop now to continue.").slice(0, 200),
   });
 
-  return `${getPublicApiBase()}/og/s/${code}`;
+  const publicUrl = `${getPublicApiBase()}/og/s/${code}`;
+  if (/localhost|127\.0\.0\.1/i.test(publicUrl)) {
+    throw new Error(
+      "OG share URL resolved to localhost; Facebook cannot scrape it. Set OG_SHARE_PUBLIC_BASE=https://api.gcrgraphix.com",
+    );
+  }
+  console.log("[og-share] created public card", {
+    code,
+    publicUrl,
+    imageUrl: image.slice(0, 120),
+  });
+  return publicUrl;
 }
 
 async function loadOgShareCard(code) {
