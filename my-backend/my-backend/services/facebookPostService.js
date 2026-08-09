@@ -3,7 +3,6 @@ const FacebookConnection = require("../models/FacebookConnection");
 const FacebookOAuthState = require("../models/FacebookOAuthState");
 const {
   postImageToPage,
-  postLinkCardToPage,
   postPhotoStoryToPage,
   postImageToInstagram,
   postImageStoryToInstagram,
@@ -257,47 +256,40 @@ async function postPosterForUser({
   }
 
   if (link) {
-    try {
-      const linkResult = await postLinkCardToPage({
-        pageId,
-        pageAccessToken,
-        link,
-        message: captionText,
-        imageUrl: imageUrl.trim(),
-        ctaType: "SHOP_NOW",
-      });
+    // Poster must show: use photo post + tappable product URL in caption.
+    // Organic /feed?link= cards usually scrape the shop URL's OG image, not our poster.
+    const message = buildPhotoMessage(captionText, link);
+    console.log("[facebook] photo + product link (free organic)", {
+      userId: String(userId),
+      hasShareLink: true,
+      captionLength: message.length,
+      captionPreview: message.slice(0, 200),
+    });
 
-      console.log("[facebook] organic link card posted", {
-        userId: String(userId),
-        postId: linkResult.postId,
-        format: linkResult.format,
-        shareLink: link,
-      });
+    const result = await postImageToPage({
+      pageId,
+      pageAccessToken,
+      imageUrl: imageUrl.trim(),
+      caption: message,
+    });
 
-      return {
-        userId: String(connection.userId),
-        pageId,
-        pageName,
-        postId: linkResult.postId,
-        caption: captionText || null,
-        shareLink: link,
-        format: linkResult.format,
-        message:
-          "Posted free organic link card (tap opens your product URL). No Ads Manager / no spend.",
-      };
-    } catch (linkError) {
-      console.warn(
-        "[facebook] link card failed, falling back to photo + caption link:",
-        linkError?.message || linkError,
-      );
-    }
+    return {
+      userId: String(connection.userId),
+      pageId,
+      pageName,
+      postId: result.postId,
+      caption: message || null,
+      shareLink: link,
+      format: result.format || "photo_with_message",
+      message:
+        "Posted free organic photo with your poster image + Buy Now link in caption (tap the link). No Ads Manager / no spend.",
+    };
   }
 
-  const message = buildPhotoMessage(captionText, link);
+  const message = buildPhotoMessage(captionText, "");
   console.log("[facebook] photo caption built", {
     userId: String(userId),
-    hasShareLink: Boolean(link),
-    freeOrganic: Boolean(link),
+    hasShareLink: false,
     captionLength: message.length,
     captionPreview: message.slice(0, 200),
   });
@@ -315,11 +307,8 @@ async function postPosterForUser({
     pageName,
     postId: result.postId,
     caption: message || null,
-    shareLink: link || null,
+    shareLink: null,
     format: result.format || "photo",
-    message: link
-      ? "Posted free organic photo with product link in caption. No ads spend."
-      : undefined,
   };
 }
 
