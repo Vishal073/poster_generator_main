@@ -1009,6 +1009,112 @@ async function postImageToPage({
 }
 
 /**
+ * Free Amazon-style organic link card (no Ads Manager).
+ * POST /{page-id}/feed with link + message + optional SHOP_NOW CTA.
+ * Tap opens the product URL. No ad account / billing required.
+ */
+async function postLinkCardToPage({
+  pageId,
+  pageAccessToken,
+  link,
+  message = "",
+  imageUrl = "",
+  ctaType = "SHOP_NOW",
+}) {
+  const normalizedLink = String(link || "").trim();
+  if (!normalizedLink) {
+    const error = new Error("link is required for a Facebook link card post.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let finalLink = normalizedLink;
+  if (!/^https?:\/\//i.test(finalLink)) {
+    finalLink = `https://${finalLink}`;
+  }
+  try {
+    const parsed = new URL(finalLink);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      const error = new Error("link must be http(s).");
+      error.statusCode = 400;
+      throw error;
+    }
+    finalLink = parsed.toString();
+  } catch (error) {
+    if (error.statusCode) throw error;
+    const err = new Error("link must be a valid URL.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const caption = typeof message === "string" ? message.trim() : "";
+  const picture = String(imageUrl || "").trim();
+
+  async function postOnce(withCta) {
+    const form = new URLSearchParams();
+    form.set("link", finalLink);
+    if (caption) {
+      form.set("message", caption);
+    }
+    // Soft override for preview image when destination OG tags are weak.
+    if (picture && /^https?:\/\//i.test(picture)) {
+      form.set("picture", picture);
+    }
+    if (withCta && ctaType) {
+      form.set(
+        "call_to_action",
+        JSON.stringify({
+          type: ctaType,
+          value: { link: finalLink },
+        }),
+      );
+    }
+    form.set("access_token", pageAccessToken);
+
+    logFb("facebook.link_card_request", {
+      pageId,
+      withCta: Boolean(withCta),
+      ctaType: withCta ? ctaType : null,
+      link: finalLink.slice(0, 160),
+      hasPicture: Boolean(picture),
+      captionLength: caption.length,
+    });
+
+    const response = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/feed`,
+      form.toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        timeout: 60000,
+      },
+    );
+
+    return {
+      postId: response.data?.id || response.data?.post_id || null,
+      photoId: null,
+      format: withCta ? "organic_link_card_cta" : "organic_link_card",
+      caption: caption || null,
+      shareLink: finalLink,
+      raw: response.data,
+    };
+  }
+
+  try {
+    try {
+      return await postOnce(true);
+    } catch (ctaError) {
+      logFbWarn("facebook.link_card_cta_failed", {
+        pageId,
+        reason: getGraphErrorDetails(ctaError)?.message || String(ctaError?.message || ctaError),
+      });
+      return await postOnce(false);
+    }
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post organic link card to Facebook Page.");
+  }
+}
+
+/**
  * List recent posts on a Facebook Page (requires pages_read_engagement on token).
  */
 async function listPagePosts({ pageId, pageAccessToken, limit = 25 }) {
@@ -1660,6 +1766,7 @@ module.exports = {
   enrichPagesWithInstagram,
   fetchInstagramAccountForPage,
   postImageToPage,
+  postLinkCardToPage,
   postPhotoStoryToPage,
   postImageToInstagram,
   postImageStoryToInstagram,

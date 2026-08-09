@@ -3,6 +3,7 @@ const FacebookConnection = require("../models/FacebookConnection");
 const FacebookOAuthState = require("../models/FacebookOAuthState");
 const {
   postImageToPage,
+  postLinkCardToPage,
   postPhotoStoryToPage,
   postImageToInstagram,
   postImageStoryToInstagram,
@@ -137,18 +138,31 @@ function buildPhotoMessage(caption = "", shareLink = "") {
 
 function isBuyNowAdsEnabled() {
   const raw = process.env.FACEBOOK_BUY_NOW_ADS_ENABLED;
-  // Default ON — real Buy Now CTA via Marketing API when shareLink is set.
-  // Set FACEBOOK_BUY_NOW_ADS_ENABLED=0 for free organic caption links only.
-  if (raw === "0" || raw === "false" || raw === "no") {
-    return false;
+  // Default OFF — free organic link card (Amazon-style). Ads only if explicitly enabled.
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+function normalizeShareLink(shareLink = "") {
+  let raw = typeof shareLink === "string" ? shareLink.trim() : "";
+  if (!raw) return "";
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = `https://${raw}`;
   }
-  return true;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "";
+    }
+    return parsed.toString();
+  } catch {
+    return "";
+  }
 }
 
 /**
  * Post a public image URL to the Facebook Page saved for this app user.
- * With shareLink (default): Marketing API Buy Now ad (PAUSED) with BUY_NOW CTA.
- * Set FACEBOOK_BUY_NOW_ADS_ENABLED=0 for free organic caption link instead.
+ * With shareLink (default): free organic link card (tap → URL). No Ads Manager.
+ * Optional paid Ads CTA: FACEBOOK_BUY_NOW_ADS_ENABLED=1 + ads token/account.
  */
 async function postPosterForUser({
   userId,
@@ -172,7 +186,7 @@ async function postPosterForUser({
   const pageId = connection.selectedPage.pageId;
   const pageName = connection.selectedPage.pageName;
   const pageAccessToken = connection.selectedPage.pageAccessToken;
-  const link = typeof shareLink === "string" ? shareLink.trim() : "";
+  const link = normalizeShareLink(shareLink);
   const captionText = typeof caption === "string" ? caption.trim() : "";
 
   if (link && isBuyNowAdsEnabled()) {
@@ -216,7 +230,7 @@ async function postPosterForUser({
         /FACEBOOK_ADS_ACCESS_TOKEN/i.test(msg);
       if (tokenMissing) {
         const wrapped = new Error(
-          "Buy Now needs FACEBOOK_ADS_ACCESS_TOKEN + FACEBOOK_AD_ACCOUNT_ID on Render. Ads scopes cannot be requested via normal Facebook Login.",
+          "Buy Now ads need FACEBOOK_ADS_ACCESS_TOKEN + FACEBOOK_AD_ACCOUNT_ID (only when FACEBOOK_BUY_NOW_ADS_ENABLED=1).",
         );
         wrapped.statusCode = 403;
         wrapped.cause = error;
@@ -231,7 +245,7 @@ async function postPosterForUser({
         error?.facebook?.code === 10
       ) {
         const wrapped = new Error(
-          `Buy Now ads permission failed: ${msg}. Assign System User to Ad Account (ADVERTISE/MANAGE) + Page (ADVERTISE + CREATE_CONTENT), regenerate token with ads_management.`,
+          `Buy Now ads permission failed: ${msg}`,
         );
         wrapped.statusCode = 403;
         wrapped.cause = error;
@@ -239,6 +253,43 @@ async function postPosterForUser({
         throw wrapped;
       }
       throw error;
+    }
+  }
+
+  if (link) {
+    try {
+      const linkResult = await postLinkCardToPage({
+        pageId,
+        pageAccessToken,
+        link,
+        message: captionText,
+        imageUrl: imageUrl.trim(),
+        ctaType: "SHOP_NOW",
+      });
+
+      console.log("[facebook] organic link card posted", {
+        userId: String(userId),
+        postId: linkResult.postId,
+        format: linkResult.format,
+        shareLink: link,
+      });
+
+      return {
+        userId: String(connection.userId),
+        pageId,
+        pageName,
+        postId: linkResult.postId,
+        caption: captionText || null,
+        shareLink: link,
+        format: linkResult.format,
+        message:
+          "Posted free organic link card (tap opens your product URL). No Ads Manager / no spend.",
+      };
+    } catch (linkError) {
+      console.warn(
+        "[facebook] link card failed, falling back to photo + caption link:",
+        linkError?.message || linkError,
+      );
     }
   }
 
@@ -267,7 +318,7 @@ async function postPosterForUser({
     shareLink: link || null,
     format: result.format || "photo",
     message: link
-      ? "Posted organic photo with link in caption (ads CTA disabled)."
+      ? "Posted free organic photo with product link in caption. No ads spend."
       : undefined,
   };
 }
