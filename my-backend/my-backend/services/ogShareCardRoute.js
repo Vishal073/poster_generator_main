@@ -79,17 +79,17 @@ function escapeHtml(value) {
 }
 
 function isSocialCrawler(userAgent = "") {
-  return /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|meta-externalagent|Googlebot/i.test(
+  return /facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|meta-externalagent|Googlebot|Bingbot|DuckDuckBot/i.test(
     String(userAgent || ""),
   );
 }
 
-function renderOgHtml({ title, description, imageUrl, destinationUrl, pageUrl }) {
+/** Crawler HTML: poster og:image only — NO redirect (Meta follows refresh and scrapes the shop logo). */
+function renderOgHtmlForCrawler({ title, description, imageUrl, pageUrl }) {
   const safeTitle = escapeHtml(title || "Shop now");
   const safeDesc = escapeHtml(description || "Tap Shop now to continue.");
   const safeImage = escapeHtml(imageUrl);
-  const safeDest = escapeHtml(destinationUrl);
-  const safePage = escapeHtml(pageUrl || destinationUrl);
+  const safePage = escapeHtml(pageUrl);
 
   return `<!doctype html>
 <html lang="en">
@@ -112,13 +112,9 @@ function renderOgHtml({ title, description, imageUrl, destinationUrl, pageUrl })
   <meta name="twitter:description" content="${safeDesc}" />
   <meta name="twitter:image" content="${safeImage}" />
   <link rel="image_src" href="${safeImage}" />
-  <meta http-equiv="refresh" content="0;url=${safeDest}" />
 </head>
-<body style="font-family:system-ui,sans-serif;padding:24px;background:#111;color:#fff">
-  <p>${safeTitle}</p>
-  <p><img src="${safeImage}" alt="" width="600" style="max-width:100%;height:auto" /></p>
-  <p><a href="${safeDest}" style="color:#9cf">Continue to shop</a></p>
-  <script>location.replace(${JSON.stringify(destinationUrl)});</script>
+<body>
+  <img src="${safeImage}" alt="${safeTitle}" width="1200" height="630" />
 </body>
 </html>`;
 }
@@ -134,7 +130,8 @@ async function buildOgShareCardUrl({
   description = "",
 }) {
   const dest = normalizeHttpUrl(destinationUrl);
-  const image = toOgBannerImage(imageUrl);
+  // Prefer original poster URL for scrape reliability (transforms can 404 some assets).
+  const image = normalizeHttpUrl(imageUrl) || toOgBannerImage(imageUrl);
   if (!dest || !image) {
     return null;
   }
@@ -151,13 +148,14 @@ async function buildOgShareCardUrl({
   const publicUrl = `${getPublicApiBase()}/og/s/${code}`;
   if (/localhost|127\.0\.0\.1/i.test(publicUrl)) {
     throw new Error(
-      "OG share URL resolved to localhost; Facebook cannot scrape it. Set OG_SHARE_PUBLIC_BASE=https://api.gcrgraphix.com",
+      "OG share URL resolved to localhost; Facebook cannot scrape it.",
     );
   }
   console.log("[og-share] created public card", {
     code,
     publicUrl,
-    imageUrl: image.slice(0, 120),
+    imageUrl: image.slice(0, 160),
+    destinationUrl: dest.slice(0, 120),
   });
   return publicUrl;
 }
@@ -170,8 +168,8 @@ async function loadOgShareCard(code) {
 
 /**
  * GET /og/s/:code
- * Always return 200 HTML with og:image so Facebook scrape never misses the poster.
- * Humans are redirected via meta-refresh + JS to the shop URL.
+ * - Facebook crawler → 200 HTML with poster og:image (no redirects)
+ * - Humans / Shop now tap → 302 to real shop URL
  */
 router.get("/og/s/:code", async (req, res) => {
   try {
@@ -183,19 +181,23 @@ router.get("/og/s/:code", async (req, res) => {
         .send("<p>Share link not found. Create a new Facebook post from the app.</p>");
     }
 
+    const ua = req.get("user-agent") || "";
+    if (!isSocialCrawler(ua)) {
+      return res.redirect(302, card.destinationUrl);
+    }
+
     const pageUrl = `${getPublicApiBase()}/og/s/${card.code}`;
-    const html = renderOgHtml({
+    const html = renderOgHtmlForCrawler({
       title: card.title,
       description: card.description,
       imageUrl: card.imageUrl,
-      destinationUrl: card.destinationUrl,
       pageUrl,
     });
 
     return res
       .status(200)
       .type("html")
-      .set("Cache-Control", "public, max-age=60")
+      .set("Cache-Control", "public, max-age=300")
       .send(html);
   } catch (error) {
     console.error("[og-share] serve failed", error?.message || error);
