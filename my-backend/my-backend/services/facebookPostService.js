@@ -110,7 +110,8 @@ function buildSelectedPageSnapshot(page) {
 }
 
 /**
- * Append product URL to organic photo/video message (fallback only).
+ * Append product URL as: Buy now: https://...
+ * Facebook treats bare https URLs in captions as tappable.
  */
 function buildPhotoMessage(caption = "", shareLink = "") {
   const message = typeof caption === "string" ? caption.trim() : "";
@@ -132,9 +133,10 @@ function buildPhotoMessage(caption = "", shareLink = "") {
     return message;
   }
 
-  if (!message) return link;
+  const buyLine = `Buy now: ${link}`;
+  if (!message) return buyLine;
   if (message.includes(link)) return message;
-  return `${message}\n\n${link}`;
+  return `${message}\n\n${buyLine}`;
 }
 
 function isBuyNowAdsEnabled() {
