@@ -363,8 +363,14 @@ async function postPosterForUser({
 
 /**
  * Post a public image URL to Instagram linked to the user's selected Facebook Page.
+ * Organic IG feed cannot show Facebook-style Shop now CTA; we append shareLink in caption.
  */
-async function postPosterToInstagramForUser({ userId, imageUrl, caption = "" }) {
+async function postPosterToInstagramForUser({
+  userId,
+  imageUrl,
+  caption = "",
+  shareLink = "",
+}) {
   if (!isValidObjectId(userId)) {
     const error = new Error("userId must be a valid MongoDB User _id.");
     error.statusCode = 400;
@@ -388,11 +394,15 @@ async function postPosterToInstagramForUser({ userId, imageUrl, caption = "" }) 
     throw error;
   }
 
+  const link = normalizeShareLink(shareLink);
+  const captionText = typeof caption === "string" ? caption.trim() : "";
+  const finalCaption = buildPhotoMessage(captionText, link);
+
   const result = await postImageToInstagram({
     igUserId: instagramAccount.igUserId,
     pageAccessToken: connection.selectedPage.pageAccessToken,
     imageUrl: imageUrl.trim(),
-    caption: typeof caption === "string" ? caption.trim() : "",
+    caption: finalCaption,
   });
 
   return {
@@ -402,6 +412,8 @@ async function postPosterToInstagramForUser({ userId, imageUrl, caption = "" }) 
     igUserId: instagramAccount.igUserId,
     username: instagramAccount.username || null,
     mediaId: result.mediaId,
+    shareLink: link || null,
+    caption: finalCaption || null,
   };
 }
 
@@ -596,7 +608,12 @@ async function postReelForUser({
   };
 }
 
-async function postReelToInstagramForUser({ userId, videoUrl, caption = "" }) {
+async function postReelToInstagramForUser({
+  userId,
+  videoUrl,
+  caption = "",
+  shareLink = "",
+}) {
   if (!isValidObjectId(userId)) {
     const error = new Error("userId must be a valid MongoDB User _id.");
     error.statusCode = 400;
@@ -620,11 +637,15 @@ async function postReelToInstagramForUser({ userId, videoUrl, caption = "" }) {
     throw error;
   }
 
+  const link = normalizeShareLink(shareLink);
+  const captionText = typeof caption === "string" ? caption.trim() : "";
+  const finalCaption = buildPhotoMessage(captionText, link);
+
   const result = await postReelToInstagram({
     igUserId: instagramAccount.igUserId,
     pageAccessToken: connection.selectedPage.pageAccessToken,
     videoUrl: videoUrl.trim(),
-    caption: typeof caption === "string" ? caption.trim() : "",
+    caption: finalCaption,
   });
 
   return {
@@ -634,6 +655,8 @@ async function postReelToInstagramForUser({ userId, videoUrl, caption = "" }) {
     igUserId: instagramAccount.igUserId,
     username: instagramAccount.username || null,
     mediaId: result.mediaId,
+    shareLink: link || null,
+    caption: finalCaption || null,
   };
 }
 

@@ -684,11 +684,13 @@ async function generatePoster(req, res) {
               userId: resolvedUserId,
               videoUrl,
               caption: instagramCaption,
+              shareLink,
             })
           : await postPosterToInstagramForUser({
               userId: resolvedUserId,
               imageUrl: uploadResult.imageUrl,
               caption: instagramCaption,
+              shareLink,
             });
         instagramResult = {
           success: true,
@@ -1318,11 +1320,13 @@ router.post(
                     userId: String(userId),
                     videoUrl,
                     caption: instagramCaption,
+                    shareLink,
                   })
                 : await postPosterToInstagramForUser({
                     userId: String(userId),
                     imageUrl: uploadResult.imageUrl,
                     caption: instagramCaption,
+                    shareLink,
                   });
               instagramResult = { success: true, ...posted };
             } catch (error) {
