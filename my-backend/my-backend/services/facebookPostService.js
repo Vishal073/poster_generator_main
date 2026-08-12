@@ -110,8 +110,9 @@ function buildSelectedPageSnapshot(page) {
 }
 
 /**
- * Append product URL as: Buy now: https://...
- * Facebook treats bare https URLs in captions as tappable.
+ * Append product URL as a bare https line so Facebook auto-linkifies it.
+ *   Buy now:
+ *   https://example.com
  */
 function buildPhotoMessage(caption = "", shareLink = "") {
   const message = typeof caption === "string" ? caption.trim() : "";
@@ -133,10 +134,10 @@ function buildPhotoMessage(caption = "", shareLink = "") {
     return message;
   }
 
-  const buyLine = `Buy now: ${link}`;
-  if (!message) return buyLine;
+  const buyBlock = `Buy now:\n${link}`;
+  if (!message) return buyBlock;
   if (message.includes(link)) return message;
-  return `${message}\n\n${buyLine}`;
+  return `${message}\n\n${buyBlock}`;
 }
 
 function isBuyNowAdsEnabled() {
@@ -285,7 +286,8 @@ async function postPosterForUser({
         pageId,
         pageAccessToken,
         link: ogCardUrl,
-        message: captionText || cardTitle,
+        // Shop now CTA + bare shop URL in message (Facebook linkifies https lines).
+        message: buildPhotoMessage(captionText || cardTitle, link),
         ctaType: "SHOP_NOW",
       });
 
