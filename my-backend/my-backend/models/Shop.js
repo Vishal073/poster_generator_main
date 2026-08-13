@@ -39,6 +39,18 @@ const shopSchema = new mongoose.Schema(
       index: true,
       sparse: true,
     },
+    upiId: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 100,
+    },
+    upiPayeeName: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 120,
+    },
   },
   {
     timestamps: true,

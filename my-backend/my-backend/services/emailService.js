@@ -143,6 +143,63 @@ async function sendShopOrderNotificationEmail({ order, shopName }) {
   }
 }
 
+async function sendShopPaymentPendingEmail({ order, shopName }) {
+  if (!order) {
+    return { sent: false, reason: "missing-order" };
+  }
+
+  if (!isSmtpConfigured()) {
+    console.warn(
+      "Shop payment pending email skipped: SMTP is not configured.",
+    );
+    return { sent: false, reason: "smtp-not-configured" };
+  }
+
+  const toEmail =
+    process.env.SHOP_ORDER_NOTIFY_EMAIL?.trim() || DEFAULT_SHOP_ORDER_NOTIFY_EMAIL;
+  const amount = order.unitPrice * (order.quantity || 1);
+  const shipping = order.shipping || {};
+
+  const text = [
+    "Customer says they paid via UPI — please confirm in shop admin.",
+    "",
+    `Order number: ${order.orderNumber}`,
+    `Shop: ${shopName || order.shopSlug}`,
+    `Product: ${order.productName}`,
+    order.size ? `Size: ${order.size}` : null,
+    order.color ? `Color: ${order.color}` : null,
+    `Amount: ${formatInr(amount)}`,
+    "",
+    `Customer: ${shipping.name || ""}`,
+    `Mobile: ${shipping.mobile || ""}`,
+    "",
+    "Check your UPI/bank app for the payment, then confirm the order in admin.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const transporter = createTransporter();
+    const sender = process.env.SMTP_FROM || process.env.SMTP_USER;
+
+    await transporter.sendMail({
+      from: sender,
+      to: toEmail,
+      subject: `UPI payment pending — ${order.orderNumber}`,
+      text,
+      html: text.replace(/\n/g, "<br/>"),
+    });
+
+    return { sent: true, toEmail };
+  } catch (error) {
+    console.error("Failed to send shop payment pending email:", error);
+    return {
+      sent: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function sendPosterEmail({ toEmail, posterBuffer, fileName, fromEmail }) {
   if (!toEmail || typeof toEmail !== "string") {
     throw new Error("Recipient email is required.");
@@ -172,4 +229,5 @@ async function sendPosterEmail({ toEmail, posterBuffer, fileName, fromEmail }) {
 module.exports = {
   sendPosterEmail,
   sendShopOrderNotificationEmail,
+  sendShopPaymentPendingEmail,
 };

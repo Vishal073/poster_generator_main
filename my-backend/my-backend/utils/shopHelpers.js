@@ -136,7 +136,40 @@ function formatShopForPublic(shop) {
     slug: shop.slug,
     description: shop.description || "",
     logoUrl: shop.logoUrl || "",
+    upiConfigured: Boolean(String(shop.upiId || "").trim()),
   };
+}
+
+function formatShopForAdmin(shop) {
+  return {
+    ...formatShopForPublic(shop),
+    upiId: shop.upiId || "",
+    upiPayeeName: shop.upiPayeeName || "",
+  };
+}
+
+function normalizeUpiId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 100);
+}
+
+function isValidUpiId(upiId) {
+  return /^[\w.-]{2,256}@[\w]{2,64}$/.test(upiId);
+}
+
+function buildUpiPaymentUri({ upiId, payeeName, amountInRupees, orderNumber }) {
+  const params = new URLSearchParams();
+  params.set("pa", upiId);
+  if (payeeName) {
+    params.set("pn", String(payeeName).trim().slice(0, 120));
+  }
+  params.set("am", Number(amountInRupees).toFixed(2));
+  params.set("cu", "INR");
+  params.set("tn", `Order ${orderNumber}`.slice(0, 80));
+  params.set("tr", orderNumber.slice(0, 40));
+  return `upi://pay?${params.toString()}`;
 }
 
 function formatShopAdminSummary(shop, productCount = 0) {
@@ -247,8 +280,10 @@ function formatOrderForClient(order) {
     quantity: order.quantity,
     amount: order.unitPrice * order.quantity,
     paymentStatus: order.paymentStatus,
+    paymentGateway: order.paymentGateway || null,
     shipping: order.shipping,
     createdAt: order.createdAt,
+    customerMarkedPaidAt: order.customerMarkedPaidAt || null,
   };
 }
 
@@ -338,7 +373,11 @@ module.exports = {
   getProductStock,
   getTotalProductStock,
   formatShopForPublic,
+  formatShopForAdmin,
   formatShopAdminSummary,
+  normalizeUpiId,
+  isValidUpiId,
+  buildUpiPaymentUri,
   formatProductSummary,
   formatProductDetail,
   generateOrderNumber,

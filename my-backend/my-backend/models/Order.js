@@ -55,15 +55,16 @@ const orderSchema = new mongoose.Schema(
     shipping: { type: shippingSchema, required: true },
     paymentStatus: {
       type: String,
-      enum: ["pending", "paid", "failed"],
+      enum: ["pending", "awaiting_confirmation", "paid", "failed"],
       default: "pending",
       index: true,
     },
     paymentGateway: {
       type: String,
-      enum: ["cashfree", "razorpay"],
+      enum: ["cashfree", "razorpay", "upi_manual"],
       default: "cashfree",
     },
+    customerMarkedPaidAt: { type: Date, default: null },
     cashfreeOrderId: { type: String, default: "", trim: true, index: true },
     cashfreeCfOrderId: { type: String, default: "", trim: true },
     cashfreePaymentId: { type: String, default: "", trim: true },

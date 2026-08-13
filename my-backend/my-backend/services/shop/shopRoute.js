@@ -14,7 +14,8 @@ const {
   sanitizeShippingInput,
   validateShipping,
   formatOrderForClient,
-  decrementProductStock,
+  buildUpiPaymentUri,
+  isValidUpiId,
 } = require("../../utils/shopHelpers");
 const { resolveShopBySlug, formatShopForPublicWithOwner } = require("../../utils/shopUserSync");
 const {
@@ -22,9 +23,28 @@ const {
   createRazorpayOrder,
   verifyRazorpayPaymentSignature,
 } = require("./razorpayService");
-const { sendShopOrderNotificationEmail } = require("../emailService");
+const {
+  isCashfreeConfigured,
+  createCashfreeOrder,
+  fetchCashfreeOrder,
+  isCashfreeOrderPaid,
+} = require("./cashfreeService");
+const { sendShopPaymentPendingEmail } = require("../emailService");
+const { finalizeShopOrderPayment } = require("./shopOrderPayment");
 
 const router = express.Router();
+
+function getShopPublicBaseUrl() {
+  return (
+    process.env.SHOP_PUBLIC_URL?.trim().replace(/\/$/, "") ||
+    "https://gcrgraphix.com"
+  );
+}
+
+function buildCashfreeReturnUrl({ shopSlug, productSlug, orderId }) {
+  const base = getShopPublicBaseUrl();
+  return `${base}/shop/${encodeURIComponent(shopSlug)}/${encodeURIComponent(productSlug)}/success?shopOrderId=${encodeURIComponent(orderId)}&order_id={order_id}`;
+}
 
 function getErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -428,42 +448,287 @@ router.post("/shop/payments/razorpay/verify", async (req, res) => {
       });
     }
 
-    const product = await Product.findById(order.productId).lean();
-    if (!product) {
+    const result = await finalizeShopOrderPayment(order, {
+      paymentGateway: "razorpay",
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    });
+
+    return res.status(result.status).json({
+      success: result.ok,
+      order: result.order,
+      message: result.message,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify payment.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/payments/cashfree/create — create Cashfree session for a pending shop order */
+router.post("/shop/payments/cashfree/create", async (req, res) => {
+  try {
+    if (!isCashfreeConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: "Online payment is not configured yet.",
+      });
+    }
+
+    const orderId = getMongoId(req.body?.orderId);
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid order id is required.",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
       return res.status(404).json({
         success: false,
-        message: "Product not found.",
+        message: "Order not found.",
       });
     }
 
-    const availableStock = getProductStock(product, order.size, order.color);
-    if (availableStock <= 0) {
+    if (order.paymentStatus === "paid") {
       return res.status(409).json({
         success: false,
-        message: "Product went out of stock before payment completed.",
+        message: "This order is already paid.",
       });
     }
 
-    const stockResult = await decrementProductStock(
-      order.productId,
-      order.size,
-      order.color,
-    );
-    if (!stockResult.ok) {
+    const amount = order.unitPrice * order.quantity;
+    const cashfreeOrderId = `${order.orderNumber}-${Date.now()}`.slice(0, 50);
+
+    const payment = await createCashfreeOrder({
+      orderId: cashfreeOrderId,
+      orderAmount: amount,
+      customerDetails: {
+        customerId: order.shipping?.mobile || orderId,
+        name: order.shipping?.name || "",
+        email: order.shipping?.email || "",
+        mobile: order.shipping?.mobile || "",
+      },
+      returnUrl: buildCashfreeReturnUrl({
+        shopSlug: order.shopSlug,
+        productSlug: order.productSlug,
+        orderId: String(order._id),
+      }),
+      orderNote: `${order.productName} · ${order.orderNumber}`,
+    });
+
+    order.cashfreeOrderId = payment.cashfreeOrderId;
+    order.paymentGateway = "cashfree";
+    order.paymentStatus = "pending";
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      payment: {
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        amount,
+        paymentSessionId: payment.paymentSessionId,
+        cashfreeOrderId: payment.cashfreeOrderId,
+        mode: payment.mode,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start payment.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/payments/cashfree/verify — verify Cashfree payment and mark order paid */
+router.post("/shop/payments/cashfree/verify", async (req, res) => {
+  try {
+    if (!isCashfreeConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: "Online payment is not configured yet.",
+      });
+    }
+
+    const orderId = getMongoId(req.body?.orderId);
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid order id is required.",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    if (order.paymentStatus === "paid") {
+      return res.status(200).json({
+        success: true,
+        order: formatOrderForClient(order),
+        message: "Payment already verified.",
+      });
+    }
+
+    if (!order.cashfreeOrderId) {
+      return res.status(400).json({
+        success: false,
+        message: "No Cashfree payment found for this order.",
+      });
+    }
+
+    const cashfreeOrder = await fetchCashfreeOrder(order.cashfreeOrderId);
+    if (!isCashfreeOrderPaid(cashfreeOrder)) {
+      return res.status(402).json({
+        success: false,
+        message: "Payment is not completed yet. Please try again.",
+        cashfreeStatus: cashfreeOrder.order_status || "UNKNOWN",
+      });
+    }
+
+    if (cashfreeOrder.cf_order_id) {
+      order.cashfreeCfOrderId = String(cashfreeOrder.cf_order_id);
+    }
+
+    const result = await finalizeShopOrderPayment(order, {
+      paymentGateway: "cashfree",
+    });
+
+    return res.status(result.status).json({
+      success: result.ok,
+      order: result.order,
+      message: result.message,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify payment.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/payments/upi/details — UPI QR payment details for a pending order */
+router.post("/shop/payments/upi/details", async (req, res) => {
+  try {
+    const orderId = getMongoId(req.body?.orderId);
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid order id is required.",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    if (order.paymentStatus === "paid") {
       return res.status(409).json({
         success: false,
-        message: stockResult.message,
+        message: "This order is already paid.",
       });
     }
 
-    order.paymentStatus = "paid";
-    order.razorpayOrderId = razorpayOrderId;
-    order.razorpayPaymentId = razorpayPaymentId;
-    order.razorpaySignature = razorpaySignature;
+    const shop = await Shop.findById(order.shopId).lean();
+    const upiId = String(shop?.upiId || "").trim().toLowerCase();
+    if (!upiId || !isValidUpiId(upiId)) {
+      return res.status(503).json({
+        success: false,
+        message: "UPI payment is not set up for this shop yet.",
+      });
+    }
+
+    const amount = order.unitPrice * order.quantity;
+    const payeeName = String(shop?.upiPayeeName || shop?.name || "").trim();
+    const upiUri = buildUpiPaymentUri({
+      upiId,
+      payeeName,
+      amountInRupees: amount,
+      orderNumber: order.orderNumber,
+    });
+
+    order.paymentGateway = "upi_manual";
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      payment: {
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        amount,
+        upiId,
+        payeeName,
+        upiUri,
+        paymentStatus: order.paymentStatus,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load UPI payment details.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/payments/upi/mark-paid — customer confirms UPI payment sent */
+router.post("/shop/payments/upi/mark-paid", async (req, res) => {
+  try {
+    const orderId = getMongoId(req.body?.orderId);
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid order id is required.",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found.",
+      });
+    }
+
+    if (order.paymentStatus === "paid") {
+      return res.status(200).json({
+        success: true,
+        order: formatOrderForClient(order),
+        message: "Payment already confirmed.",
+      });
+    }
+
+    if (order.paymentStatus === "awaiting_confirmation") {
+      return res.status(200).json({
+        success: true,
+        order: formatOrderForClient(order),
+        message: "Payment already submitted for confirmation.",
+      });
+    }
+
+    order.paymentStatus = "awaiting_confirmation";
+    order.paymentGateway = "upi_manual";
+    order.customerMarkedPaidAt = new Date();
     await order.save();
 
     const shop = await Shop.findById(order.shopId).lean();
-    void sendShopOrderNotificationEmail({
+    void sendShopPaymentPendingEmail({
       order,
       shopName: shop?.name || order.shopSlug,
     });
@@ -471,11 +736,12 @@ router.post("/shop/payments/razorpay/verify", async (req, res) => {
     return res.status(200).json({
       success: true,
       order: formatOrderForClient(order),
+      message: "Payment submitted. The shop will confirm shortly.",
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: "Failed to verify payment.",
+      message: "Failed to submit payment confirmation.",
       error: getErrorMessage(error),
     });
   }
