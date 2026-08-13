@@ -884,9 +884,20 @@ async function getFacebookStatusByUserIds(userIds) {
     return map;
   }
 
-  const connections = await FacebookConnection.find({ userId: { $in: validIds } })
-    .select("userId selectedPage facebookUserId includeInstagramPermissions updatedAt")
-    .lean();
+  const connections = await FacebookConnection.collection
+    .find(
+      { userId: { $in: validIds.map((id) => new mongoose.Types.ObjectId(String(id))) } },
+      {
+        projection: {
+          userId: 1,
+          includeInstagramPermissions: 1,
+          "selectedPage.pageId": 1,
+          "selectedPage.pageName": 1,
+          "selectedPage.instagramAccount": 1,
+        },
+      },
+    )
+    .toArray();
 
   for (const connection of connections) {
     const instagramAccount = connection.selectedPage?.instagramAccount;

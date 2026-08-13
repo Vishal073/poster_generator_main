@@ -103,14 +103,22 @@ function decryptToken(stored) {
   const tag = Buffer.from(tagB64, "base64url");
   const encrypted = Buffer.from(dataB64, "base64url");
 
-  const decipher = crypto.createDecipheriv(ALGORITHM, getEncryptionKey(), iv);
-  decipher.setAuthTag(tag);
-  const decrypted = Buffer.concat([
-    decipher.update(encrypted),
-    decipher.final(),
-  ]);
+  try {
+    const decipher = crypto.createDecipheriv(ALGORITHM, getEncryptionKey(), iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([
+      decipher.update(encrypted),
+      decipher.final(),
+    ]);
 
-  return decrypted.toString("utf8");
+    return decrypted.toString("utf8");
+  } catch (error) {
+    console.warn(
+      "[Facebook tokens] Failed to decrypt stored token — reconnect Facebook if posting fails:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return "";
+  }
 }
 
 module.exports = {
