@@ -52,6 +52,16 @@ function applyOccupationFields(payload, body) {
     return payload;
   }
 
+  if (payload.shopType) {
+    payload.occupationType = "Shopkeeper";
+    if (!payload.address) {
+      payload.address = post;
+    }
+    payload.post = "";
+    payload.party = "";
+    return payload;
+  }
+
   payload.post = post;
   payload.party = party;
   payload.shopType = "";

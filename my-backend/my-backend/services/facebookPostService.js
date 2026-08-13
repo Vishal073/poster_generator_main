@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const FacebookConnection = require("../models/FacebookConnection");
+const { loadDecryptedConnectionLean } = require("../utils/facebookConnectionTokens");
 const FacebookOAuthState = require("../models/FacebookOAuthState");
 const {
   postImageToPage,
@@ -35,7 +36,7 @@ async function getFacebookConnectionForUser(userId) {
     throw error;
   }
 
-  const connection = await FacebookConnection.findOne({ userId }).lean();
+  const connection = await loadDecryptedConnectionLean({ userId });
   if (!connection) {
     const error = new Error("This user has not connected Facebook yet.");
     error.statusCode = 404;

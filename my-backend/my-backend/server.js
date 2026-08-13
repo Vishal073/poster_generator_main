@@ -19,6 +19,8 @@ const { router: eventPosterRoute } = require("./services/eventPosterRoute");
 const { router: reelsRoute } = require("./services/reelsRoute");
 const { router: musicRoute } = require("./services/musicRoute");
 const { router: ogShareCardRoute } = require("./services/ogShareCardRoute");
+const { router: shopRoute } = require("./services/shop/shopRoute");
+const { router: shopAdminRoute } = require("./services/shop/shopAdminRoute");
 const FacebookConnection = require("./models/FacebookConnection");
 
 const app = express();
@@ -106,6 +108,8 @@ app.use(eventPosterRoute);
 app.use(reelsRoute);
 app.use(musicRoute);
 app.use(ogShareCardRoute);
+app.use(shopAdminRoute);
+app.use(shopRoute);
 app.use(whatsappFlowRoute);
 app.use(facebookRoutes);
 
@@ -152,6 +156,8 @@ async function startServer() {
   });
   console.log("MongoDB Connected");
   await removeFacebookConnectionTtlIndex();
+  const { startFacebookTokenRefreshJob } = require("./services/facebookTokenRefreshService");
+  startFacebookTokenRefreshJob();
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);

@@ -1,8 +1,13 @@
 const mongoose = require("mongoose");
+const {
+  sealPlainTokensBeforeSave,
+  decryptLoadedConnectionDoc,
+} = require("../utils/facebookConnectionTokenFields");
 
 /**
  * Stores Facebook OAuth session data and the user's selected Page for posting.
  * Created after OAuth callback; updated when the user picks a Page.
+ * Access tokens are encrypted at rest (AES-256-GCM) before save.
  */
 const facebookPageSchema = new mongoose.Schema(
   {
@@ -26,7 +31,6 @@ const facebookPageSchema = new mongoose.Schema(
 
 const facebookConnectionSchema = new mongoose.Schema(
   {
-    // Temporary session id passed to the frontend after OAuth redirect
     sessionId: {
       type: String,
       required: true,
@@ -34,7 +38,6 @@ const facebookConnectionSchema = new mongoose.Schema(
       index: true,
       trim: true,
     },
-    // Optional link to your app's User document
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -47,18 +50,20 @@ const facebookConnectionSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
-    // Long-lived user access token (used to refresh page tokens if needed)
     userAccessToken: {
       type: String,
       trim: true,
       default: "",
     },
-    // All Pages returned from /me/accounts during OAuth
+    userTokenExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     pages: {
       type: [facebookPageSchema],
       default: [],
     },
-    // Page the user chose for auto-posting
     selectedPage: {
       type: facebookPageSchema,
       default: null,
@@ -76,5 +81,34 @@ const facebookConnectionSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+facebookConnectionSchema.pre("save", function encryptTokensBeforeSave(next) {
+  try {
+    sealPlainTokensBeforeSave(this);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+function decryptMany(docs) {
+  if (!docs) {
+    return;
+  }
+
+  if (Array.isArray(docs)) {
+    for (const doc of docs) {
+      decryptLoadedConnectionDoc(doc);
+    }
+    return;
+  }
+
+  decryptLoadedConnectionDoc(docs);
+}
+
+facebookConnectionSchema.post("init", decryptMany);
+facebookConnectionSchema.post("save", decryptMany);
+facebookConnectionSchema.post("find", decryptMany);
+facebookConnectionSchema.post("findOne", decryptMany);
 
 module.exports = mongoose.model("FacebookConnection", facebookConnectionSchema);

@@ -46,6 +46,12 @@ const {
   buildFacebookConnectUrl,
   resolvePublicApiBaseUrl,
 } = require("../services/facebookPostService");
+const {
+  sealConnectionTokens,
+  computeUserTokenExpiresAt,
+  refreshConnectionUserToken,
+  loadDecryptedConnection,
+} = require("../utils/facebookConnectionTokens");
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 // Incomplete OAuth (no Page saved yet) — metadata only; not auto-deleted by MongoDB.
@@ -330,6 +336,7 @@ async function persistFacebookConnection({
   selectedPage,
   expiresAt,
   includeInstagramPermissions = false,
+  userTokenExpiresAt,
 }) {
   const sessionId = createSessionId();
   const storedPages = sanitizePagesForStorage(pages || []);
@@ -339,18 +346,22 @@ async function persistFacebookConnection({
       )
     : null;
 
+  const payload = sealConnectionTokens({
+    sessionId,
+    userId,
+    facebookUserId,
+    userAccessToken,
+    pages: storedPages,
+    selectedPage: storedSelectedPage,
+    includeInstagramPermissions: Boolean(includeInstagramPermissions),
+    expiresAt,
+    userTokenExpiresAt:
+      userTokenExpiresAt || computeUserTokenExpiresAt(null),
+  });
+
   await FacebookConnection.findOneAndUpdate(
     { userId },
-    {
-      sessionId,
-      userId,
-      facebookUserId,
-      userAccessToken,
-      pages: storedPages,
-      selectedPage: storedSelectedPage,
-      includeInstagramPermissions: Boolean(includeInstagramPermissions),
-      expiresAt,
-    },
+    payload,
     { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true },
   );
 
@@ -558,6 +569,7 @@ async function handleFacebookCallback(req, res) {
           selectedPage: null,
           expiresAt: getConnectionExpiresAt(null),
           includeInstagramPermissions,
+          userTokenExpiresAt: computeUserTokenExpiresAt(longLived.expiresIn),
         });
       } catch (saveError) {
         console.error(
@@ -602,6 +614,7 @@ async function handleFacebookCallback(req, res) {
         selectedPage: autoSelectedPage,
         expiresAt: connectionExpiresAt,
         includeInstagramPermissions,
+        userTokenExpiresAt: computeUserTokenExpiresAt(longLived.expiresIn),
       });
     } catch (saveError) {
       console.error(
@@ -650,7 +663,12 @@ async function handleFacebookCallback(req, res) {
 }
 
 async function syncConnectionPagesFromFacebook(connection) {
-  if (!connection.userAccessToken) {
+  const refreshed = await refreshConnectionUserToken(connection, {
+    save: true,
+    syncPages: false,
+  });
+
+  if (!refreshed?.userAccessToken) {
     const error = new Error(
       "Facebook access expired. Tap Connect Facebook again to sign in.",
     );
@@ -658,16 +676,19 @@ async function syncConnectionPagesFromFacebook(connection) {
     throw error;
   }
 
+  connection.userAccessToken = refreshed.userAccessToken;
+  connection.userTokenExpiresAt = refreshed.userTokenExpiresAt;
+
   logFb("pages.sync_start", {
     userId: String(connection.userId),
     facebookUserId: connection.facebookUserId || null,
     selectedPageId: connection.selectedPage?.pageId || null,
   });
 
-  const rawPages = await fetchUserPages(connection.userAccessToken);
+  const rawPages = await fetchUserPages(refreshed.userAccessToken);
   let pages = rawPages;
   if (connection.includeInstagramPermissions) {
-    pages = await enrichPagesWithInstagram(rawPages, connection.userAccessToken);
+    pages = await enrichPagesWithInstagram(rawPages, refreshed.userAccessToken);
   }
   connection.pages = sanitizePagesForStorage(pages);
 
@@ -699,7 +720,6 @@ function formatPageForApi(page, includeInstagram = true) {
   return {
     pageId: plain.pageId,
     pageName: plain.pageName,
-    pageAccessToken: plain.pageAccessToken,
     instagramAccount:
       includeInstagram && plain.instagramAccount?.igUserId
       ? {
@@ -992,7 +1012,7 @@ async function getFacebookConnectionByUser(req, res) {
     const user = await resolveAppUserId(req.params.userId);
     const shouldRefresh = String(req.query.refresh || "").trim() === "true";
 
-    let connection = await FacebookConnection.findOne({ userId: user._id });
+    let connection = await loadDecryptedConnection({ userId: user._id });
     if (!connection) {
       return res.status(404).json({
         success: false,

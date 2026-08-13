@@ -81,6 +81,16 @@ function applyOccupationFields(payload, body) {
     return payload;
   }
 
+  if (payload.shopType) {
+    payload.occupationType = "Shopkeeper";
+    if (!payload.address) {
+      payload.address = post;
+    }
+    payload.post = "";
+    payload.party = "";
+    return payload;
+  }
+
   payload.post = post;
   payload.party = party;
   payload.shopType = "";
@@ -387,6 +397,15 @@ router.put("/users/:id", requireAuth, requireDb, upload.single("userImage"), asy
       ? req.body
       : {};
     const payload = buildUserPayload(body);
+
+    if (!payload.occupationType && existingUser.occupationType) {
+      payload.occupationType = existingUser.occupationType;
+    }
+
+    if (payload.shopType && !payload.occupationType) {
+      payload.occupationType = "Shopkeeper";
+    }
+
     const missingFields = validateUserPayload(payload);
 
     if (missingFields.length > 0) {

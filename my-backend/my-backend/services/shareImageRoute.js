@@ -8,6 +8,10 @@ const { sendWhatsAppImageSmart } = require("./whatsappTemplateService");
 const {
   postPosterForUser,
   postReelForUser,
+  postPosterToInstagramForUser,
+  postReelToInstagramForUser,
+  postPosterStoryForUser,
+  postPosterStoryToInstagramForUser,
 } = require("./facebookPostService");
 const { queueReadyReelForDownload } = require("./whatsappReelDelivery");
 const {
@@ -40,7 +44,7 @@ const imageUpload = multer({
 const shareMediaUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 15 * 1024 * 1024,
+    fileSize: 50 * 1024 * 1024,
   },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === "image") {
@@ -53,6 +57,13 @@ const shareMediaUpload = multer({
     if (file.fieldname === "audio" || file.fieldname === "song") {
       if (!isAudioUpload(file)) {
         return cb(new Error("Only audio files are allowed for song/audio."));
+      }
+      return cb(null, true);
+    }
+
+    if (file.fieldname === "video") {
+      if (!file.mimetype || !file.mimetype.startsWith("video/")) {
+        return cb(new Error("Only video files are allowed for video."));
       }
       return cb(null, true);
     }
@@ -173,6 +184,22 @@ function getAudioFile(req) {
   return null;
 }
 
+function getVideoFile(req) {
+  if (Array.isArray(req.files?.video) && req.files.video[0]) {
+    return req.files.video[0];
+  }
+  if (Array.isArray(req.files)) {
+    return req.files.find((file) => file.fieldname === "video") || null;
+  }
+  return null;
+}
+
+function getShareVideoFileName(user, originalName) {
+  const extension = String(originalName || "").match(/\.[^.]+$/)?.[0] || ".mp4";
+  const mobile = String(user.mobileNumber || "").replace(/\D/g, "");
+  return `share-video-${mobile || user._id}-${Date.now()}${extension}`;
+}
+
 /**
  * POST /users/:id/share-image/generate-ai
  * multipart: references[] (1–5 images)
@@ -288,7 +315,7 @@ router.post(
 
 /**
  * POST /users/:id/share-image
- * multipart: image (file) OR field imageUrl (Cloudinary URL from generate-ai)
+ * multipart: image (file) OR video (file) OR field imageUrl (Cloudinary URL from generate-ai)
  * optional: audio / song (file) — image becomes a video with the song
  * fields: sendWhatsApp, uploadToFacebook, caption, whatsappMessage
  */
@@ -298,6 +325,7 @@ router.post(
   requireDb,
   shareMediaUpload.fields([
     { name: "image", maxCount: 1 },
+    { name: "video", maxCount: 1 },
     { name: "audio", maxCount: 1 },
     { name: "song", maxCount: 1 },
   ]),
@@ -320,20 +348,32 @@ router.post(
         });
       }
 
-      let imageInput;
-      try {
-        imageInput = await resolveShareImageBuffer(req);
-      } catch (error) {
+      let imageInput = null;
+      const videoFile = getVideoFile(req);
+
+      if (!videoFile) {
+        try {
+          imageInput = await resolveShareImageBuffer(req);
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message: getErrorMessage(error),
+          });
+        }
+      }
+
+      if (!videoFile && !imageInput) {
         return res.status(400).json({
           success: false,
-          message: getErrorMessage(error),
+          message:
+            "Provide an image file, a video file, or imageUrl from AI generation.",
         });
       }
 
-      if (!imageInput) {
+      if (videoFile && imageInput) {
         return res.status(400).json({
           success: false,
-          message: "Provide an image file (field: image) or imageUrl from AI generation.",
+          message: "Send either an image or a video file, not both.",
         });
       }
 
@@ -348,8 +388,25 @@ router.post(
       const uploadToFacebook = isTruthyParam(
         body.uploadToFacebook ?? body.postToFacebook ?? body.facebook
       );
+      const uploadToInstagram = isTruthyParam(
+        body.uploadToInstagram ?? body.postToInstagram ?? body.instagram
+      );
+      const uploadToFacebookStory = isTruthyParam(
+        body.uploadToFacebookStory ??
+          body.postToFacebookStory ??
+          body.facebookStory
+      );
+      const uploadToInstagramStory = isTruthyParam(
+        body.uploadToInstagramStory ??
+          body.postToInstagramStory ??
+          body.instagramStory
+      );
       const caption =
         typeof body.caption === "string" ? body.caption.trim() : "";
+      const instagramCaption =
+        typeof body.instagramCaption === "string"
+          ? body.instagramCaption.trim()
+          : caption;
       const shareLinkRaw =
         typeof body.shareLink === "string"
           ? body.shareLink
@@ -382,14 +439,21 @@ router.post(
           ? body.whatsappMessage.trim()
           : "Here is your image";
 
-      if (!sendWhatsApp && !uploadToFacebook) {
+      if (
+        !sendWhatsApp &&
+        !uploadToFacebook &&
+        !uploadToInstagram &&
+        !uploadToFacebookStory &&
+        !uploadToInstagramStory
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Enable at least one of sendWhatsApp or uploadToFacebook.",
+          message:
+            "Enable at least one of WhatsApp, Facebook, Instagram, or Story upload.",
         });
       }
 
-      let imageUrl = imageInput.imageUrl;
+      let imageUrl = imageInput?.imageUrl;
       let uploadResult;
       let videoUrl = null;
       const audioFile = getAudioFile(req);
@@ -403,7 +467,24 @@ router.post(
       const hasAudioUrl = Boolean(audioUrlField);
       const hasAudio = hasAudioFile || hasAudioUrl;
 
-      if (imageInput.source === "imageUrl" && imageUrl) {
+      if (videoFile) {
+        if (hasAudio) {
+          return res.status(400).json({
+            success: false,
+            message: "Song/audio cannot be added to an uploaded video file.",
+          });
+        }
+
+        uploadResult = await uploadBufferToCloudinary(
+          videoFile.buffer,
+          getShareVideoFileName(user, videoFile.originalname),
+          {
+            resource_type: "video",
+            folder: process.env.CLOUDINARY_SHARE_VIDEO_FOLDER || "shared-videos",
+          },
+        );
+        videoUrl = uploadResult.videoUrl;
+      } else if (imageInput.source === "imageUrl" && imageUrl) {
         uploadResult = {
           imageUrl,
           publicId:
@@ -467,6 +548,9 @@ router.post(
 
       let whatsappResult;
       let facebookResult;
+      let instagramResult;
+      let facebookStoryResult;
+      let instagramStoryResult;
 
       if (sendWhatsApp) {
         try {
@@ -554,6 +638,70 @@ router.post(
         }
       }
 
+      if (uploadToInstagram) {
+        try {
+          const posted = videoUrl
+            ? await postReelToInstagramForUser({
+                userId: String(user._id),
+                videoUrl,
+                caption: instagramCaption,
+                shareLink,
+              })
+            : await postPosterToInstagramForUser({
+                userId: String(user._id),
+                imageUrl,
+                caption: instagramCaption,
+                shareLink,
+              });
+          instagramResult = { success: true, ...posted };
+        } catch (error) {
+          instagramResult = {
+            success: false,
+            message: getErrorMessage(error),
+          };
+        }
+      }
+
+      if (uploadToFacebookStory && imageUrl) {
+        try {
+          const posted = await postPosterStoryForUser({
+            userId: String(user._id),
+            imageUrl,
+          });
+          facebookStoryResult = { success: true, ...posted };
+        } catch (error) {
+          facebookStoryResult = {
+            success: false,
+            message: getErrorMessage(error),
+          };
+        }
+      } else if (uploadToFacebookStory && !imageUrl) {
+        facebookStoryResult = {
+          success: false,
+          message: "Facebook Story requires an image (not video-only upload).",
+        };
+      }
+
+      if (uploadToInstagramStory && imageUrl) {
+        try {
+          const posted = await postPosterStoryToInstagramForUser({
+            userId: String(user._id),
+            imageUrl,
+          });
+          instagramStoryResult = { success: true, ...posted };
+        } catch (error) {
+          instagramStoryResult = {
+            success: false,
+            message: getErrorMessage(error),
+          };
+        }
+      } else if (uploadToInstagramStory && !imageUrl) {
+        instagramStoryResult = {
+          success: false,
+          message: "Instagram Story requires an image (not video-only upload).",
+        };
+      }
+
       let message = "Image uploaded successfully.";
       if (videoUrl) {
         if (sendWhatsApp && uploadToFacebook && facebookResult?.success) {
@@ -579,6 +727,16 @@ router.post(
         message = "Image uploaded and posted to Facebook.";
       }
 
+      if (instagramResult?.success) {
+        message = `${message.replace(/\.$/, "")} and posted to Instagram.`;
+      }
+      if (facebookStoryResult?.success) {
+        message = `${message.replace(/\.$/, "")} and posted to Facebook Story.`;
+      }
+      if (instagramStoryResult?.success) {
+        message = `${message.replace(/\.$/, "")} and posted to Instagram Story.`;
+      }
+
       return res.status(200).json({
         success: true,
         message,
@@ -591,8 +749,14 @@ router.post(
         cloudinaryPublicId: uploadResult.publicId,
         sendWhatsApp,
         uploadToFacebook,
+        uploadToInstagram,
+        uploadToFacebookStory,
+        uploadToInstagramStory,
         whatsapp: whatsappResult,
         facebook: facebookResult,
+        instagram: instagramResult,
+        facebookStory: facebookStoryResult,
+        instagramStory: instagramStoryResult,
       });
     } catch (error) {
       return res.status(500).json({
