@@ -9,6 +9,7 @@ const {
   formatProductSummary,
   formatProductDetail,
   getProductStock,
+  hasColorOptions,
   generateOrderNumber,
   sanitizeShippingInput,
   validateShipping,
@@ -187,6 +188,12 @@ router.post("/shop/:shopSlug/orders", async (req, res) => {
             .slice(0, 20)
         : null;
 
+    const color = hasColorOptions(product)
+      ? String(req.body?.color || "")
+          .trim()
+          .slice(0, 80)
+      : null;
+
     if (product.category === "readywear") {
       if (!size) {
         return res.status(400).json({
@@ -202,7 +209,22 @@ router.post("/shop/:shopSlug/orders", async (req, res) => {
       }
     }
 
-    const availableStock = getProductStock(product, size);
+    if (hasColorOptions(product)) {
+      if (!color) {
+        return res.status(400).json({
+          success: false,
+          message: "Color is required for this product.",
+        });
+      }
+      if (!product.colorOptions.some((option) => option.name === color)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid color selected.",
+        });
+      }
+    }
+
+    const availableStock = getProductStock(product, size, color);
     if (availableStock <= 0) {
       return res.status(409).json({
         success: false,
@@ -223,6 +245,7 @@ router.post("/shop/:shopSlug/orders", async (req, res) => {
           productSlug,
           productName: product.name,
           size,
+          color,
           unitPrice: product.price,
           quantity: 1,
           shipping,
@@ -413,7 +436,7 @@ router.post("/shop/payments/razorpay/verify", async (req, res) => {
       });
     }
 
-    const availableStock = getProductStock(product, order.size);
+    const availableStock = getProductStock(product, order.size, order.color);
     if (availableStock <= 0) {
       return res.status(409).json({
         success: false,
@@ -421,7 +444,11 @@ router.post("/shop/payments/razorpay/verify", async (req, res) => {
       });
     }
 
-    const stockResult = await decrementProductStock(order.productId, order.size);
+    const stockResult = await decrementProductStock(
+      order.productId,
+      order.size,
+      order.color,
+    );
     if (!stockResult.ok) {
       return res.status(409).json({
         success: false,

@@ -37,6 +37,10 @@ const productSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    videos: {
+      type: [String],
+      default: [],
+    },
     category: {
       type: String,
       enum: ["readywear", "other"],
@@ -44,6 +48,17 @@ const productSchema = new mongoose.Schema(
     },
     sizes: {
       type: [String],
+      default: [],
+    },
+    colorOptions: {
+      type: [
+        {
+          name: { type: String, required: true, trim: true, maxlength: 80 },
+          images: { type: [String], default: [] },
+          stock: { type: Number, default: 0, min: 0 },
+          stockBySize: { type: Map, of: Number, default: undefined },
+        },
+      ],
       default: [],
     },
     price: {

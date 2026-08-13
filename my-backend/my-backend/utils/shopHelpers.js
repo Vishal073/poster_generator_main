@@ -20,21 +20,113 @@ function normalizeProductId(value) {
     .slice(0, 80);
 }
 
-function getProductStock(product, size) {
+function readStockMap(stockMap, size) {
+  if (stockMap instanceof Map) {
+    return Number(stockMap.get(size)) || 0;
+  }
+  if (stockMap && typeof stockMap === "object") {
+    return Number(stockMap[size]) || 0;
+  }
+  return 0;
+}
+
+function formatStockBySize(stockBySize) {
+  if (stockBySize instanceof Map) {
+    return Object.fromEntries(stockBySize.entries());
+  }
+  return stockBySize || {};
+}
+
+function hasColorOptions(product) {
+  return Array.isArray(product?.colorOptions) && product.colorOptions.length > 0;
+}
+
+function findColorOption(product, colorName) {
+  if (!hasColorOptions(product) || !colorName) {
+    return null;
+  }
+  return product.colorOptions.find((option) => option.name === colorName) || null;
+}
+
+function getProductStock(product, size, colorName) {
+  if (hasColorOptions(product)) {
+    const option = findColorOption(product, colorName);
+    if (!option) {
+      return 0;
+    }
+
+    if (product.category === "readywear") {
+      if (!size) {
+        return 0;
+      }
+      return readStockMap(option.stockBySize, size);
+    }
+
+    return Number(option.stock) || 0;
+  }
+
   if (product.category === "readywear") {
     if (!size) {
       return 0;
     }
-    const stockMap = product.stockBySize;
-    if (stockMap instanceof Map) {
-      return Number(stockMap.get(size)) || 0;
-    }
-    if (stockMap && typeof stockMap === "object") {
-      return Number(stockMap[size]) || 0;
-    }
-    return 0;
+    return readStockMap(product.stockBySize, size);
   }
+
   return Number(product.stock) || 0;
+}
+
+function getTotalProductStock(product) {
+  if (hasColorOptions(product)) {
+    return product.colorOptions.reduce((sum, option) => {
+      if (product.category === "readywear") {
+        const stockMap = formatStockBySize(option.stockBySize);
+        return (
+          sum +
+          Object.values(stockMap).reduce(
+            (optionSum, count) => optionSum + (Number(count) || 0),
+            0,
+          )
+        );
+      }
+      return sum + (Number(option.stock) || 0);
+    }, 0);
+  }
+
+  if (product.category === "readywear") {
+    const stockMap = formatStockBySize(product.stockBySize);
+    return Object.values(stockMap).reduce(
+      (sum, count) => sum + (Number(count) || 0),
+      0,
+    );
+  }
+
+  return Number(product.stock) || 0;
+}
+
+function formatColorOptions(product) {
+  if (!hasColorOptions(product)) {
+    return undefined;
+  }
+
+  return product.colorOptions.map((option) => ({
+    name: option.name,
+    images: option.images || [],
+    stock: product.category === "other" ? Number(option.stock) || 0 : undefined,
+    stockBySize:
+      product.category === "readywear"
+        ? formatStockBySize(option.stockBySize)
+        : undefined,
+  }));
+}
+
+function getProductDisplayImages(product) {
+  if (hasColorOptions(product)) {
+    const colorImages = product.colorOptions.flatMap((option) => option.images || []);
+    if (colorImages.length > 0) {
+      return colorImages;
+    }
+  }
+  return product.images || [];
 }
 
 function formatShopForPublic(shop) {
@@ -60,18 +152,27 @@ function formatProductSummary(product) {
       ? Object.fromEntries(product.stockBySize.entries())
       : product.stockBySize || {};
 
+  const colorOptions = formatColorOptions(product);
+  const images = getProductDisplayImages(product);
+
   return {
     id: String(product._id),
     productId: product.productId,
     shopSlug: product.shopSlug,
     name: product.name,
     description: product.description,
-    images: product.images || [],
+    images,
+    videos: product.videos || [],
     category: product.category,
     sizes: product.sizes || [],
+    colorOptions,
     price: product.price,
-    stock: product.category === "other" ? getProductStock(product) : undefined,
-    stockBySize: product.category === "readywear" ? stockBySize : undefined,
+    stock:
+      product.category === "other" && !colorOptions
+        ? getProductStock(product)
+        : undefined,
+    stockBySize:
+      product.category === "readywear" && !colorOptions ? stockBySize : undefined,
   };
 }
 
@@ -141,6 +242,7 @@ function formatOrderForClient(order) {
     productSlug: order.productSlug,
     productName: order.productName,
     size: order.size || null,
+    color: order.color || null,
     unitPrice: order.unitPrice,
     quantity: order.quantity,
     amount: order.unitPrice * order.quantity,
@@ -150,11 +252,44 @@ function formatOrderForClient(order) {
   };
 }
 
-async function decrementProductStock(productId, size) {
+async function decrementProductStock(productId, size, colorName) {
   const Product = require("../models/Product");
-  const product = await Product.findById(productId).lean();
+  const product = await Product.findById(productId);
   if (!product) {
     return { ok: false, message: "Product not found." };
+  }
+
+  if (hasColorOptions(product)) {
+    const option = product.colorOptions.find((item) => item.name === colorName);
+    if (!option) {
+      return { ok: false, message: "Invalid color selected." };
+    }
+
+    if (product.category === "readywear") {
+      if (!size) {
+        return { ok: false, message: "Size is required." };
+      }
+
+      const current = readStockMap(option.stockBySize, size);
+      if (current <= 0) {
+        return {
+          ok: false,
+          message: "Selected size is out of stock for this color.",
+        };
+      }
+
+      if (!option.stockBySize) {
+        option.stockBySize = new Map();
+      }
+      option.stockBySize.set(size, current - 1);
+    } else if (option.stock <= 0) {
+      return { ok: false, message: "Selected color is out of stock." };
+    } else {
+      option.stock -= 1;
+    }
+
+    await product.save();
+    return { ok: true, product: product.toObject() };
   }
 
   if (product.category === "readywear") {
@@ -199,7 +334,9 @@ module.exports = {
   slugify,
   normalizeShopSlug,
   normalizeProductId,
+  hasColorOptions,
   getProductStock,
+  getTotalProductStock,
   formatShopForPublic,
   formatShopAdminSummary,
   formatProductSummary,

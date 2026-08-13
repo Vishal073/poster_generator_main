@@ -17,14 +17,54 @@ const {
 
 const router = express.Router();
 const MAX_PRODUCT_IMAGES = 12;
+const MAX_PRODUCT_VIDEOS = 3;
+const MAX_COLOR_OPTIONS = 10;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 
-const productImageUpload = multer({
+const colorImageFields = Array.from({ length: MAX_COLOR_OPTIONS }, (_, index) => ({
+  name: `colorImages_${index}`,
+  maxCount: MAX_PRODUCT_IMAGES,
+}));
+
+const productMediaUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024,
-    files: MAX_PRODUCT_IMAGES,
+    fileSize: MAX_VIDEO_BYTES,
+    files:
+      MAX_PRODUCT_IMAGES +
+      MAX_PRODUCT_VIDEOS +
+      MAX_COLOR_OPTIONS * MAX_PRODUCT_IMAGES,
   },
-});
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === "productImages") {
+      if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+        return cb(new Error("Only image files are allowed for product images."));
+      }
+      return cb(null, true);
+    }
+
+    if (file.fieldname === "productVideos") {
+      if (!file.mimetype || !file.mimetype.startsWith("video/")) {
+        return cb(new Error("Only video files are allowed for product videos."));
+      }
+      return cb(null, true);
+    }
+
+    if (/^colorImages_\d+$/.test(file.fieldname)) {
+      if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+        return cb(new Error("Only image files are allowed for color images."));
+      }
+      return cb(null, true);
+    }
+
+    return cb(new Error(`Unexpected upload field: ${file.fieldname}`));
+  },
+}).fields([
+  { name: "productImages", maxCount: MAX_PRODUCT_IMAGES },
+  { name: "productVideos", maxCount: MAX_PRODUCT_VIDEOS },
+  ...colorImageFields,
+]);
 
 function getErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -38,6 +78,28 @@ function requireDb(req, res, next) {
     });
   }
   return next();
+}
+
+function getUploadedFiles(req, fieldName) {
+  if (Array.isArray(req.files?.[fieldName])) {
+    return req.files[fieldName];
+  }
+
+  if (Array.isArray(req.files)) {
+    return req.files.filter((file) => file.fieldname === fieldName);
+  }
+
+  return [];
+}
+
+function assertFileSizes(files, maxBytes, label) {
+  for (const file of files) {
+    if (file.size > maxBytes) {
+      const error = new Error(`${label} must be ${Math.round(maxBytes / (1024 * 1024))} MB or smaller.`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
 }
 
 function parseSizes(value) {
@@ -64,11 +126,15 @@ function parseStockBySize(raw, sizes) {
   return new Map(sizes.map((size) => [size, defaultStock]));
 }
 
-function parseImageUrls(body) {
+function parseMediaUrls(body, options) {
   const urls = [];
+  const arrayKey = options.arrayKey;
+  const textKey = options.textKey;
+  const singleKey = options.singleKey;
+  const maxCount = options.maxCount;
 
-  if (Array.isArray(body?.images)) {
-    body.images.forEach((item) => {
+  if (Array.isArray(body?.[arrayKey])) {
+    body[arrayKey].forEach((item) => {
       const value = String(item || "").trim().slice(0, 500);
       if (value) {
         urls.push(value);
@@ -76,21 +142,39 @@ function parseImageUrls(body) {
     });
   }
 
-  const imageUrlsText = body?.imageUrls;
-  if (typeof imageUrlsText === "string" && imageUrlsText.trim()) {
-    imageUrlsText
+  const textValue = body?.[textKey];
+  if (typeof textValue === "string" && textValue.trim()) {
+    textValue
       .split(/[\n,]+/)
       .map((item) => item.trim().slice(0, 500))
       .filter(Boolean)
       .forEach((value) => urls.push(value));
   }
 
-  const singleUrl = String(body?.imageUrl || "").trim().slice(0, 500);
+  const singleUrl = String(body?.[singleKey] || "").trim().slice(0, 500);
   if (singleUrl) {
     urls.unshift(singleUrl);
   }
 
-  return [...new Set(urls)].slice(0, MAX_PRODUCT_IMAGES);
+  return [...new Set(urls)].slice(0, maxCount);
+}
+
+function parseImageUrls(body) {
+  return parseMediaUrls(body, {
+    arrayKey: "images",
+    textKey: "imageUrls",
+    singleKey: "imageUrl",
+    maxCount: MAX_PRODUCT_IMAGES,
+  });
+}
+
+function parseVideoUrls(body) {
+  return parseMediaUrls(body, {
+    arrayKey: "videos",
+    textKey: "videoUrls",
+    singleKey: "videoUrl",
+    maxCount: MAX_PRODUCT_VIDEOS,
+  });
 }
 
 async function uploadProductImages(files) {
@@ -110,6 +194,107 @@ async function uploadProductImages(files) {
   return urls;
 }
 
+async function uploadProductVideos(files) {
+  const urls = [];
+
+  for (const file of files || []) {
+    const uploaded = await uploadBufferToCloudinary(
+      file.buffer,
+      file.originalname,
+      {
+        folder: "shop-products",
+        resource_type: "video",
+      },
+    );
+    if (uploaded?.videoUrl) {
+      urls.push(uploaded.videoUrl);
+    }
+  }
+
+  return urls;
+}
+
+function parseColorOptionImageUrls(item) {
+  const urls = [];
+
+  if (Array.isArray(item?.imageUrls)) {
+    item.imageUrls.forEach((value) => {
+      const url = String(value || "").trim().slice(0, 500);
+      if (url) {
+        urls.push(url);
+      }
+    });
+  } else if (typeof item?.imageUrls === "string" && item.imageUrls.trim()) {
+    item.imageUrls
+      .split(/[\n,]+/)
+      .map((value) => value.trim().slice(0, 500))
+      .filter(Boolean)
+      .forEach((value) => urls.push(value));
+  } else if (Array.isArray(item?.images)) {
+    item.images.forEach((value) => {
+      const url = String(value || "").trim().slice(0, 500);
+      if (url) {
+        urls.push(url);
+      }
+    });
+  }
+
+  return [...new Set(urls)].slice(0, MAX_PRODUCT_IMAGES);
+}
+
+async function parseColorOptions(body, req, category, sizes, defaultStock) {
+  let raw = body?.colorOptions;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = [];
+    }
+  }
+
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const options = [];
+
+  for (let index = 0; index < raw.length && index < MAX_COLOR_OPTIONS; index += 1) {
+    const item = raw[index];
+    const name = String(item?.name || "").trim().slice(0, 80);
+    if (!name) {
+      continue;
+    }
+
+    const imageUrls = parseColorOptionImageUrls(item);
+    const uploadedFiles = getUploadedFiles(req, `colorImages_${index}`);
+    assertFileSizes(uploadedFiles, MAX_IMAGE_BYTES, "Each color image");
+    const uploadedImages = await uploadProductImages(uploadedFiles);
+    const images = [...imageUrls, ...uploadedImages].slice(0, MAX_PRODUCT_IMAGES);
+    const stock = Math.max(0, Number(item?.stock ?? defaultStock) || 0);
+
+    const option = {
+      name,
+      images,
+      stock: category === "other" ? stock : 0,
+    };
+
+    if (category === "readywear") {
+      option.stockBySize = parseStockBySize(
+        item?.stockBySize || { defaultStock: item?.stock ?? defaultStock },
+        sizes,
+      );
+    }
+
+    options.push(option);
+  }
+
+  return options;
+}
+
+function flattenColorOptionImages(colorOptions) {
+  return colorOptions.flatMap((option) => option.images || []).slice(0, MAX_PRODUCT_IMAGES);
+}
+
 function sanitizeProductInput(body) {
   const name = String(body?.name || "").trim().slice(0, 200);
   const productId = normalizeProductId(
@@ -119,7 +304,13 @@ function sanitizeProductInput(body) {
   const category = body?.category === "readywear" ? "readywear" : "other";
   const price = Number(body?.price);
   const imageUrls = parseImageUrls(body);
+  const videoUrls = parseVideoUrls(body);
   const isActive = body?.isActive !== false;
+  const sizes = category === "readywear" ? parseSizes(body?.sizes) : [];
+  const defaultStock =
+    category === "other"
+      ? Math.max(0, Number(body?.stock) || 0)
+      : Math.max(0, Number(body?.defaultStock ?? body?.stock) || 0);
 
   return {
     name,
@@ -128,13 +319,15 @@ function sanitizeProductInput(body) {
     category,
     price,
     imageUrls,
+    videoUrls,
     isActive,
-    sizes: category === "readywear" ? parseSizes(body?.sizes) : [],
-    stock: category === "other" ? Math.max(0, Number(body?.stock) || 0) : 0,
+    sizes,
+    stock: category === "other" ? defaultStock : 0,
     stockBySize:
       category === "readywear"
-        ? parseStockBySize(body?.stockBySize, parseSizes(body?.sizes))
+        ? parseStockBySize(body?.stockBySize, sizes)
         : undefined,
+    defaultStock,
   };
 }
 
@@ -152,6 +345,50 @@ function validateProductInput(product) {
     return "At least one size is required for readywear.";
   }
   return null;
+}
+
+function validateColorOptions(colorOptions) {
+  const names = new Set();
+  for (const option of colorOptions) {
+    if (names.has(option.name)) {
+      return "Each color name must be unique.";
+    }
+    names.add(option.name);
+    if (!option.images || option.images.length === 0) {
+      return `Add at least one image for color "${option.name}".`;
+    }
+  }
+  return null;
+}
+
+async function resolveUploadedMedia(req, input) {
+  const imageFiles = getUploadedFiles(req, "productImages");
+  const videoFiles = getUploadedFiles(req, "productVideos");
+
+  assertFileSizes(imageFiles, MAX_IMAGE_BYTES, "Each image");
+  assertFileSizes(videoFiles, MAX_VIDEO_BYTES, "Each video");
+
+  const uploadedImages = await uploadProductImages(imageFiles);
+  const uploadedVideos = await uploadProductVideos(videoFiles);
+  const colorOptions = await parseColorOptions(
+    req.body,
+    req,
+    input.category,
+    input.sizes,
+    input.defaultStock,
+  );
+
+  const hasColorOptions = colorOptions.length > 0;
+  const fallbackImages = [...input.imageUrls, ...uploadedImages].slice(
+    0,
+    MAX_PRODUCT_IMAGES,
+  );
+
+  return {
+    images: hasColorOptions ? flattenColorOptionImages(colorOptions) : fallbackImages,
+    videos: [...input.videoUrls, ...uploadedVideos].slice(0, MAX_PRODUCT_VIDEOS),
+    colorOptions,
+  };
 }
 
 router.use(requireDb);
@@ -219,85 +456,188 @@ router.get("/shop/admin/:shopSlug/products", requireAuth, async (req, res) => {
 router.post(
   "/shop/admin/:shopSlug/products",
   requireAuth,
-  productImageUpload.array("productImages", MAX_PRODUCT_IMAGES),
+  productMediaUpload,
   async (req, res) => {
-  try {
-    const shopSlug = normalizeShopSlug(req.params.shopSlug);
-    if (!shopSlug) {
-      return res.status(400).json({
+    try {
+      const shopSlug = normalizeShopSlug(req.params.shopSlug);
+      if (!shopSlug) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid shop name.",
+        });
+      }
+
+      const shop = await resolveShopBySlug(shopSlug);
+      if (!shop) {
+        return res.status(404).json({
+          success: false,
+          message: "Shop not found. Register a user with occupation Shop first.",
+        });
+      }
+
+      const input = sanitizeProductInput(req.body);
+      const validationError = validateProductInput(input);
+      if (validationError) {
+        return res.status(400).json({
+          success: false,
+          message: validationError,
+        });
+      }
+
+      const existing = await Product.findOne({
+        shopSlug: shop.slug,
+        productId: input.productId,
+      }).lean();
+
+      if (existing) {
+        return res.status(409).json({
+          success: false,
+          message: "A product with this id already exists.",
+        });
+      }
+
+      const media = await resolveUploadedMedia(req, input);
+      const colorValidationError = validateColorOptions(media.colorOptions);
+      if (colorValidationError) {
+        return res.status(400).json({
+          success: false,
+          message: colorValidationError,
+        });
+      }
+
+      const payload = {
+        shopId: shop._id,
+        shopSlug: shop.slug,
+        productId: input.productId,
+        name: input.name,
+        description: input.description,
+        images: media.images,
+        videos: media.videos,
+        colorOptions: media.colorOptions,
+        category: input.category,
+        sizes: input.sizes,
+        price: input.price,
+        isActive: input.isActive,
+      };
+
+      if (media.colorOptions.length > 0) {
+        payload.stock = 0;
+        payload.stockBySize = undefined;
+      } else if (input.category === "readywear") {
+        payload.stockBySize = input.stockBySize;
+      } else {
+        payload.stock = input.stock;
+      }
+
+      const product = await Product.create(payload);
+
+      return res.status(201).json({
+        success: true,
+        product: formatProductSummary(product.toObject()),
+      });
+    } catch (error) {
+      const statusCode = error?.statusCode === 400 ? 400 : 500;
+      return res.status(statusCode).json({
         success: false,
-        message: "Invalid shop name.",
+        message: error?.statusCode === 400 ? getErrorMessage(error) : "Failed to add product.",
+        error: getErrorMessage(error),
       });
     }
+  },
+);
 
-    const shop = await resolveShopBySlug(shopSlug);
-    if (!shop) {
-      return res.status(404).json({
+/** PUT /shop/admin/:shopSlug/products/:productId — update a product (admin only) */
+router.put(
+  "/shop/admin/:shopSlug/products/:productId",
+  requireAuth,
+  productMediaUpload,
+  async (req, res) => {
+    try {
+      const shopSlug = normalizeShopSlug(req.params.shopSlug);
+      const currentProductId = normalizeProductId(req.params.productId);
+
+      if (!shopSlug || !currentProductId) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid shop or product id.",
+        });
+      }
+
+      const shop = await resolveShopBySlug(shopSlug);
+      if (!shop) {
+        return res.status(404).json({
+          success: false,
+          message: "Shop not found.",
+        });
+      }
+
+      const existing = await Product.findOne({
+        shopSlug: shop.slug,
+        productId: currentProductId,
+      });
+
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: "Product not found.",
+        });
+      }
+
+      const input = sanitizeProductInput(req.body);
+      const validationError = validateProductInput(input);
+      if (validationError) {
+        return res.status(400).json({
+          success: false,
+          message: validationError,
+        });
+      }
+
+      const media = await resolveUploadedMedia(req, input);
+      const colorValidationError = validateColorOptions(media.colorOptions);
+      if (colorValidationError) {
+        return res.status(400).json({
+          success: false,
+          message: colorValidationError,
+        });
+      }
+
+      existing.name = input.name;
+      existing.description = input.description;
+      existing.category = input.category;
+      existing.price = input.price;
+      existing.sizes = input.sizes;
+      existing.images = media.images;
+      existing.videos = media.videos;
+      existing.colorOptions = media.colorOptions;
+      existing.isActive = input.isActive;
+
+      if (media.colorOptions.length > 0) {
+        existing.stock = 0;
+        existing.stockBySize = undefined;
+      } else if (input.category === "readywear") {
+        existing.stockBySize = input.stockBySize;
+        existing.stock = 0;
+      } else {
+        existing.stock = input.stock;
+        existing.stockBySize = undefined;
+      }
+
+      await existing.save();
+
+      return res.status(200).json({
+        success: true,
+        product: formatProductSummary(existing.toObject()),
+      });
+    } catch (error) {
+      const statusCode = error?.statusCode === 400 ? 400 : 500;
+      return res.status(statusCode).json({
         success: false,
-        message: "Shop not found. Register a user with occupation Shop first.",
+        message:
+          error?.statusCode === 400 ? getErrorMessage(error) : "Failed to update product.",
+        error: getErrorMessage(error),
       });
     }
-
-    const input = sanitizeProductInput(req.body);
-    const validationError = validateProductInput(input);
-    if (validationError) {
-      return res.status(400).json({
-        success: false,
-        message: validationError,
-      });
-    }
-
-    const existing = await Product.findOne({
-      shopSlug: shop.slug,
-      productId: input.productId,
-    }).lean();
-
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        message: "A product with this id already exists.",
-      });
-    }
-
-    const uploadedImages = await uploadProductImages(req.files);
-    const images = [...input.imageUrls, ...uploadedImages].slice(
-      0,
-      MAX_PRODUCT_IMAGES,
-    );
-
-    const payload = {
-      shopId: shop._id,
-      shopSlug: shop.slug,
-      productId: input.productId,
-      name: input.name,
-      description: input.description,
-      images,
-      category: input.category,
-      sizes: input.sizes,
-      price: input.price,
-      isActive: input.isActive,
-    };
-
-    if (input.category === "readywear") {
-      payload.stockBySize = input.stockBySize;
-    } else {
-      payload.stock = input.stock;
-    }
-
-    const product = await Product.create(payload);
-
-    return res.status(201).json({
-      success: true,
-      product: formatProductSummary(product.toObject()),
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: "Failed to add product.",
-      error: getErrorMessage(error),
-    });
-  }
-},
+  },
 );
 
 module.exports = { router };

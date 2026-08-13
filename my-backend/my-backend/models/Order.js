@@ -49,6 +49,7 @@ const orderSchema = new mongoose.Schema(
     },
     productName: { type: String, required: true, trim: true, maxlength: 200 },
     size: { type: String, default: null, trim: true, maxlength: 20 },
+    color: { type: String, default: null, trim: true, maxlength: 80 },
     unitPrice: { type: Number, required: true, min: 0 },
     quantity: { type: Number, default: 1, min: 1, max: 1 },
     shipping: { type: shippingSchema, required: true },

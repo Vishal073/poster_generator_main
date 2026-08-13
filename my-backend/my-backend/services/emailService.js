@@ -56,6 +56,7 @@ function buildShopOrderEmailContent({ order, shopName }) {
     "Product",
     `- ${order.productName}`,
     order.size ? `- Size: ${order.size}` : null,
+    order.color ? `- Color: ${order.color}` : null,
     `- Price: ${formatInr(order.unitPrice)}`,
     `- Total: ${formatInr(amount)}`,
     "",
@@ -82,6 +83,7 @@ function buildShopOrderEmailContent({ order, shopName }) {
     <ul>
       <li>${order.productName}</li>
       ${order.size ? `<li>Size: ${order.size}</li>` : ""}
+      ${order.color ? `<li>Color: ${order.color}</li>` : ""}
       <li>Price: ${formatInr(order.unitPrice)}</li>
       <li>Total: ${formatInr(amount)}</li>
     </ul>
