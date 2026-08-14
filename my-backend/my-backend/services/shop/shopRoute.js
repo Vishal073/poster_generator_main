@@ -71,7 +71,40 @@ function requireDb(req, res, next) {
 
 router.use(requireDb);
 
-const RESERVED_SHOP_SLUGS = new Set(["admin"]);
+const RESERVED_SHOP_SLUGS = new Set(["admin", "payments"]);
+
+function getMongoId(value) {
+  const id = String(value || "").trim();
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return null;
+  }
+  return id;
+}
+
+/** GET /shop/payments/config — active payment gateway for checkout (must be before /shop/:shopSlug) */
+router.get("/shop/payments/config", async (req, res) => {
+  try {
+    const config = getShopPaymentConfig();
+    if (!config.provider) {
+      return res.status(503).json({
+        success: false,
+        message: "Online payment is not configured yet.",
+        config,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      config,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load payment configuration.",
+      error: getErrorMessage(error),
+    });
+  }
+});
 
 /** GET /shop/:shopSlug — shop info + active product list */
 router.get("/shop/:shopSlug", async (req, res) => {
@@ -302,14 +335,6 @@ router.post("/shop/:shopSlug/orders", async (req, res) => {
     });
   }
 });
-
-function getMongoId(value) {
-  const id = String(value || "").trim();
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return null;
-  }
-  return id;
-}
 
 /** POST /shop/payments/razorpay/create — create Razorpay order for a pending shop order */
 router.post("/shop/payments/razorpay/create", async (req, res) => {
@@ -580,31 +605,6 @@ router.post("/shop/payments/cashfree/verify", async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to verify payment.",
-      error: getErrorMessage(error),
-    });
-  }
-});
-
-/** GET /shop/payments/config — active payment gateway for checkout */
-router.get("/shop/payments/config", async (req, res) => {
-  try {
-    const config = getShopPaymentConfig();
-    if (!config.provider) {
-      return res.status(503).json({
-        success: false,
-        message: "Online payment is not configured yet.",
-        config,
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      config,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: "Failed to load payment configuration.",
       error: getErrorMessage(error),
     });
   }
