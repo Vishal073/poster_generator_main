@@ -51,7 +51,10 @@ async function verifyOnlineShopOrder(order) {
       order.paytmTxnId = String(paytmStatus.body.txnId);
     }
 
-    return finalizeShopOrderPayment(order, { paymentGateway: "paytm" });
+    return finalizeShopOrderPayment(order, {
+      paymentGateway: "paytm",
+      paytmTxnId: order.paytmTxnId,
+    });
   }
 
   return {

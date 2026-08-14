@@ -57,6 +57,10 @@ async function finalizeShopOrderPayment(order, paymentDetails = {}) {
   if (paymentDetails.razorpaySignature) {
     order.razorpaySignature = paymentDetails.razorpaySignature;
   }
+  if (paymentDetails.paytmTxnId) {
+    order.paytmTxnId = paymentDetails.paytmTxnId;
+  }
+  order.fulfillmentStatus = "processing";
   await order.save();
 
   const shop = await Shop.findById(order.shopId).lean();

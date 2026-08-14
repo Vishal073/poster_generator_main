@@ -68,6 +68,9 @@ function buildShopOrderEmailContent({ order, shopName }) {
     "",
     "Payment",
     `- Status: ${order.paymentStatus}`,
+    order.paymentGateway ? `- Gateway: ${order.paymentGateway}` : null,
+    order.paytmTxnId ? `- Paytm transaction id: ${order.paytmTxnId}` : null,
+    order.paytmOrderId ? `- Paytm order id: ${order.paytmOrderId}` : null,
     order.razorpayPaymentId ? `- Razorpay payment id: ${order.razorpayPaymentId}` : null,
     order.razorpayOrderId ? `- Razorpay order id: ${order.razorpayOrderId}` : null,
   ]
@@ -97,6 +100,9 @@ function buildShopOrderEmailContent({ order, shopName }) {
     <h3>Payment</h3>
     <ul>
       <li>Status: ${order.paymentStatus}</li>
+      ${order.paymentGateway ? `<li>Gateway: ${order.paymentGateway}</li>` : ""}
+      ${order.paytmTxnId ? `<li>Paytm transaction id: ${order.paytmTxnId}</li>` : ""}
+      ${order.paytmOrderId ? `<li>Paytm order id: ${order.paytmOrderId}</li>` : ""}
       ${order.razorpayPaymentId ? `<li>Razorpay payment id: ${order.razorpayPaymentId}</li>` : ""}
       ${order.razorpayOrderId ? `<li>Razorpay order id: ${order.razorpayOrderId}</li>` : ""}
     </ul>

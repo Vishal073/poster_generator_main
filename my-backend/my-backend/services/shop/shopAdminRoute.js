@@ -720,7 +720,7 @@ router.get("/shop/admin/:shopSlug/orders", requireAuth, async (req, res) => {
 
     const orders = await Order.find({ shopSlug: shop.slug })
       .sort({ createdAt: -1 })
-      .limit(50)
+      .limit(200)
       .lean();
 
     return res.status(200).json({
@@ -791,6 +791,100 @@ router.post(
       return res.status(500).json({
         success: false,
         message: "Failed to confirm payment.",
+        error: getErrorMessage(error),
+      });
+    }
+  },
+);
+
+const VALID_FULFILLMENT_STATUSES = new Set([
+  "processing",
+  "shipped",
+  "delivered",
+  "cancelled",
+]);
+
+/** POST /shop/admin/:shopSlug/orders/:orderId/fulfillment */
+router.post(
+  "/shop/admin/:shopSlug/orders/:orderId/fulfillment",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const shopSlug = normalizeShopSlug(req.params.shopSlug);
+      const orderId = getMongoId(req.params.orderId);
+
+      if (!shopSlug || !orderId) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid shop or order id.",
+        });
+      }
+
+      const shop = await resolveShopBySlug(shopSlug);
+      if (!shop) {
+        return res.status(404).json({
+          success: false,
+          message: "Shop not found.",
+        });
+      }
+
+      const order = await Order.findOne({ _id: orderId, shopSlug: shop.slug });
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: "Order not found.",
+        });
+      }
+
+      if (order.paymentStatus !== "paid") {
+        return res.status(409).json({
+          success: false,
+          message: "Only paid orders can be updated for fulfillment.",
+        });
+      }
+
+      const fulfillmentStatus = String(req.body?.fulfillmentStatus || "")
+        .trim()
+        .toLowerCase();
+
+      if (!VALID_FULFILLMENT_STATUSES.has(fulfillmentStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid fulfillment status is required.",
+        });
+      }
+
+      const trackingNumber = String(req.body?.trackingNumber || "")
+        .trim()
+        .slice(0, 120);
+      const fulfillmentNotes = String(req.body?.fulfillmentNotes || "")
+        .trim()
+        .slice(0, 500);
+
+      order.fulfillmentStatus = fulfillmentStatus;
+      order.trackingNumber = trackingNumber;
+      order.fulfillmentNotes = fulfillmentNotes;
+
+      if (fulfillmentStatus === "shipped" && !order.shippedAt) {
+        order.shippedAt = new Date();
+      }
+      if (fulfillmentStatus === "delivered") {
+        if (!order.shippedAt) {
+          order.shippedAt = new Date();
+        }
+        order.deliveredAt = new Date();
+      }
+
+      await order.save();
+
+      return res.status(200).json({
+        success: true,
+        order: formatOrderForClient(order),
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update fulfillment.",
         error: getErrorMessage(error),
       });
     }

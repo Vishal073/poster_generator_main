@@ -74,6 +74,16 @@ const orderSchema = new mongoose.Schema(
     razorpayOrderId: { type: String, default: "", trim: true },
     razorpayPaymentId: { type: String, default: "", trim: true },
     razorpaySignature: { type: String, default: "", trim: true },
+    fulfillmentStatus: {
+      type: String,
+      enum: ["pending", "processing", "shipped", "delivered", "cancelled"],
+      default: "pending",
+      index: true,
+    },
+    trackingNumber: { type: String, default: "", trim: true, maxlength: 120 },
+    fulfillmentNotes: { type: String, default: "", trim: true, maxlength: 500 },
+    shippedAt: { type: Date, default: null },
+    deliveredAt: { type: Date, default: null },
   },
   {
     timestamps: true,

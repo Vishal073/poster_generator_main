@@ -284,6 +284,11 @@ function formatOrderForClient(order) {
     shipping: order.shipping,
     createdAt: order.createdAt,
     customerMarkedPaidAt: order.customerMarkedPaidAt || null,
+    fulfillmentStatus: order.fulfillmentStatus || "pending",
+    trackingNumber: order.trackingNumber || "",
+    fulfillmentNotes: order.fulfillmentNotes || "",
+    shippedAt: order.shippedAt || null,
+    deliveredAt: order.deliveredAt || null,
   };
 }
 
