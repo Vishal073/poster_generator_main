@@ -285,7 +285,7 @@ router.post("/shop/:shopSlug/orders", async (req, res) => {
       });
     }
 
-    let orderNumber = generateOrderNumber();
+    let orderNumber = await generateOrderNumber();
     let createdOrder = null;
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -307,7 +307,7 @@ router.post("/shop/:shopSlug/orders", async (req, res) => {
         break;
       } catch (error) {
         if (error?.code === 11000 && attempt < 2) {
-          orderNumber = generateOrderNumber();
+          orderNumber = await generateOrderNumber();
           continue;
         }
         throw error;

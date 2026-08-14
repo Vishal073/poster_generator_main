@@ -213,13 +213,10 @@ function formatProductDetail(product) {
   return formatProductSummary(product);
 }
 
-function generateOrderNumber() {
-  const datePart = new Date()
-    .toISOString()
-    .slice(0, 10)
-    .replace(/-/g, "");
-  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `GCR-${datePart}-${randomPart}`;
+async function generateOrderNumber() {
+  const Order = require("../models/Order");
+  const count = await Order.countDocuments();
+  return String(1001 + count);
 }
 
 function sanitizeShippingInput(raw) {
