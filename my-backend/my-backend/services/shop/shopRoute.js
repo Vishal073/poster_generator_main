@@ -26,11 +26,15 @@ const {
 const {
   isCashfreeConfigured,
   createCashfreeOrder,
-  fetchCashfreeOrder,
-  isCashfreeOrderPaid,
 } = require("./cashfreeService");
+const {
+  isPaytmConfigured,
+  createPaytmTransaction,
+} = require("./paytmService");
+const { getShopPaymentConfig } = require("./shopPaymentGateway");
 const { sendShopPaymentPendingEmail } = require("../emailService");
 const { finalizeShopOrderPayment } = require("./shopOrderPayment");
+const { verifyOnlineShopOrder } = require("./shopPaymentVerify");
 
 const router = express.Router();
 
@@ -39,6 +43,11 @@ function getShopPublicBaseUrl() {
     process.env.SHOP_PUBLIC_URL?.trim().replace(/\/$/, "") ||
     "https://gcrgraphix.com"
   );
+}
+
+function buildPaytmReturnUrl({ shopSlug, productSlug, orderId }) {
+  const base = getShopPublicBaseUrl();
+  return `${base}/shop/${encodeURIComponent(shopSlug)}/${encodeURIComponent(productSlug)}/success?shopOrderId=${encodeURIComponent(orderId)}`;
 }
 
 function buildCashfreeReturnUrl({ shopSlug, productSlug, orderId }) {
@@ -550,10 +559,64 @@ router.post("/shop/payments/cashfree/create", async (req, res) => {
 /** POST /shop/payments/cashfree/verify — verify Cashfree payment and mark order paid */
 router.post("/shop/payments/cashfree/verify", async (req, res) => {
   try {
-    if (!isCashfreeConfigured()) {
+    const orderId = getMongoId(req.body?.orderId);
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid order id is required.",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    const result = await verifyOnlineShopOrder(order);
+
+    return res.status(result.status).json({
+      success: result.ok,
+      order: result.order,
+      message: result.message,
+      cashfreeStatus: result.gatewayStatus,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify payment.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** GET /shop/payments/config — active payment gateway for checkout */
+router.get("/shop/payments/config", async (req, res) => {
+  try {
+    const config = getShopPaymentConfig();
+    if (!config.provider) {
       return res.status(503).json({
         success: false,
         message: "Online payment is not configured yet.",
+        config,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      config,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load payment configuration.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/payments/paytm/create — create Paytm transaction for a pending shop order */
+router.post("/shop/payments/paytm/create", async (req, res) => {
+  try {
+    if (!isPaytmConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: "Paytm payment is not configured yet.",
       });
     }
 
@@ -574,41 +637,108 @@ router.post("/shop/payments/cashfree/verify", async (req, res) => {
     }
 
     if (order.paymentStatus === "paid") {
-      return res.status(200).json({
-        success: true,
-        order: formatOrderForClient(order),
-        message: "Payment already verified.",
+      return res.status(409).json({
+        success: false,
+        message: "This order is already paid.",
       });
     }
 
-    if (!order.cashfreeOrderId) {
+    const amount = order.unitPrice * order.quantity;
+    const paytmOrderId = `${order.orderNumber}-${Date.now()}`.slice(0, 50);
+
+    const payment = await createPaytmTransaction({
+      orderId: paytmOrderId,
+      orderAmount: amount,
+      customerDetails: {
+        customerId: order.shipping?.mobile || orderId,
+        name: order.shipping?.name || "",
+        email: order.shipping?.email || "",
+        mobile: order.shipping?.mobile || "",
+      },
+      callbackUrl: buildPaytmReturnUrl({
+        shopSlug: order.shopSlug,
+        productSlug: order.productSlug,
+        orderId: String(order._id),
+      }),
+    });
+
+    order.paytmOrderId = payment.paytmOrderId;
+    order.paytmTxnToken = payment.txnToken;
+    order.paymentGateway = "paytm";
+    order.paymentStatus = "pending";
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      payment: {
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        amount,
+        paytmOrderId: payment.paytmOrderId,
+        txnToken: payment.txnToken,
+        mid: payment.mid,
+        host: payment.host,
+        mode: payment.mode,
+        amountFormatted: payment.amount,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start Paytm payment.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/payments/paytm/verify — verify Paytm payment and mark order paid */
+router.post("/shop/payments/paytm/verify", async (req, res) => {
+  try {
+    const orderId = getMongoId(req.body?.orderId);
+    if (!orderId) {
       return res.status(400).json({
         success: false,
-        message: "No Cashfree payment found for this order.",
+        message: "Valid order id is required.",
       });
     }
 
-    const cashfreeOrder = await fetchCashfreeOrder(order.cashfreeOrderId);
-    if (!isCashfreeOrderPaid(cashfreeOrder)) {
-      return res.status(402).json({
-        success: false,
-        message: "Payment is not completed yet. Please try again.",
-        cashfreeStatus: cashfreeOrder.order_status || "UNKNOWN",
-      });
-    }
-
-    if (cashfreeOrder.cf_order_id) {
-      order.cashfreeCfOrderId = String(cashfreeOrder.cf_order_id);
-    }
-
-    const result = await finalizeShopOrderPayment(order, {
-      paymentGateway: "cashfree",
-    });
+    const order = await Order.findById(orderId);
+    const result = await verifyOnlineShopOrder(order);
 
     return res.status(result.status).json({
       success: result.ok,
       order: result.order,
       message: result.message,
+      paytmStatus: result.gatewayStatus,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify Paytm payment.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/payments/verify — verify payment using the order's gateway */
+router.post("/shop/payments/verify", async (req, res) => {
+  try {
+    const orderId = getMongoId(req.body?.orderId);
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid order id is required.",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    const result = await verifyOnlineShopOrder(order);
+
+    return res.status(result.status).json({
+      success: result.ok,
+      order: result.order,
+      message: result.message,
+      gatewayStatus: result.gatewayStatus,
     });
   } catch (error) {
     return res.status(500).json({
