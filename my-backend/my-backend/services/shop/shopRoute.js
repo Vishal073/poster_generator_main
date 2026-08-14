@@ -24,10 +24,6 @@ const {
   verifyRazorpayPaymentSignature,
 } = require("./razorpayService");
 const {
-  isCashfreeConfigured,
-  createCashfreeOrder,
-} = require("./cashfreeService");
-const {
   isPaytmConfigured,
   createPaytmTransaction,
 } = require("./paytmService");
@@ -48,11 +44,6 @@ function getShopPublicBaseUrl() {
 function buildPaytmReturnUrl({ shopSlug, productSlug, orderId }) {
   const base = getShopPublicBaseUrl();
   return `${base}/shop/${encodeURIComponent(shopSlug)}/${encodeURIComponent(productSlug)}/success?shopOrderId=${encodeURIComponent(orderId)}`;
-}
-
-function buildCashfreeReturnUrl({ shopSlug, productSlug, orderId }) {
-  const base = getShopPublicBaseUrl();
-  return `${base}/shop/${encodeURIComponent(shopSlug)}/${encodeURIComponent(productSlug)}/success?shopOrderId=${encodeURIComponent(orderId)}&order_id={order_id}`;
 }
 
 function getErrorMessage(error) {
@@ -493,113 +484,6 @@ router.post("/shop/payments/razorpay/verify", async (req, res) => {
       success: result.ok,
       order: result.order,
       message: result.message,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: "Failed to verify payment.",
-      error: getErrorMessage(error),
-    });
-  }
-});
-
-/** POST /shop/payments/cashfree/create — create Cashfree session for a pending shop order */
-router.post("/shop/payments/cashfree/create", async (req, res) => {
-  try {
-    if (!isCashfreeConfigured()) {
-      return res.status(503).json({
-        success: false,
-        message: "Online payment is not configured yet.",
-      });
-    }
-
-    const orderId = getMongoId(req.body?.orderId);
-    if (!orderId) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid order id is required.",
-      });
-    }
-
-    const order = await Order.findById(orderId);
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found.",
-      });
-    }
-
-    if (order.paymentStatus === "paid") {
-      return res.status(409).json({
-        success: false,
-        message: "This order is already paid.",
-      });
-    }
-
-    const amount = order.unitPrice * order.quantity;
-    const cashfreeOrderId = `${order.orderNumber}-${Date.now()}`.slice(0, 50);
-
-    const payment = await createCashfreeOrder({
-      orderId: cashfreeOrderId,
-      orderAmount: amount,
-      customerDetails: {
-        customerId: order.shipping?.mobile || orderId,
-        name: order.shipping?.name || "",
-        email: order.shipping?.email || "",
-        mobile: order.shipping?.mobile || "",
-      },
-      returnUrl: buildCashfreeReturnUrl({
-        shopSlug: order.shopSlug,
-        productSlug: order.productSlug,
-        orderId: String(order._id),
-      }),
-      orderNote: `${order.productName} · ${order.orderNumber}`,
-    });
-
-    order.cashfreeOrderId = payment.cashfreeOrderId;
-    order.paymentGateway = "cashfree";
-    order.paymentStatus = "pending";
-    await order.save();
-
-    return res.status(200).json({
-      success: true,
-      payment: {
-        orderId: String(order._id),
-        orderNumber: order.orderNumber,
-        amount,
-        paymentSessionId: payment.paymentSessionId,
-        cashfreeOrderId: payment.cashfreeOrderId,
-        mode: payment.mode,
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: "Failed to start payment.",
-      error: getErrorMessage(error),
-    });
-  }
-});
-
-/** POST /shop/payments/cashfree/verify — verify Cashfree payment and mark order paid */
-router.post("/shop/payments/cashfree/verify", async (req, res) => {
-  try {
-    const orderId = getMongoId(req.body?.orderId);
-    if (!orderId) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid order id is required.",
-      });
-    }
-
-    const order = await Order.findById(orderId);
-    const result = await verifyOnlineShopOrder(order);
-
-    return res.status(result.status).json({
-      success: result.ok,
-      order: result.order,
-      message: result.message,
-      cashfreeStatus: result.gatewayStatus,
     });
   } catch (error) {
     return res.status(500).json({

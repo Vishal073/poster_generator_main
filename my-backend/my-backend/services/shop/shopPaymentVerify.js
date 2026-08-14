@@ -1,9 +1,4 @@
 const {
-  fetchCashfreeOrder,
-  isCashfreeOrderPaid,
-  isCashfreeConfigured,
-} = require("./cashfreeService");
-const {
   fetchPaytmOrderStatus,
   isPaytmOrderPaid,
   isPaytmConfigured,
@@ -57,40 +52,6 @@ async function verifyOnlineShopOrder(order) {
     }
 
     return finalizeShopOrderPayment(order, { paymentGateway: "paytm" });
-  }
-
-  if (order.paymentGateway === "cashfree") {
-    if (!isCashfreeConfigured()) {
-      return {
-        ok: false,
-        status: 503,
-        message: "Online payment is not configured yet.",
-      };
-    }
-
-    if (!order.cashfreeOrderId) {
-      return {
-        ok: false,
-        status: 400,
-        message: "No Cashfree payment found for this order.",
-      };
-    }
-
-    const cashfreeOrder = await fetchCashfreeOrder(order.cashfreeOrderId);
-    if (!isCashfreeOrderPaid(cashfreeOrder)) {
-      return {
-        ok: false,
-        status: 402,
-        message: "Payment is not completed yet. Please try again.",
-        gatewayStatus: cashfreeOrder.order_status || "UNKNOWN",
-      };
-    }
-
-    if (cashfreeOrder.cf_order_id) {
-      order.cashfreeCfOrderId = String(cashfreeOrder.cf_order_id);
-    }
-
-    return finalizeShopOrderPayment(order, { paymentGateway: "cashfree" });
   }
 
   return {
