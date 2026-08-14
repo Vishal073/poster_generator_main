@@ -41,9 +41,26 @@ function getShopPublicBaseUrl() {
   );
 }
 
-function buildPaytmReturnUrl({ shopSlug, productSlug, orderId }) {
+function getShopApiBaseUrl() {
+  return (
+    process.env.API_BASE_URL?.trim().replace(/\/$/, "") ||
+    "https://api.gcrgraphix.com"
+  );
+}
+
+function buildShopSuccessPageUrl({ shopSlug, productSlug, orderId }) {
   const base = getShopPublicBaseUrl();
   return `${base}/shop/${encodeURIComponent(shopSlug)}/${encodeURIComponent(productSlug)}/success?shopOrderId=${encodeURIComponent(orderId)}`;
+}
+
+function buildPaytmCallbackUrl() {
+  return `${getShopApiBaseUrl()}/shop/payments/paytm/callback`;
+}
+
+function getPaytmCallbackOrderId(body) {
+  return String(
+    body?.ORDERID || body?.orderId || body?.orderid || body?.body?.orderId || "",
+  ).trim();
 }
 
 function getErrorMessage(error) {
@@ -539,11 +556,7 @@ router.post("/shop/payments/paytm/create", async (req, res) => {
         email: order.shipping?.email || "",
         mobile: order.shipping?.mobile || "",
       },
-      callbackUrl: buildPaytmReturnUrl({
-        shopSlug: order.shopSlug,
-        productSlug: order.productSlug,
-        orderId: String(order._id),
-      }),
+      callbackUrl: buildPaytmCallbackUrl(),
     });
 
     order.paytmOrderId = payment.paytmOrderId;
@@ -572,6 +585,33 @@ router.post("/shop/payments/paytm/create", async (req, res) => {
       message: "Failed to start Paytm payment.",
       error: getErrorMessage(error),
     });
+  }
+});
+
+/** POST /shop/payments/paytm/callback — Paytm browser POST after payment (not GitHub Pages) */
+router.post("/shop/payments/paytm/callback", async (req, res) => {
+  try {
+    const paytmOrderId = getPaytmCallbackOrderId(req.body);
+    if (!paytmOrderId) {
+      return res.redirect(302, getShopPublicBaseUrl());
+    }
+
+    const order = await Order.findOne({ paytmOrderId }).lean();
+    if (!order) {
+      return res.redirect(302, getShopPublicBaseUrl());
+    }
+
+    return res.redirect(
+      302,
+      buildShopSuccessPageUrl({
+        shopSlug: order.shopSlug,
+        productSlug: order.productSlug,
+        orderId: String(order._id),
+      }),
+    );
+  } catch (error) {
+    console.error("Paytm callback failed:", getErrorMessage(error));
+    return res.redirect(302, getShopPublicBaseUrl());
   }
 });
 
