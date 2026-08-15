@@ -37,6 +37,85 @@ function getMailFromAddress() {
   return `GCR Graphix Orders <${user}>`;
 }
 
+function getShopOrderNotifyEmail() {
+  return (
+    process.env.SHOP_ORDER_NOTIFY_EMAIL?.trim() || DEFAULT_SHOP_ORDER_NOTIFY_EMAIL
+  );
+}
+
+function maskEmail(email) {
+  const value = String(email || "").trim();
+  if (!value || !value.includes("@")) {
+    return value || null;
+  }
+
+  const [local, domain] = value.split("@");
+  if (local.length <= 2) {
+    return `**@${domain}`;
+  }
+
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
+function getShopEmailSetup() {
+  const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER } = process.env;
+  const notifyEmail = getShopOrderNotifyEmail();
+
+  return {
+    configured: isSmtpConfigured(),
+    smtpHost: SMTP_HOST || null,
+    smtpPort: SMTP_PORT ? Number(SMTP_PORT) : null,
+    smtpSecure: SMTP_SECURE === "true",
+    smtpUser: SMTP_USER ? maskEmail(SMTP_USER) : null,
+    fromAddress: getMailFromAddress(),
+    notifyEmail,
+    usesDefaultNotifyEmail: !process.env.SHOP_ORDER_NOTIFY_EMAIL?.trim(),
+  };
+}
+
+async function sendShopEmailTest() {
+  const setup = getShopEmailSetup();
+
+  if (!setup.configured) {
+    return { sent: false, reason: "smtp-not-configured", setup };
+  }
+
+  try {
+    const transporter = createTransporter();
+
+    await transporter.sendMail({
+      from: getMailFromAddress(),
+      to: setup.notifyEmail,
+      subject: "GCR Graphix shop order email test",
+      text: [
+        "This is a test email from your GCR Graphix shop backend.",
+        "",
+        `Send from: ${setup.fromAddress}`,
+        `SMTP account: ${setup.smtpUser}`,
+        `Order notifications go to: ${setup.notifyEmail}`,
+        "",
+        "If you received this, shop order emails are configured correctly.",
+      ].join("\n"),
+      html: [
+        "<p>This is a test email from your GCR Graphix shop backend.</p>",
+        `<p><strong>Send from:</strong> ${setup.fromAddress}<br/>`,
+        `<strong>SMTP account:</strong> ${setup.smtpUser}<br/>`,
+        `<strong>Order notifications go to:</strong> ${setup.notifyEmail}</p>`,
+        "<p>If you received this, shop order emails are configured correctly.</p>",
+      ].join(""),
+    });
+
+    return { sent: true, toEmail: setup.notifyEmail, setup };
+  } catch (error) {
+    console.error("Shop email test failed:", error);
+    return {
+      sent: false,
+      reason: error instanceof Error ? error.message : String(error),
+      setup,
+    };
+  }
+}
+
 function isSmtpConfigured() {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   return Boolean(SMTP_HOST && SMTP_PORT && SMTP_USER && SMTP_PASS);
@@ -139,8 +218,7 @@ async function sendShopOrderNotificationEmail({ order, shopName }) {
     return { sent: false, reason: "smtp-not-configured" };
   }
 
-  const toEmail =
-    process.env.SHOP_ORDER_NOTIFY_EMAIL?.trim() || DEFAULT_SHOP_ORDER_NOTIFY_EMAIL;
+  const toEmail = getShopOrderNotifyEmail();
 
   try {
     const transporter = createTransporter();
@@ -180,8 +258,7 @@ async function sendShopPaymentPendingEmail({ order, shopName }) {
     return { sent: false, reason: "smtp-not-configured" };
   }
 
-  const toEmail =
-    process.env.SHOP_ORDER_NOTIFY_EMAIL?.trim() || DEFAULT_SHOP_ORDER_NOTIFY_EMAIL;
+  const toEmail = getShopOrderNotifyEmail();
   const amount = order.unitPrice * (order.quantity || 1);
   const shipping = order.shipping || {};
   const orderNumber = formatOrderNumber(order.orderNumber);
@@ -256,4 +333,6 @@ module.exports = {
   sendShopOrderNotificationEmail,
   sendShopPaymentPendingEmail,
   isSmtpConfigured,
+  getShopEmailSetup,
+  sendShopEmailTest,
 };

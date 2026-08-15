@@ -21,6 +21,10 @@ const {
   listMerchantsForAdmin,
 } = require("../../utils/shopUserSync");
 const { finalizeShopOrderPayment } = require("./shopOrderPayment");
+const {
+  getShopEmailSetup,
+  sendShopEmailTest,
+} = require("../emailService");
 
 const router = express.Router();
 const MAX_PRODUCT_IMAGES = 12;
@@ -694,6 +698,53 @@ router.put("/shop/admin/:shopSlug/settings", requireAuth, async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to save shop settings.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** GET /shop/admin/email-setup — show which SMTP account and notify inbox are active */
+router.get("/shop/admin/email-setup", requireAuth, async (req, res) => {
+  try {
+    const setup = getShopEmailSetup();
+
+    return res.status(200).json({
+      success: true,
+      setup,
+      message: setup.configured
+        ? setup.usesDefaultNotifyEmail
+          ? "SMTP is configured. Order emails still use the default notify inbox unless SHOP_ORDER_NOTIFY_EMAIL is set."
+          : "SMTP is configured for your custom notify inbox."
+        : "SMTP is not configured yet.",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to read email setup.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** POST /shop/admin/email-setup/test — send a test order notification email */
+router.post("/shop/admin/email-setup/test", requireAuth, async (req, res) => {
+  try {
+    const result = await sendShopEmailTest();
+
+    return res.status(result.sent ? 200 : 503).json({
+      success: result.sent,
+      setup: result.setup,
+      toEmail: result.toEmail || result.setup?.notifyEmail || null,
+      message: result.sent
+        ? `Test email sent to ${result.toEmail}.`
+        : result.reason === "smtp-not-configured"
+          ? "SMTP is not configured on the server."
+          : `Test email failed: ${result.reason}`,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send test email.",
       error: getErrorMessage(error),
     });
   }
