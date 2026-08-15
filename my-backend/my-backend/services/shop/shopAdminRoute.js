@@ -699,7 +699,61 @@ router.put("/shop/admin/:shopSlug/settings", requireAuth, async (req, res) => {
   }
 });
 
-/** GET /shop/admin/:shopSlug/orders — orders awaiting confirmation or recent */
+/** GET /shop/admin/orders — all orders across shops (register before :shopSlug route) */
+router.get("/shop/admin/orders", requireAuth, async (req, res) => {
+  try {
+    const query = {};
+    const shopSlug = normalizeShopSlug(req.query.shopSlug || req.query.shop);
+
+    if (shopSlug) {
+      query.shopSlug = shopSlug;
+    }
+
+    const paymentStatus = String(req.query.paymentStatus || "").trim();
+    const allowedPaymentStatuses = [
+      "pending",
+      "awaiting_confirmation",
+      "paid",
+      "failed",
+    ];
+    if (paymentStatus && allowedPaymentStatuses.includes(paymentStatus)) {
+      query.paymentStatus = paymentStatus;
+    }
+
+    const fulfillmentStatus = String(req.query.fulfillmentStatus || "").trim();
+    const allowedFulfillmentStatuses = [
+      "pending",
+      "processing",
+      "shipped",
+      "delivered",
+      "cancelled",
+    ];
+    if (
+      fulfillmentStatus &&
+      allowedFulfillmentStatuses.includes(fulfillmentStatus)
+    ) {
+      query.fulfillmentStatus = fulfillmentStatus;
+    }
+
+    const orders = await Order.find(query)
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      orders: orders.map(formatOrderForClient),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load orders.",
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+/** GET /shop/admin/:shopSlug/orders — orders for one shop */
 router.get("/shop/admin/:shopSlug/orders", requireAuth, async (req, res) => {
   try {
     const shopSlug = normalizeShopSlug(req.params.shopSlug);
