@@ -84,6 +84,7 @@ const orderSchema = new mongoose.Schema(
     fulfillmentNotes: { type: String, default: "", trim: true, maxlength: 500 },
     shippedAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
+    orderNotificationEmailSentAt: { type: Date, default: null },
   },
   {
     timestamps: true,

@@ -23,6 +23,20 @@ function createTransporter() {
 
 const DEFAULT_SHOP_ORDER_NOTIFY_EMAIL = "gcrgraphix@gmail.com";
 
+function getMailFromAddress() {
+  const configuredFrom = process.env.SMTP_FROM?.trim();
+  if (configuredFrom) {
+    return configuredFrom;
+  }
+
+  const user = process.env.SMTP_USER?.trim();
+  if (!user) {
+    return "GCR Graphix Orders <noreply@gcrgraphix.com>";
+  }
+
+  return `GCR Graphix Orders <${user}>`;
+}
+
 function isSmtpConfigured() {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   return Boolean(SMTP_HOST && SMTP_PORT && SMTP_USER && SMTP_PASS);
@@ -130,16 +144,19 @@ async function sendShopOrderNotificationEmail({ order, shopName }) {
 
   try {
     const transporter = createTransporter();
-    const sender = process.env.SMTP_FROM || process.env.SMTP_USER;
     const { subject, text, html } = buildShopOrderEmailContent({ order, shopName });
 
     await transporter.sendMail({
-      from: sender,
+      from: getMailFromAddress(),
       to: toEmail,
       subject,
       text,
       html,
     });
+
+    console.log(
+      `Shop order notification email sent to ${toEmail} for ${orderNumber}.`,
+    );
 
     return { sent: true, toEmail };
   } catch (error) {
@@ -189,10 +206,9 @@ async function sendShopPaymentPendingEmail({ order, shopName }) {
 
   try {
     const transporter = createTransporter();
-    const sender = process.env.SMTP_FROM || process.env.SMTP_USER;
 
     await transporter.sendMail({
-      from: sender,
+      from: getMailFromAddress(),
       to: toEmail,
       subject: `UPI payment pending — ${orderNumber}`,
       text,
@@ -218,7 +234,7 @@ async function sendPosterEmail({ toEmail, posterBuffer, fileName, fromEmail }) {
   }
 
   const transporter = createTransporter();
-  const sender = fromEmail || process.env.SMTP_FROM || process.env.SMTP_USER;
+  const sender = fromEmail || getMailFromAddress();
 
   return transporter.sendMail({
     from: sender,
@@ -239,4 +255,5 @@ module.exports = {
   sendPosterEmail,
   sendShopOrderNotificationEmail,
   sendShopPaymentPendingEmail,
+  isSmtpConfigured,
 };

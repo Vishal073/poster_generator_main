@@ -5,14 +5,47 @@ const {
   decrementProductStock,
   formatOrderForClient,
 } = require("../../utils/shopHelpers");
-const { sendShopOrderNotificationEmail } = require("../emailService");
+const {
+  sendShopOrderNotificationEmail,
+  isSmtpConfigured,
+} = require("../emailService");
+
+async function notifyShopOrderPaid(order, shopName) {
+  if (!order || order.orderNotificationEmailSentAt) {
+    return { sent: false, reason: "already-sent-or-missing-order" };
+  }
+
+  if (!isSmtpConfigured()) {
+    console.warn(
+      `Shop order email skipped for ${order.orderNumber}: SMTP is not configured.`,
+    );
+    return { sent: false, reason: "smtp-not-configured" };
+  }
+
+  const result = await sendShopOrderNotificationEmail({
+    order,
+    shopName,
+  });
+
+  if (result.sent) {
+    order.orderNotificationEmailSentAt = new Date();
+    await order.save();
+  }
+
+  return result;
+}
 
 async function finalizeShopOrderPayment(order, paymentDetails = {}) {
   if (!order) {
     return { ok: false, status: 404, message: "Order not found." };
   }
 
+  const shop = await Shop.findById(order.shopId).lean();
+  const shopName = shop?.name || order.shopSlug;
+
   if (order.paymentStatus === "paid") {
+    await notifyShopOrderPaid(order, shopName);
+
     return {
       ok: true,
       status: 200,
@@ -63,11 +96,7 @@ async function finalizeShopOrderPayment(order, paymentDetails = {}) {
   order.fulfillmentStatus = "processing";
   await order.save();
 
-  const shop = await Shop.findById(order.shopId).lean();
-  void sendShopOrderNotificationEmail({
-    order,
-    shopName: shop?.name || order.shopSlug,
-  });
+  await notifyShopOrderPaid(order, shopName);
 
   return {
     ok: true,
