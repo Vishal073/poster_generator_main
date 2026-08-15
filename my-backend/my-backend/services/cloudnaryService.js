@@ -7,14 +7,6 @@ const CLOUDINARY_TIMEOUT_MS =
   Number(process.env.CLOUDINARY_TIMEOUT_MS) || 120000;
 const CLOUDINARY_UPLOAD_RETRIES =
   Math.max(1, Number(process.env.CLOUDINARY_UPLOAD_RETRIES) || 5);
-const POSTER_UPLOAD_MAX_WIDTH =
-  Number(process.env.CLOUDINARY_POSTER_MAX_WIDTH) || 1080;
-const POSTER_UPLOAD_MAX_HEIGHT =
-  Number(process.env.CLOUDINARY_POSTER_MAX_HEIGHT) || 1920;
-const POSTER_UPLOAD_JPEG_QUALITY =
-  Number(process.env.CLOUDINARY_POSTER_JPEG_QUALITY) || 78;
-const POSTER_UPLOAD_TARGET_BYTES =
-  Number(process.env.CLOUDINARY_POSTER_TARGET_BYTES) || 45000;
 
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
@@ -71,74 +63,6 @@ function isTransientCloudinaryError(error) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Downscale + JPEG so ~1MB+ PNG posters don't hit Cloudinary Request Timeout.
- * Uses a fresh sharp pipeline (never reuse after metadata()).
- */
-async function prepareImageBufferForUpload(buffer, options = {}) {
-  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
-    return buffer;
-  }
-
-  const maxWidth = Number(options.maxWidth) || POSTER_UPLOAD_MAX_WIDTH;
-  const maxHeight = Number(options.maxHeight) || POSTER_UPLOAD_MAX_HEIGHT;
-  let quality = Number(options.quality) || POSTER_UPLOAD_JPEG_QUALITY;
-  const targetBytes =
-    Number(options.targetBytes) || POSTER_UPLOAD_TARGET_BYTES;
-
-  try {
-    const sharp = require("sharp");
-    const meta = await sharp(buffer, { failOn: "none" }).metadata();
-    let best = null;
-
-    for (let round = 0; round < 4; round += 1) {
-      const width = Math.max(640, Math.round(maxWidth * (1 - round * 0.12)));
-      const height = Math.max(960, Math.round(maxHeight * (1 - round * 0.12)));
-      const q = Math.max(55, quality - round * 8);
-
-      let pipeline = sharp(buffer, { failOn: "none" }).rotate();
-      if (
-        (meta.width && meta.width > width) ||
-        (meta.height && meta.height > height)
-      ) {
-        pipeline = pipeline.resize({
-          width,
-          height,
-          fit: "inside",
-          withoutEnlargement: true,
-        });
-      }
-
-      const compressed = await pipeline
-        .jpeg({ quality: q, mozjpeg: true, progressive: true })
-        .toBuffer();
-
-      if (!compressed.length) continue;
-      if (!best || compressed.length < best.length) {
-        best = compressed;
-      }
-      if (compressed.length <= targetBytes) {
-        best = compressed;
-        break;
-      }
-    }
-
-    if (best && best.length > 0 && best.length < buffer.length) {
-      console.log(
-        `[cloudinary] compressed upload buffer ${buffer.length} → ${best.length} bytes`,
-      );
-      return best;
-    }
-  } catch (error) {
-    console.warn(
-      "[cloudinary] compress failed, uploading original:",
-      getCloudinaryErrorMessage(error),
-    );
-  }
-
-  return buffer;
 }
 
 function detectImageMime(buffer) {
@@ -353,12 +277,7 @@ async function uploadBufferOnce(buffer, fileName, options = {}) {
 
 async function uploadBufferToCloudinary(buffer, fileName, options = {}) {
   const resourceType = options.resource_type || "image";
-  let payload = buffer;
-
-  // Poster PNGs (~1MB+) often timeout on this network — compress by default for images.
-  if (resourceType === "image" && options.compress !== false) {
-    payload = await prepareImageBufferForUpload(buffer, options);
-  }
+  const payload = buffer;
 
   const methods =
     resourceType === "image"
@@ -392,18 +311,6 @@ async function uploadBufferToCloudinary(buffer, fileName, options = {}) {
         wrapped.cause = error;
         throw wrapped;
       }
-      if (
-        resourceType === "image" &&
-        isTransientCloudinaryError(error) &&
-        Buffer.isBuffer(payload)
-      ) {
-        payload = await prepareImageBufferForUpload(payload, {
-          maxWidth: Math.min(POSTER_UPLOAD_MAX_WIDTH, 900 - attempt * 40),
-          maxHeight: Math.min(POSTER_UPLOAD_MAX_HEIGHT, 1600 - attempt * 60),
-          quality: Math.max(55, 72 - attempt * 4),
-          targetBytes: Math.max(28000, POSTER_UPLOAD_TARGET_BYTES - attempt * 4000),
-        });
-      }
       await sleep(1000 * attempt);
     }
   }
@@ -419,7 +326,6 @@ async function uploadBufferToCloudinary(buffer, fileName, options = {}) {
 function uploadPosterToCloudinary(buffer, fileName) {
   return uploadBufferToCloudinary(buffer, fileName, {
     folder: process.env.CLOUDINARY_POSTER_FOLDER || "posters",
-    compress: true,
   });
 }
 
