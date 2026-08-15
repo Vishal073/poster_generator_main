@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const { formatOrderNumber } = require("../utils/shopHelpers");
 
 function createTransporter() {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE } = process.env;
@@ -38,6 +39,7 @@ function formatInr(amount) {
 function buildShopOrderEmailContent({ order, shopName }) {
   const shipping = order.shipping || {};
   const amount = order.unitPrice * (order.quantity || 1);
+  const orderNumber = formatOrderNumber(order.orderNumber);
   const addressLines = [
     shipping.addressLine1,
     shipping.addressLine2,
@@ -49,7 +51,7 @@ function buildShopOrderEmailContent({ order, shopName }) {
   const text = [
     "New shop order received",
     "",
-    `Order number: ${order.orderNumber}`,
+    `Order number: ${orderNumber}`,
     `Order id: ${String(order._id)}`,
     `Shop: ${shopName || order.shopSlug}`,
     "",
@@ -79,7 +81,7 @@ function buildShopOrderEmailContent({ order, shopName }) {
 
   const html = `
     <h2>New shop order received</h2>
-    <p><strong>Order number:</strong> ${order.orderNumber}<br/>
+    <p><strong>Order number:</strong> ${orderNumber}<br/>
     <strong>Order id:</strong> ${String(order._id)}<br/>
     <strong>Shop:</strong> ${shopName || order.shopSlug}</p>
     <h3>Product</h3>
@@ -108,7 +110,7 @@ function buildShopOrderEmailContent({ order, shopName }) {
     </ul>
   `;
 
-  return { text, html, subject: `New order ${order.orderNumber} — ${order.productName}` };
+  return { text, html, subject: `New order ${orderNumber} — ${order.productName}` };
 }
 
 async function sendShopOrderNotificationEmail({ order, shopName }) {
@@ -165,11 +167,12 @@ async function sendShopPaymentPendingEmail({ order, shopName }) {
     process.env.SHOP_ORDER_NOTIFY_EMAIL?.trim() || DEFAULT_SHOP_ORDER_NOTIFY_EMAIL;
   const amount = order.unitPrice * (order.quantity || 1);
   const shipping = order.shipping || {};
+  const orderNumber = formatOrderNumber(order.orderNumber);
 
   const text = [
     "Customer says they paid via UPI — please confirm in shop admin.",
     "",
-    `Order number: ${order.orderNumber}`,
+    `Order number: ${orderNumber}`,
     `Shop: ${shopName || order.shopSlug}`,
     `Product: ${order.productName}`,
     order.size ? `Size: ${order.size}` : null,
@@ -191,7 +194,7 @@ async function sendShopPaymentPendingEmail({ order, shopName }) {
     await transporter.sendMail({
       from: sender,
       to: toEmail,
-      subject: `UPI payment pending — ${order.orderNumber}`,
+      subject: `UPI payment pending — ${orderNumber}`,
       text,
       html: text.replace(/\n/g, "<br/>"),
     });

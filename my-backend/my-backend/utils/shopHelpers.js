@@ -213,10 +213,23 @@ function formatProductDetail(product) {
   return formatProductSummary(product);
 }
 
+function formatOrderNumber(orderNumber) {
+  const value = String(orderNumber || "").trim();
+  if (!value) {
+    return value;
+  }
+
+  if (/^GCR-/i.test(value)) {
+    return value.toUpperCase();
+  }
+
+  return `GCR-${value}`;
+}
+
 async function generateOrderNumber() {
   const Order = require("../models/Order");
   const count = await Order.countDocuments();
-  return String(1001 + count);
+  return formatOrderNumber(String(1001 + count));
 }
 
 function sanitizeShippingInput(raw) {
@@ -267,7 +280,7 @@ function validateShipping(shipping) {
 function formatOrderForClient(order) {
   return {
     id: String(order._id),
-    orderNumber: order.orderNumber,
+    orderNumber: formatOrderNumber(order.orderNumber),
     shopSlug: order.shopSlug,
     productSlug: order.productSlug,
     productName: order.productName,
@@ -383,6 +396,7 @@ module.exports = {
   formatProductSummary,
   formatProductDetail,
   generateOrderNumber,
+  formatOrderNumber,
   sanitizeShippingInput,
   validateShipping,
   formatOrderForClient,
