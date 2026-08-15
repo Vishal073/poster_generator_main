@@ -1,4 +1,5 @@
 const axios = require("axios");
+const { resolveInstagramStoryImageUrl } = require("../utils/socialImageFormats");
 const crypto = require("crypto");
 const {
   logFb,
@@ -1423,13 +1424,15 @@ async function postImageStoryToInstagram({ igUserId, pageAccessToken, imageUrl }
     throw error;
   }
 
+  const storyImageUrl = await resolveInstagramStoryImageUrl(imageUrl);
+
   try {
     const createResponse = await axios.post(
       `${GRAPH_BASE_URL}/${igUserId}/media`,
       null,
       {
         params: {
-          image_url: imageUrl,
+          image_url: storyImageUrl,
           media_type: "STORIES",
           access_token: pageAccessToken,
         },
