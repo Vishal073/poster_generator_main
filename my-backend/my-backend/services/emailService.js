@@ -206,6 +206,99 @@ function buildShopOrderEmailContent({ order, shopName }) {
   return { text, html, subject: `New order ${orderNumber} — ${order.productName}` };
 }
 
+function buildShopOrderCustomerEmailContent({ order, shopName }) {
+  const shipping = order.shipping || {};
+  const amount = order.unitPrice * (order.quantity || 1);
+  const orderNumber = formatOrderNumber(order.orderNumber);
+  const addressLines = [
+    shipping.addressLine1,
+    shipping.addressLine2,
+    [shipping.city, shipping.state, shipping.pincode].filter(Boolean).join(", "),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const text = [
+    `Hi ${shipping.name || "there"},`,
+    "",
+    "Thank you for your order. Your payment was successful and your order is confirmed.",
+    "",
+    `Order number: ${orderNumber}`,
+    `Product: ${order.productName}`,
+    order.size ? `Size: ${order.size}` : null,
+    order.color ? `Color: ${order.color}` : null,
+    `Amount paid: ${formatInr(amount)}`,
+    "",
+    "Delivery address:",
+    addressLines,
+    "",
+    "We will share shipping updates with you soon.",
+    "",
+    `— ${shopName || order.shopSlug}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const html = `
+    <p>Hi ${shipping.name || "there"},</p>
+    <p>Thank you for your order. Your payment was successful and your order is confirmed.</p>
+    <p><strong>Order number:</strong> ${orderNumber}<br/>
+    <strong>Product:</strong> ${order.productName}<br/>
+    ${order.size ? `<strong>Size:</strong> ${order.size}<br/>` : ""}
+    ${order.color ? `<strong>Color:</strong> ${order.color}<br/>` : ""}
+    <strong>Amount paid:</strong> ${formatInr(amount)}</p>
+    <p><strong>Delivery address:</strong><br/>${addressLines.replace(/\n/g, "<br/>")}</p>
+    <p>We will share shipping updates with you soon.</p>
+    <p>— ${shopName || order.shopSlug}</p>
+  `;
+
+  return {
+    text,
+    html,
+    subject: `Order confirmed ${orderNumber} — ${order.productName}`,
+  };
+}
+
+async function sendShopOrderCustomerConfirmationEmail({ order, shopName, toEmail }) {
+  if (!order || !toEmail) {
+    return { sent: false, reason: "missing-order-or-email" };
+  }
+
+  if (!isSmtpConfigured()) {
+    return { sent: false, reason: "smtp-not-configured" };
+  }
+
+  const orderNumber = formatOrderNumber(order.orderNumber);
+
+  try {
+    const transporter = createTransporter();
+    const { subject, text, html } = buildShopOrderCustomerEmailContent({
+      order,
+      shopName,
+    });
+
+    await transporter.sendMail({
+      from: getMailFromAddress(),
+      to: toEmail,
+      subject,
+      text,
+      html,
+    });
+
+    console.log(
+      `Shop order customer email sent to ${toEmail} for ${orderNumber}.`,
+    );
+
+    return { sent: true, toEmail };
+  } catch (error) {
+    console.error("Failed to send shop order customer email:", error);
+    return {
+      sent: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function sendShopOrderNotificationEmail({ order, shopName }) {
   if (!order) {
     return { sent: false, reason: "missing-order" };
@@ -223,6 +316,7 @@ async function sendShopOrderNotificationEmail({ order, shopName }) {
   try {
     const transporter = createTransporter();
     const { subject, text, html } = buildShopOrderEmailContent({ order, shopName });
+    const orderNumber = formatOrderNumber(order.orderNumber);
 
     await transporter.sendMail({
       from: getMailFromAddress(),
@@ -331,6 +425,7 @@ async function sendPosterEmail({ toEmail, posterBuffer, fileName, fromEmail }) {
 module.exports = {
   sendPosterEmail,
   sendShopOrderNotificationEmail,
+  sendShopOrderCustomerConfirmationEmail,
   sendShopPaymentPendingEmail,
   isSmtpConfigured,
   getShopEmailSetup,

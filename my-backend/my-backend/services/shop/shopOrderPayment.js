@@ -9,6 +9,7 @@ const {
   sendShopOrderNotificationEmail,
   isSmtpConfigured,
 } = require("../emailService");
+const { notifyShopOrderCustomer } = require("./shopOrderCustomerNotification");
 
 async function notifyShopOrderPaid(order, shopName) {
   if (!order || order.orderNotificationEmailSentAt) {
@@ -45,6 +46,7 @@ async function finalizeShopOrderPayment(order, paymentDetails = {}) {
 
   if (order.paymentStatus === "paid") {
     await notifyShopOrderPaid(order, shopName);
+    await notifyShopOrderCustomer(order, shopName);
 
     return {
       ok: true,
@@ -97,6 +99,7 @@ async function finalizeShopOrderPayment(order, paymentDetails = {}) {
   await order.save();
 
   await notifyShopOrderPaid(order, shopName);
+  await notifyShopOrderCustomer(order, shopName);
 
   return {
     ok: true,

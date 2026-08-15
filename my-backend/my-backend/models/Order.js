@@ -85,6 +85,12 @@ const orderSchema = new mongoose.Schema(
     shippedAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
     orderNotificationEmailSentAt: { type: Date, default: null },
+    orderCustomerNotificationSentAt: { type: Date, default: null },
+    orderCustomerNotificationChannel: {
+      type: String,
+      enum: ["email", "whatsapp"],
+      default: null,
+    },
   },
   {
     timestamps: true,
