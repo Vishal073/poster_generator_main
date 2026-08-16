@@ -50,6 +50,14 @@ function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
   return variables;
 }
 
+function getTemplateBeforeMediaDelayMs() {
+  const raw = Number(process.env.WHATSAPP_TEMPLATE_BEFORE_MEDIA_DELAY_MS);
+  if (Number.isFinite(raw) && raw >= 0) {
+    return raw;
+  }
+  return 2000;
+}
+
 function getApproveAfterImageDelayMs() {
   const raw = Number(process.env.WHATSAPP_APPROVE_AFTER_IMAGE_DELAY_MS);
   if (Number.isFinite(raw) && raw >= 0) {
@@ -209,6 +217,7 @@ async function sendWhatsAppDownloadTemplate({
       eventName,
       imageUrl,
     }),
+    mediaUrl: imageUrl,
   });
 }
 
@@ -254,11 +263,38 @@ async function sendWhatsAppTemplateThenImage({
     imageUrl,
   });
 
-  return {
-    mode: "media_template",
-    sessionOpen: false,
-    template: templateResult,
-  };
+  const delayMs = getTemplateBeforeMediaDelayMs();
+  if (delayMs > 0) {
+    await delay(delayMs);
+  }
+
+  try {
+    const mediaResult = await sendPosterWhatsApp({
+      toMobile,
+      imageUrl,
+      body,
+    });
+
+    return {
+      mode: "template_then_image",
+      sessionOpen: false,
+      template: templateResult,
+      media: mediaResult,
+    };
+  } catch (error) {
+    console.warn("WhatsApp image after template failed (user may need to tap Download):", {
+      code: error.code,
+      message: error.message,
+    });
+    return {
+      mode: "template_image_pending",
+      sessionOpen: false,
+      template: templateResult,
+      media: null,
+      imagePending: true,
+      imageError: error.message,
+    };
+  }
 }
 
 /**

@@ -176,7 +176,12 @@ async function sendWhatsAppText({ toMobile, body }) {
   };
 }
 
-async function sendWhatsAppContentTemplate({ toMobile, contentSid, contentVariables }) {
+async function sendWhatsAppContentTemplate({
+  toMobile,
+  contentSid,
+  contentVariables,
+  mediaUrl,
+}) {
   if (!contentSid || typeof contentSid !== "string") {
     throw new Error("Twilio Content Template SID is required.");
   }
@@ -192,6 +197,12 @@ async function sendWhatsAppContentTemplate({ toMobile, contentSid, contentVariab
     payload.contentVariables = JSON.stringify(contentVariables);
   }
 
+  const resolvedMediaUrl =
+    typeof mediaUrl === "string" && mediaUrl.trim() ? mediaUrl.trim() : "";
+  if (resolvedMediaUrl) {
+    payload.mediaUrl = [resolvedMediaUrl];
+  }
+
   try {
     const message = await client.messages.create(payload);
 
@@ -202,6 +213,34 @@ async function sendWhatsAppContentTemplate({ toMobile, contentSid, contentVariab
       from: message.from,
     };
   } catch (error) {
+    if (payload.mediaUrl) {
+      console.warn(
+        "Twilio template+media send failed, retrying template without mediaUrl:",
+        error.message,
+      );
+      delete payload.mediaUrl;
+      try {
+        const message = await client.messages.create(payload);
+        return {
+          sid: message.sid,
+          status: message.status,
+          to: message.to,
+          from: message.from,
+          mediaAttached: false,
+        };
+      } catch (retryError) {
+        console.error("Twilio content template send failed:", {
+          code: retryError.code,
+          status: retryError.status,
+          message: retryError.message,
+          moreInfo: retryError.moreInfo,
+          details: retryError.details,
+          payload,
+        });
+        throw retryError;
+      }
+    }
+
     console.error("Twilio content template send failed:", {
       code: error.code,
       status: error.status,

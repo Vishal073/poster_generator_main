@@ -4,7 +4,7 @@ const User = require("../models/User");
 const { requireAuth } = require("../middleware/requireAuth");
 const { requireDb } = require("../middleware/requireDb");
 const { uploadBufferToCloudinary } = require("./cloudnaryService");
-const { sendWhatsAppImageSmart } = require("./whatsappTemplateService");
+const { queueReadyPosterForDownload } = require("./whatsappPosterDelivery");
 const {
   postPosterForUser,
   postReelForUser,
@@ -12,6 +12,7 @@ const {
   postReelToInstagramForUser,
   postPosterStoryForUser,
   postPosterStoryToInstagramForUser,
+  getUserSocialApproveEligibility,
 } = require("./facebookPostService");
 const { queueReadyReelForDownload } = require("./whatsappReelDelivery");
 const {
@@ -571,12 +572,21 @@ router.post(
               message: whatsappMessage,
             });
           } else {
-            whatsappResult = await sendWhatsAppImageSmart({
+            whatsappResult = await queueReadyPosterForDownload({
               toMobile: user.mobileNumber,
               name: user.name,
-              imageUrl,
-              body: whatsappMessage,
+              mobile: user.mobileNumber,
+              posterResult: {
+                imageName: getShareImageFileName(user, imageInput?.originalName),
+                imageUrl,
+                cloudinaryPublicId: uploadResult.publicId,
+              },
+              userId: String(user._id),
+              caption: whatsappMessage,
               eventName,
+              canApproveSocial: (
+                await getUserSocialApproveEligibility(String(user._id))
+              ).canApprove,
               lastInboundAt: user.whatsappLastInboundAt,
             });
           }

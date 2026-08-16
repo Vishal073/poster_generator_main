@@ -45,24 +45,48 @@ const {
 
 const router = express.Router();
 
-const optionalPosterAudioUpload = multer({
+const optionalPosterMediaUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 15 * 1024 * 1024,
   },
   fileFilter: (req, file, cb) => {
-    if (file.fieldname !== "audio" && file.fieldname !== "song") {
-      return cb(new Error("Unexpected file field for generate-poster."));
+    if (file.fieldname === "audio" || file.fieldname === "song") {
+      if (!isAudioUpload(file)) {
+        return cb(new Error("Only audio files are allowed for song/audio."));
+      }
+      return cb(null, true);
     }
-    if (!isAudioUpload(file)) {
-      return cb(new Error("Only audio files are allowed for song/audio."));
+
+    if (
+      file.fieldname === "image" ||
+      file.fieldname === "poster" ||
+      file.fieldname === "posterImage"
+    ) {
+      if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+        return cb(new Error("Only image files are allowed for poster image."));
+      }
+      return cb(null, true);
     }
-    cb(null, true);
+
+    return cb(new Error("Unexpected file field for generate-poster."));
   },
 }).fields([
   { name: "audio", maxCount: 1 },
   { name: "song", maxCount: 1 },
+  { name: "image", maxCount: 1 },
+  { name: "poster", maxCount: 1 },
+  { name: "posterImage", maxCount: 1 },
 ]);
+
+function getUploadedPosterFile(req) {
+  return (
+    (Array.isArray(req.files?.image) && req.files.image[0]) ||
+    (Array.isArray(req.files?.poster) && req.files.poster[0]) ||
+    (Array.isArray(req.files?.posterImage) && req.files.posterImage[0]) ||
+    null
+  );
+}
 
 function parseGeneratePosterRequest(req, res, next) {
   const contentType = String(req.headers["content-type"] || "");
@@ -70,11 +94,11 @@ function parseGeneratePosterRequest(req, res, next) {
     return next();
   }
 
-  return optionalPosterAudioUpload(req, res, (error) => {
+  return optionalPosterMediaUpload(req, res, (error) => {
     if (error) {
       return res.status(400).json({
         success: false,
-        message: error instanceof Error ? error.message : "Invalid audio upload.",
+        message: error instanceof Error ? error.message : "Invalid upload.",
       });
     }
 
@@ -92,6 +116,7 @@ function parseGeneratePosterRequest(req, res, next) {
         (Array.isArray(req.files?.song) && req.files.song[0]) ||
         null;
       req.audioFile = audioFile;
+      req.uploadedPosterFile = getUploadedPosterFile(req);
       return next();
     } catch (parseError) {
       return res.status(400).json({
@@ -314,16 +339,18 @@ async function generatePoster(req, res) {
 
     const resolvedPosterSource =
       typeof posterSource === "string" ? posterSource.trim() : "";
+    const uploadedPosterFile = req.uploadedPosterFile || getUploadedPosterFile(req);
 
-    if (!resolvedPosterSource) {
+    if (!resolvedPosterSource && !uploadedPosterFile) {
       return res.status(400).json({
         success: false,
-        message: "posterSource is required. Fetch available posters from GET /base-posters.",
+        message:
+          "Send posterSource, or upload the poster image from frontend (field: image).",
         folder: getBasePosterFolder(),
       });
     }
 
-    if (!isAllowedPosterSource(resolvedPosterSource)) {
+    if (resolvedPosterSource && !isAllowedPosterSource(resolvedPosterSource)) {
       return res.status(400).json({
         success: false,
         message: `posterSource must be an image from Cloudinary folders "${getBasePosterFolder()}" or "${getEventPosterRootFolder()}".`,
@@ -358,41 +385,49 @@ async function generatePoster(req, res) {
 
     let posterResult;
     try {
-      posterResult = await generatePosterImage({
-        name,
-        textLines,
-        textLineStyles,
-        x,
-        y,
-        userImageSource: resolveUserImageSource(userImageSource, body.includeUserImage),
-        imageX,
-        imageY,
-        imageWidth,
-        imageHeight,
-        imageShape,
-        imageCornerRadius,
-        imagePosition: normalizeImagePosition(imagePosition),
-        insetFromBottom,
-        insetLeft,
-        insetRight,
-        imageGap,
-        imageMaxSize,
-        lineGap,
-        paragraphGap,
-        lineGaps: resolvedLineGaps,
-        fontSize,
-        fontColor,
-        fontFamily,
-        textOpacity,
-        textBlendMode,
-        textBlockAlign,
-        textLineAlignments: resolvedTextLineAlignments,
-        posterSource: resolvedPosterSource,
-        language,
-        showPhoneIcon: !isFalsyParam(body.showPhoneIcon),
-        addWatermark: body.addWatermark,
-        watermarkPosition: body.watermarkPosition,
-      });
+      if (uploadedPosterFile?.buffer) {
+        posterResult = {
+          buffer: uploadedPosterFile.buffer,
+          fileName: uploadedPosterFile.originalname || "poster.png",
+          source: "frontend-upload",
+        };
+      } else {
+        posterResult = await generatePosterImage({
+          name,
+          textLines,
+          textLineStyles,
+          x,
+          y,
+          userImageSource: resolveUserImageSource(userImageSource, body.includeUserImage),
+          imageX,
+          imageY,
+          imageWidth,
+          imageHeight,
+          imageShape,
+          imageCornerRadius,
+          imagePosition: normalizeImagePosition(imagePosition),
+          insetFromBottom,
+          insetLeft,
+          insetRight,
+          imageGap,
+          imageMaxSize,
+          lineGap,
+          paragraphGap,
+          lineGaps: resolvedLineGaps,
+          fontSize,
+          fontColor,
+          fontFamily,
+          textOpacity,
+          textBlendMode,
+          textBlockAlign,
+          textLineAlignments: resolvedTextLineAlignments,
+          posterSource: resolvedPosterSource,
+          language,
+          showPhoneIcon: !isFalsyParam(body.showPhoneIcon),
+          addWatermark: body.addWatermark,
+          watermarkPosition: body.watermarkPosition,
+        });
+      }
     } catch (error) {
       return res.status(500).json({
         success: false,
@@ -401,10 +436,15 @@ async function generatePoster(req, res) {
       });
     }
 
-    const enhancement = await applyPosterEnhancement(
-      posterResult.buffer,
-      resolvedEnhancePriority
-    );
+    const enhancement =
+      posterResult.source === "frontend-upload"
+        ? {
+            buffer: posterResult.buffer,
+            enhancePriority: resolvedEnhancePriority,
+            enhanceApplied: "none",
+            enhanceFallback: false,
+          }
+        : await applyPosterEnhancement(posterResult.buffer, resolvedEnhancePriority);
 
     const imageName = getPosterFileName({
       mobileValue,
