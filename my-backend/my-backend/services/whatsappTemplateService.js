@@ -8,15 +8,15 @@ const {
 
 const WHATSAPP_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-function getDownloadTemplateContentSid() {
-  return String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim();
-}
-
 function getMediaTemplateContentSid() {
   return (
     String(process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID || "").trim() ||
-    getDownloadTemplateContentSid()
+    String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim()
   );
+}
+
+function getDownloadTemplateContentSid() {
+  return getMediaTemplateContentSid();
 }
 
 function getWhatsAppMediaBaseUrl() {
@@ -138,6 +138,7 @@ function mediaValueForPlaceholder(mediaTemplate, imageUrl) {
 
 function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
   const eventLabel = String(eventName || "Event").trim() || "Event";
+  const displayName = String(name || "Customer").trim() || "Customer";
   const mediaTemplates = collectTemplateStrings(types, "media");
   const bodyTemplates = [
     ...collectTemplateStrings(types, "body"),
@@ -156,27 +157,25 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
     variables[index] = mediaValueForPlaceholder(mediaTemplate, imageUrl);
   }
 
+  const bodyValues = [displayName, eventLabel];
+  let bodyValueIndex = 0;
   for (const bodyTemplate of bodyTemplates) {
     const matches = String(bodyTemplate).matchAll(/\{\{(\d+)\}\}/g);
     for (const match of matches) {
       const index = match[1];
-      if (!variables[index]) {
-        variables[index] = eventLabel;
+      if (mediaVarIndexes.has(index) || variables[index]) {
+        continue;
       }
+      variables[index] = bodyValues[bodyValueIndex] || eventLabel;
+      bodyValueIndex += 1;
     }
   }
 
   if (!Object.keys(variables).length) {
-    variables["1"] = eventLabel;
+    variables["1"] = displayName;
+    variables["2"] = eventLabel;
     if (imageUrl) {
-      variables["2"] = String(imageUrl).trim();
-    }
-  }
-
-  if (name && String(name).trim() && !variables["3"]) {
-    const used = new Set(Object.keys(variables));
-    if (!used.has("3")) {
-      variables["3"] = String(name).trim();
+      variables["3"] = String(imageUrl).trim();
     }
   }
 
@@ -199,15 +198,12 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
  */
 function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
   const variables = {
-    "1": String(eventName || "Event").trim() || "Event",
+    "1": String(name || "Customer").trim() || "Customer",
+    "2": String(eventName || "Event").trim() || "Event",
   };
 
   if (imageUrl && String(imageUrl).trim()) {
-    variables["2"] = String(imageUrl).trim();
-  }
-
-  if (name && String(name).trim()) {
-    variables["3"] = String(name).trim();
+    variables["3"] = String(imageUrl).trim();
   }
 
   return variables;
@@ -370,7 +366,7 @@ async function sendWhatsAppDownloadTemplate({
 
   if (!contentSid) {
     throw new Error(
-      "Twilio media template is not configured. Set TWILIO_MEDIA_TEMPLATE_CONTENT_SID (or TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID) in .env.",
+      "Twilio media template is not configured. Set TWILIO_MEDIA_TEMPLATE_CONTENT_SID in .env.",
     );
   }
 
