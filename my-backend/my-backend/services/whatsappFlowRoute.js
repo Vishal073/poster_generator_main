@@ -162,13 +162,11 @@ function buildPosterRequest(body, { name, mobile }) {
 
 function getContentVariables({ name, eventName, imageUrl }) {
   const variables = {
-    "1": String(eventName || "Event"),
+    "1": String(name || "Customer"),
+    "2": String(eventName || "Event"),
   };
   if (imageUrl) {
-    variables["2"] = String(imageUrl);
-  }
-  if (name) {
-    variables["3"] = String(name || "Customer");
+    variables["3"] = String(imageUrl);
   }
   return variables;
 }

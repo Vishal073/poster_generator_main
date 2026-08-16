@@ -104,9 +104,8 @@ function collectTemplateStrings(types, field) {
   return values;
 }
 
-function firstVariableIndex(text) {
-  const match = String(text || "").match(/\{\{(\d+)\}\}/);
-  return match ? match[1] : null;
+function variableIndexes(text) {
+  return [...String(text || "").matchAll(/\{\{(\d+)\}\}/g)].map((match) => match[1]);
 }
 
 function templateHasApproveAction(types) {
@@ -161,31 +160,46 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
   const bodyTemplates = [
     ...collectTemplateStrings(types, "body"),
     ...collectTemplateStrings(types, "title"),
+    ...collectTemplateStrings(types, "subtitle"),
   ];
 
   const variables = {};
-  const mediaVarIndexes = new Set();
+  const bodyVarIndexes = [];
+  const seenBodyIndexes = new Set();
 
-  for (const mediaTemplate of mediaTemplates) {
-    const index = firstVariableIndex(mediaTemplate);
-    if (!index) {
-      continue;
+  for (const bodyTemplate of bodyTemplates) {
+    for (const index of variableIndexes(bodyTemplate)) {
+      if (seenBodyIndexes.has(index)) {
+        continue;
+      }
+      seenBodyIndexes.add(index);
+      bodyVarIndexes.push(index);
     }
-    mediaVarIndexes.add(index);
-    variables[index] = mediaValueForPlaceholder(mediaTemplate, imageUrl);
   }
 
   const bodyValues = [displayName, eventLabel];
-  let bodyValueIndex = 0;
-  for (const bodyTemplate of bodyTemplates) {
-    const matches = String(bodyTemplate).matchAll(/\{\{(\d+)\}\}/g);
-    for (const match of matches) {
-      const index = match[1];
-      if (mediaVarIndexes.has(index) || variables[index]) {
+  bodyVarIndexes.forEach((index, valueIndex) => {
+    variables[index] = bodyValues[valueIndex] || eventLabel;
+  });
+
+  const mediaVarIndexes = new Set();
+  for (const mediaTemplate of mediaTemplates) {
+    for (const index of variableIndexes(mediaTemplate)) {
+      mediaVarIndexes.add(index);
+      if (seenBodyIndexes.has(index)) {
         continue;
       }
-      variables[index] = bodyValues[bodyValueIndex] || eventLabel;
-      bodyValueIndex += 1;
+      variables[index] = mediaValueForPlaceholder(mediaTemplate, imageUrl);
+    }
+  }
+
+  const mediaOnlyIndexes = [...mediaVarIndexes].filter((index) => !seenBodyIndexes.has(index));
+  if (imageUrl && mediaVarIndexes.size > 0 && mediaOnlyIndexes.length === 0) {
+    console.warn(
+      "[WhatsApp] Card media variable overlaps the title. Keep title as {{1}} name, {{2}} event, and set Media URL to {{3}}.",
+    );
+    if (!variables["3"]) {
+      variables["3"] = mediaValueForPlaceholder(mediaTemplates[0], imageUrl);
     }
   }
 
