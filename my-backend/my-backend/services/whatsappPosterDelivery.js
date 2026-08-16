@@ -290,42 +290,7 @@ async function sendReadyPosterAsMediaTemplate({
     await waitForTwilioMessageReady(templateResult.sid);
   }
 
-  let whatsappResult = templateResult;
-  let imageSent = templateResult.mediaAttached !== false && Boolean(templateResult.sid);
-
-  try {
-    const mediaResult = await sendPosterWhatsApp({
-      toMobile: to,
-      imageUrl: posterResult.imageUrl,
-      body: buildPosterReadyMessage({
-        eventName: resolvedEventName,
-      }),
-    });
-    whatsappResult = mediaResult;
-    imageSent = true;
-    if (mediaResult.sid) {
-      await waitForTwilioMessageReady(mediaResult.sid);
-    }
-  } catch (error) {
-    imageSent = false;
-    console.warn(
-      "WhatsApp image after template failed; Download button can still send it:",
-      error.message,
-    );
-  }
-
-  if (!imageSent) {
-    return {
-      mobile: pendingRequest.mobile,
-      imageName: posterResult.imageName,
-      imageUrl: posterResult.imageUrl,
-      cloudinaryPublicId: posterResult.cloudinaryPublicId,
-      whatsapp: whatsappResult,
-      template: templateResult,
-      approveOffer: null,
-      imagePending: true,
-    };
-  }
+  const whatsappResult = templateResult;
 
   const approveDelayMs = getApproveAfterImageDelayMs();
   if (approveDelayMs > 0) {

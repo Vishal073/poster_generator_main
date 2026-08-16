@@ -11,6 +11,64 @@ function getDownloadTemplateContentSid() {
   return String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim();
 }
 
+function getMediaTemplateContentSid() {
+  return (
+    String(process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID || "").trim() ||
+    getDownloadTemplateContentSid()
+  );
+}
+
+function getWhatsAppMediaBaseUrl() {
+  const fromEnv = String(process.env.TWILIO_WHATSAPP_MEDIA_BASE_URL || "").trim();
+  if (fromEnv) {
+    return fromEnv.endsWith("/") ? fromEnv : `${fromEnv}/`;
+  }
+
+  const cloudName = String(process.env.CLOUD_NAME || "").trim();
+  if (cloudName) {
+    return `https://res.cloudinary.com/${cloudName}/image/upload/`;
+  }
+
+  return "";
+}
+
+function getMediaPathSuffix(imageUrl) {
+  const url = String(imageUrl || "").trim();
+  if (!url) {
+    return "";
+  }
+
+  const base = getWhatsAppMediaBaseUrl();
+  if (base && url.startsWith(base)) {
+    return url.slice(base.length);
+  }
+
+  const marker = "/image/upload/";
+  const index = url.indexOf(marker);
+  if (index !== -1) {
+    return url.slice(index + marker.length);
+  }
+
+  try {
+    const parsed = new URL(url);
+    return `${parsed.pathname.replace(/^\//, "")}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
+function getTemplateImageVariable(imageUrl) {
+  const useFullUrl =
+    String(process.env.TWILIO_MEDIA_TEMPLATE_USE_FULL_IMAGE_URL || "")
+      .trim()
+      .toLowerCase() === "true";
+  if (useFullUrl) {
+    return String(imageUrl || "").trim();
+  }
+
+  return getMediaPathSuffix(imageUrl);
+}
+
 function getDownloadApproveTemplateContentSid() {
   return String(process.env.TWILIO_DOWNLOAD_APPROVE_TEMPLATE_CONTENT_SID || "").trim();
 }
@@ -29,10 +87,13 @@ function getApprovePostTemplateContentVariables({ name }) {
 }
 
 /**
- * Twilio media template variables:
- * {{1}} = event name in the body text
- * {{2}} = public poster URL used as the IMAGE HEADER (WhatsApp shows the photo, not the link)
+ * Twilio media template variables (one WhatsApp message: photo + text):
+ * {{1}} = event name in the body
+ * {{2}} = image path after /image/upload/  (Twilio only allows variables after the domain)
  * {{3}} = customer name (optional)
+ *
+ * Twilio template Media URL must be:
+ * https://res.cloudinary.com/<CLOUD_NAME>/image/upload/{{2}}
  */
 function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
   const variables = {
@@ -40,7 +101,7 @@ function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
   };
 
   if (imageUrl && String(imageUrl).trim()) {
-    variables["2"] = String(imageUrl).trim();
+    variables["2"] = getTemplateImageVariable(imageUrl);
   }
 
   if (name && String(name).trim()) {
@@ -201,11 +262,13 @@ async function sendWhatsAppDownloadTemplate({
   eventName,
   imageUrl,
 }) {
-  const contentSid = getDownloadTemplateContentSid();
+  const contentSid = imageUrl
+    ? getMediaTemplateContentSid()
+    : getDownloadTemplateContentSid();
 
   if (!contentSid) {
     throw new Error(
-      "Twilio button template is not configured. Set TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID in .env.",
+      "Twilio media template is not configured. Set TWILIO_MEDIA_TEMPLATE_CONTENT_SID (or TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID) in .env.",
     );
   }
 
@@ -217,7 +280,6 @@ async function sendWhatsAppDownloadTemplate({
       eventName,
       imageUrl,
     }),
-    mediaUrl: imageUrl,
   });
 }
 
@@ -253,7 +315,6 @@ async function sendWhatsAppTemplateThenImage({
   toMobile,
   name,
   imageUrl,
-  body,
   eventName,
 }) {
   const templateResult = await sendWhatsAppDownloadTemplate({
@@ -263,43 +324,16 @@ async function sendWhatsAppTemplateThenImage({
     imageUrl,
   });
 
-  const delayMs = getTemplateBeforeMediaDelayMs();
-  if (delayMs > 0) {
-    await delay(delayMs);
-  }
-
-  try {
-    const mediaResult = await sendPosterWhatsApp({
-      toMobile,
-      imageUrl,
-      body,
-    });
-
-    return {
-      mode: "template_then_image",
-      sessionOpen: false,
-      template: templateResult,
-      media: mediaResult,
-    };
-  } catch (error) {
-    console.warn("WhatsApp image after template failed (user may need to tap Download):", {
-      code: error.code,
-      message: error.message,
-    });
-    return {
-      mode: "template_image_pending",
-      sessionOpen: false,
-      template: templateResult,
-      media: null,
-      imagePending: true,
-      imageError: error.message,
-    };
-  }
+  return {
+    mode: "media_template",
+    sessionOpen: false,
+    template: templateResult,
+  };
 }
 
 /**
  * If the user messaged us on WhatsApp within 24h, send the image only.
- * Otherwise send the approved template first, then the image.
+ * Otherwise send one approved media template that includes the poster image.
  */
 async function sendWhatsAppImageSmart({
   toMobile,
