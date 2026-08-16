@@ -10,6 +10,7 @@ const WHATSAPP_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function getMediaTemplateContentSid() {
   return (
+    String(process.env.TWILIO_CARD_TEMPLATE_CONTENT_SID || "").trim() ||
     String(process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID || "").trim() ||
     String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim()
   );
@@ -108,6 +109,23 @@ function firstVariableIndex(text) {
   return match ? match[1] : null;
 }
 
+function templateHasApproveAction(types) {
+  for (const spec of Object.values(types || {})) {
+    const actions = spec?.actions;
+    if (!Array.isArray(actions)) {
+      continue;
+    }
+    for (const action of actions) {
+      const id = String(action?.id || "").trim().toLowerCase();
+      const title = String(action?.title || "").trim().toLowerCase();
+      if (id === "approve" || title === "approve") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function mediaValueForPlaceholder(mediaTemplate, imageUrl) {
   const template = String(mediaTemplate || "").trim();
   const url = String(imageUrl || "").trim();
@@ -188,13 +206,10 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
 }
 
 /**
- * Twilio media template variables (one WhatsApp message: photo + text):
- * {{1}} = event name in the body
- * {{2}} = image path after /image/upload/  (Twilio only allows variables after the domain)
- * {{3}} = customer name (optional)
- *
- * Twilio template Media URL must be:
- * https://res.cloudinary.com/<CLOUD_NAME>/image/upload/{{2}}
+ * Poster-ready Card/Media variables:
+ * {{1}} = customer name
+ * {{2}} = event name
+ * {{3}} = poster image URL
  */
 function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
   const variables = {
@@ -366,7 +381,7 @@ async function sendWhatsAppDownloadTemplate({
 
   if (!contentSid) {
     throw new Error(
-      "Twilio media template is not configured. Set TWILIO_MEDIA_TEMPLATE_CONTENT_SID in .env.",
+      "Twilio card template is not configured. Set TWILIO_CARD_TEMPLATE_CONTENT_SID in .env.",
     );
   }
 
@@ -375,6 +390,7 @@ async function sendWhatsAppDownloadTemplate({
     eventName,
     imageUrl,
   });
+  let hasApproveAction = false;
 
   try {
     const template = await fetchTwilioContentTemplate(contentSid);
@@ -385,30 +401,34 @@ async function sendWhatsAppDownloadTemplate({
       imageUrl,
     });
     contentVariables = mapped.variables;
+    hasApproveAction = templateHasApproveAction(template?.types);
 
-    console.log("[WhatsApp] sending media template", {
+    console.log("[WhatsApp] sending poster template", {
       contentSid,
       friendlyName: template?.friendlyName || null,
       typeKeys: mapped.typeKeys,
       mediaTemplates: mapped.mediaTemplates,
       hasMediaVariable: mapped.hasMediaVariable,
+      hasApproveAction,
       contentVariables,
     });
 
     if (imageUrl && !mapped.hasMediaVariable) {
       console.warn(
-        "[WhatsApp] Content template has no media {{variable}}. WhatsApp will not show the poster image. Create a Media template with URL https://res.cloudinary.com/<CLOUD_NAME>/image/upload/{{2}} and set TWILIO_MEDIA_TEMPLATE_CONTENT_SID.",
+        "[WhatsApp] Content template has no media {{variable}}. WhatsApp will not show the poster image. Create a Card template with media {{3}} and set TWILIO_CARD_TEMPLATE_CONTENT_SID.",
       );
     }
   } catch (error) {
     console.warn("[WhatsApp] Could not inspect Twilio content template:", error.message);
   }
 
-  return sendWhatsAppContentTemplate({
+  const result = await sendWhatsAppContentTemplate({
     toMobile,
     contentSid,
     contentVariables,
   });
+  result.hasApproveAction = hasApproveAction;
+  return result;
 }
 
 /**

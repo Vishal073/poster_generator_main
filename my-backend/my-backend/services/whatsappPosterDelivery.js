@@ -303,7 +303,7 @@ async function sendReadyPosterAsMediaTemplate({
 
   let approveOffer = null;
   const latestPending = pendingPosterRequests.get(to) || pendingRequest;
-  if (latestPending.canApproveSocial) {
+  if (latestPending.canApproveSocial && !templateResult.hasApproveAction) {
     approveOffer = await sendWhatsAppApprovePostTemplate({
       toMobile: to,
       name: latestPending.name || name,

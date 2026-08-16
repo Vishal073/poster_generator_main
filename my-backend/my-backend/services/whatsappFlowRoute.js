@@ -255,7 +255,8 @@ router.post("/send-whatsapp-template", async (req, res) => {
       details: getErrorDetails(error),
       twilioTemplate: {
         contentSid: maskValue(
-          process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID ||
+          process.env.TWILIO_CARD_TEMPLATE_CONTENT_SID ||
+            process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID ||
             process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID,
         ),
         contentVariables: getContentVariables({ name: "Customer" }),

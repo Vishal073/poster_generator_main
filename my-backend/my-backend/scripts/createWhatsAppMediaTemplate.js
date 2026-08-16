@@ -1,11 +1,12 @@
 /**
- * Creates a Twilio twilio/media content template and submits it for WhatsApp approval.
+ * Creates a Twilio twilio/card content template (photo + Approve button)
+ * and submits it for WhatsApp approval.
  *
  * Run from repo root:
  *   node my-backend/my-backend/scripts/createWhatsAppMediaTemplate.js
  *
  * Then set Render env:
- *   TWILIO_MEDIA_TEMPLATE_CONTENT_SID=HX...
+ *   TWILIO_CARD_TEMPLATE_CONTENT_SID=HX...
  */
 const fs = require("fs");
 const path = require("path");
@@ -25,27 +26,36 @@ async function main() {
     throw new Error("Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.");
   }
   if (!cloudName) {
-    throw new Error("Set CLOUD_NAME so the template media URL matches Cloudinary.");
+    throw new Error("Set CLOUD_NAME so the sample media URL matches Cloudinary.");
   }
 
-  const mediaBase = `https://res.cloudinary.com/${cloudName}/image/upload/{{3}}`;
   const samplePath =
     String(process.env.TWILIO_MEDIA_SAMPLE_PATH || "").trim() ||
     "v1776929207/Bjp-poster_roz8od.jpg";
+  const sampleUrl =
+    String(process.env.TWILIO_MEDIA_SAMPLE_URL || "").trim() ||
+    `https://res.cloudinary.com/${cloudName}/image/upload/${samplePath}`;
 
   const client = twilio(accountSid, authToken);
   const content = await client.content.v1.contents.create({
-    friendly_name: "poster_ready_media",
+    friendly_name: "poster_ready_card",
     language: "en",
     variables: {
       1: "Vishal",
       2: "Independence Day",
-      3: samplePath,
+      3: sampleUrl,
     },
     types: {
-      "twilio/media": {
-        body: "Hi {{1}}, your {{2}} poster is ready",
-        media: [mediaBase],
+      "twilio/card": {
+        title: "Hi {{1}}, your {{2}} poster is ready!",
+        media: ["{{3}}"],
+        actions: [
+          {
+            type: "QUICK_REPLY",
+            title: "Approve",
+            id: "approve",
+          },
+        ],
       },
     },
   });
@@ -53,13 +63,15 @@ async function main() {
   console.log("Created content template:");
   console.log("  SID:", content.sid);
   console.log("  name:", content.friendlyName || content.friendly_name);
-  console.log("  media:", mediaBase);
+  console.log("  type: twilio/card");
+  console.log("  media: {{3}}");
+  console.log("  button: Approve");
 
   try {
     const approval = await client.content.v1
       .contents(content.sid)
       .approvalCreate.create({
-        name: "poster_ready_media",
+        name: "poster_ready_card",
         category: "UTILITY",
       });
     console.log("Submitted for WhatsApp approval:", approval.status || approval);
@@ -70,7 +82,7 @@ async function main() {
   }
 
   console.log("\nAdd this to Render env, then redeploy:");
-  console.log(`TWILIO_MEDIA_TEMPLATE_CONTENT_SID=${content.sid}`);
+  console.log(`TWILIO_CARD_TEMPLATE_CONTENT_SID=${content.sid}`);
 }
 
 main().catch((error) => {
