@@ -176,6 +176,29 @@ async function sendWhatsAppText({ toMobile, body }) {
   };
 }
 
+const contentTemplateCache = new Map();
+
+async function fetchTwilioContentTemplate(contentSid) {
+  const sid = String(contentSid || "").trim();
+  if (!sid) {
+    return null;
+  }
+
+  if (contentTemplateCache.has(sid)) {
+    return contentTemplateCache.get(sid);
+  }
+
+  const { client } = getTwilioClient();
+  const content = await client.content.v1.contents(sid).fetch();
+  const summary = {
+    sid: content.sid,
+    friendlyName: content.friendlyName || content.friendly_name || "",
+    types: content.types || {},
+  };
+  contentTemplateCache.set(sid, summary);
+  return summary;
+}
+
 async function sendWhatsAppContentTemplate({
   toMobile,
   contentSid,
@@ -255,6 +278,7 @@ async function sendWhatsAppContentTemplate({
 
 module.exports = {
   formatWhatsAppNumber,
+  fetchTwilioContentTemplate,
   sendWhatsAppContentTemplate,
   sendPosterWhatsApp,
   sendReelWhatsApp,

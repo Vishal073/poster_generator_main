@@ -3,6 +3,7 @@ const {
   sendPosterWhatsApp,
   sendWhatsAppContentTemplate,
   sendWhatsAppText,
+  fetchTwilioContentTemplate,
 } = require("./whatsappService");
 
 const WHATSAPP_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -86,6 +87,107 @@ function getApprovePostTemplateContentVariables({ name }) {
   };
 }
 
+function collectTemplateStrings(types, field) {
+  const values = [];
+  for (const spec of Object.values(types || {})) {
+    if (!spec || typeof spec !== "object") {
+      continue;
+    }
+    const value = spec[field];
+    if (typeof value === "string") {
+      values.push(value);
+    } else if (Array.isArray(value)) {
+      values.push(...value.filter((item) => typeof item === "string"));
+    }
+  }
+  return values;
+}
+
+function firstVariableIndex(text) {
+  const match = String(text || "").match(/\{\{(\d+)\}\}/);
+  return match ? match[1] : null;
+}
+
+function mediaValueForPlaceholder(mediaTemplate, imageUrl) {
+  const template = String(mediaTemplate || "").trim();
+  const url = String(imageUrl || "").trim();
+  if (!template || !url) {
+    return url;
+  }
+
+  if (/^\{\{\d+\}\}$/.test(template)) {
+    return url;
+  }
+
+  const placeholderIndex = template.indexOf("{{");
+  if (placeholderIndex <= 0) {
+    return url;
+  }
+
+  const prefix = template.slice(0, placeholderIndex);
+  if (url.startsWith(prefix)) {
+    return url.slice(prefix.length);
+  }
+
+  if (prefix.includes("/image/upload/") && url.includes("/image/upload/")) {
+    return url.split("/image/upload/")[1] || url;
+  }
+
+  return getTemplateImageVariable(url);
+}
+
+function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
+  const eventLabel = String(eventName || "Event").trim() || "Event";
+  const mediaTemplates = collectTemplateStrings(types, "media");
+  const bodyTemplates = [
+    ...collectTemplateStrings(types, "body"),
+    ...collectTemplateStrings(types, "title"),
+  ];
+
+  const variables = {};
+  const mediaVarIndexes = new Set();
+
+  for (const mediaTemplate of mediaTemplates) {
+    const index = firstVariableIndex(mediaTemplate);
+    if (!index) {
+      continue;
+    }
+    mediaVarIndexes.add(index);
+    variables[index] = mediaValueForPlaceholder(mediaTemplate, imageUrl);
+  }
+
+  for (const bodyTemplate of bodyTemplates) {
+    const matches = String(bodyTemplate).matchAll(/\{\{(\d+)\}\}/g);
+    for (const match of matches) {
+      const index = match[1];
+      if (!variables[index]) {
+        variables[index] = eventLabel;
+      }
+    }
+  }
+
+  if (!Object.keys(variables).length) {
+    variables["1"] = eventLabel;
+    if (imageUrl) {
+      variables["2"] = String(imageUrl).trim();
+    }
+  }
+
+  if (name && String(name).trim() && !variables["3"]) {
+    const used = new Set(Object.keys(variables));
+    if (!used.has("3")) {
+      variables["3"] = String(name).trim();
+    }
+  }
+
+  return {
+    variables,
+    hasMediaVariable: mediaVarIndexes.size > 0,
+    mediaTemplates,
+    typeKeys: Object.keys(types || {}),
+  };
+}
+
 /**
  * Twilio media template variables (one WhatsApp message: photo + text):
  * {{1}} = event name in the body
@@ -101,7 +203,7 @@ function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
   };
 
   if (imageUrl && String(imageUrl).trim()) {
-    variables["2"] = getTemplateImageVariable(imageUrl);
+    variables["2"] = String(imageUrl).trim();
   }
 
   if (name && String(name).trim()) {
@@ -272,14 +374,44 @@ async function sendWhatsAppDownloadTemplate({
     );
   }
 
-  return sendWhatsAppContentTemplate({
-    toMobile,
-    contentSid,
-    contentVariables: getDownloadTemplateContentVariables({
+  let contentVariables = getDownloadTemplateContentVariables({
+    name,
+    eventName,
+    imageUrl,
+  });
+
+  try {
+    const template = await fetchTwilioContentTemplate(contentSid);
+    const mapped = buildMediaTemplateVariables({
+      types: template?.types || {},
       name,
       eventName,
       imageUrl,
-    }),
+    });
+    contentVariables = mapped.variables;
+
+    console.log("[WhatsApp] sending media template", {
+      contentSid,
+      friendlyName: template?.friendlyName || null,
+      typeKeys: mapped.typeKeys,
+      mediaTemplates: mapped.mediaTemplates,
+      hasMediaVariable: mapped.hasMediaVariable,
+      contentVariables,
+    });
+
+    if (imageUrl && !mapped.hasMediaVariable) {
+      console.warn(
+        "[WhatsApp] Content template has no media {{variable}}. WhatsApp will not show the poster image. Create a Media template with URL https://res.cloudinary.com/<CLOUD_NAME>/image/upload/{{2}} and set TWILIO_MEDIA_TEMPLATE_CONTENT_SID.",
+      );
+    }
+  } catch (error) {
+    console.warn("[WhatsApp] Could not inspect Twilio content template:", error.message);
+  }
+
+  return sendWhatsAppContentTemplate({
+    toMobile,
+    contentSid,
+    contentVariables,
   });
 }
 
