@@ -9,6 +9,7 @@ const {
   isAllowedPosterSource,
   isAllowedEventPosterSource,
   getEventPosterRootFolder,
+  getEventDisplayNameFromPosterSource,
   listBasePostersFromCloudinary,
   getBasePosterFolder,
 } = require("./cloudnaryService");
@@ -512,6 +513,10 @@ async function generatePoster(req, res) {
             : typeof body.caption === "string"
               ? body.caption
               : "";
+        const eventName =
+          typeof body.eventName === "string" && body.eventName.trim()
+            ? body.eventName.trim()
+            : getEventDisplayNameFromPosterSource(resolvedPosterSource);
         if (videoUrl) {
           whatsappResult = await queueReadyReelForDownload({
             toMobile: mobileValue,
@@ -536,6 +541,7 @@ async function generatePoster(req, res) {
             },
             userId: resolvedUserId || undefined,
             caption: posterCaption,
+            eventName,
             canApproveSocial: socialEligibility.canApprove,
             lastInboundAt: waUser?.whatsappLastInboundAt || null,
           });

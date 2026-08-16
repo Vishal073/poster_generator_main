@@ -12,6 +12,7 @@ const {
   getApproveAfterImageDelayMs,
   isWhatsAppSessionOpen,
   delay,
+  buildPosterReadyMessage,
 } = require("./whatsappTemplateService");
 const { approvePosterForUser } = require("./facebookPostService");
 const { findUserByMobile } = require("../utils/portalAuth");
@@ -69,11 +70,13 @@ function preparePosterInBackground({ to, mobile, posterPayload, autoDeliverOnRea
 
       if (autoDeliverOnReady) {
         const pending = pendingPosterRequests.get(to);
-        await sendReadyPoster({
+        await deliverReadyPoster({
           to,
           name: pending?.name || "Customer",
           mobile: pending?.mobile || mobile,
           posterPayload,
+          sessionOpen: Boolean(pending?.sessionOpen),
+          eventName: pending?.eventName,
         });
       }
 
@@ -121,7 +124,7 @@ async function getOrCreatePosterResult({ to, name, mobile, posterPayload }) {
   };
 }
 
-async function sendReadyPoster({ to, name, mobile, posterPayload }) {
+async function sendReadyPoster({ to, name, mobile, posterPayload, eventName }) {
   const { pendingRequest, posterResult } = await getOrCreatePosterResult({
     to,
     name,
@@ -133,10 +136,13 @@ async function sendReadyPoster({ to, name, mobile, posterPayload }) {
     throw new Error("Poster is not ready yet. Please try again in a moment.");
   }
 
+  const resolvedEventName = eventName || pendingRequest.eventName;
   const whatsappResult = await sendPosterWhatsApp({
     toMobile: to,
     imageUrl: posterResult.imageUrl,
-    body: "Here is your poster",
+    body: buildPosterReadyMessage({
+      eventName: resolvedEventName,
+    }),
   });
 
   if (whatsappResult.sid) {
@@ -254,8 +260,100 @@ async function sendApproveConfirmation({ toMobile, result }) {
   });
 }
 
+async function sendReadyPosterAsMediaTemplate({
+  to,
+  name,
+  mobile,
+  posterPayload,
+  eventName,
+}) {
+  const { pendingRequest, posterResult } = await getOrCreatePosterResult({
+    to,
+    name,
+    mobile,
+    posterPayload,
+  });
+
+  if (!posterResult?.imageUrl) {
+    throw new Error("Poster is not ready yet. Please try again in a moment.");
+  }
+
+  const resolvedEventName = eventName || pendingRequest.eventName;
+  const templateResult = await sendWhatsAppDownloadTemplate({
+    toMobile: to,
+    name: pendingRequest.name || name,
+    eventName: resolvedEventName,
+    imageUrl: posterResult.imageUrl,
+  });
+
+  if (templateResult.sid) {
+    await waitForTwilioMessageReady(templateResult.sid);
+  }
+
+  const approveDelayMs = getApproveAfterImageDelayMs();
+  if (approveDelayMs > 0) {
+    await delay(approveDelayMs);
+  }
+
+  updatePendingRequest(to, {
+    downloadedAt: new Date().toISOString(),
+  });
+
+  let approveOffer = null;
+  const latestPending = pendingPosterRequests.get(to) || pendingRequest;
+  if (latestPending.canApproveSocial) {
+    approveOffer = await sendWhatsAppApprovePostTemplate({
+      toMobile: to,
+      name: latestPending.name || name,
+    });
+    if (approveOffer) {
+      updatePendingRequest(to, {
+        approveOfferedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  return {
+    mobile: pendingRequest.mobile,
+    imageName: posterResult.imageName,
+    imageUrl: posterResult.imageUrl,
+    cloudinaryPublicId: posterResult.cloudinaryPublicId,
+    whatsapp: templateResult,
+    template: templateResult,
+    approveOffer,
+  };
+}
+
+async function deliverReadyPoster({
+  to,
+  name,
+  mobile,
+  posterPayload,
+  sessionOpen,
+  eventName,
+}) {
+  if (sessionOpen) {
+    return sendReadyPoster({
+      to,
+      name,
+      mobile,
+      posterPayload,
+      eventName,
+    });
+  }
+
+  return sendReadyPosterAsMediaTemplate({
+    to,
+    name,
+    mobile,
+    posterPayload,
+    eventName,
+  });
+}
+
 /**
- * Active 24h WhatsApp session → send image directly. Otherwise download template first.
+ * Active 24h WhatsApp session → send image directly.
+ * Otherwise send the approved media template with event name + poster image.
  */
 async function queueReadyPosterForDownload({
   toMobile,
@@ -265,6 +363,7 @@ async function queueReadyPosterForDownload({
   posterPayload,
   userId,
   caption,
+  eventName,
   canApproveSocial = false,
   lastInboundAt = null,
 }) {
@@ -272,10 +371,12 @@ async function queueReadyPosterForDownload({
   const sessionOpen = isWhatsAppSessionOpen(lastInboundAt);
   const displayName = String(name || "Customer").trim() || "Customer";
   const displayMobile = String(mobile || toMobile).trim();
+  const displayEventName = String(eventName || "").trim();
 
   pendingPosterRequests.set(to, {
     name: displayName,
     mobile: displayMobile,
+    eventName: displayEventName,
     posterPayload: posterPayload || null,
     posterResult,
     posterStatus: "ready",
@@ -292,6 +393,7 @@ async function queueReadyPosterForDownload({
       name: displayName,
       mobile: displayMobile,
       posterPayload: posterPayload || null,
+      eventName: displayEventName,
     });
 
     return {
@@ -303,17 +405,20 @@ async function queueReadyPosterForDownload({
     };
   }
 
-  const templateResult = await sendWhatsAppDownloadTemplate({
-    toMobile: displayMobile,
+  const templateResult = await sendReadyPosterAsMediaTemplate({
+    to,
     name: displayName,
+    mobile: displayMobile,
+    posterPayload: posterPayload || null,
+    eventName: displayEventName,
   });
 
   return {
-    mode: "download_button",
+    mode: "media_template",
     sessionOpen: false,
-    template: templateResult,
     posterStatus: "ready",
     canApproveSocial: Boolean(canApproveSocial),
+    ...templateResult,
   };
 }
 
@@ -327,6 +432,7 @@ module.exports = {
   preparePosterInBackground,
   queueReadyPosterForDownload,
   sendReadyPoster,
+  deliverReadyPoster,
   approveReadyPoster,
   sendApproveConfirmation,
   getPendingPosterRequest,

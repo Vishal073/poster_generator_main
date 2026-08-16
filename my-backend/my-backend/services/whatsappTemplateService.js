@@ -28,18 +28,26 @@ function getApprovePostTemplateContentVariables({ name }) {
   };
 }
 
-function getDownloadTemplateContentVariables({ name }) {
-  return {
-    "1": String(name || "Customer"),
+/**
+ * Twilio media template variables:
+ * {{1}} = event name in the body text
+ * {{2}} = public poster URL used as the IMAGE HEADER (WhatsApp shows the photo, not the link)
+ * {{3}} = customer name (optional)
+ */
+function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
+  const variables = {
+    "1": String(eventName || "Event").trim() || "Event",
   };
-}
 
-function getTemplateBeforeMediaDelayMs() {
-  const raw = Number(process.env.WHATSAPP_TEMPLATE_BEFORE_MEDIA_DELAY_MS);
-  if (Number.isFinite(raw) && raw >= 0) {
-    return raw;
+  if (imageUrl && String(imageUrl).trim()) {
+    variables["2"] = String(imageUrl).trim();
   }
-  return 2000;
+
+  if (name && String(name).trim()) {
+    variables["3"] = String(name).trim();
+  }
+
+  return variables;
 }
 
 function getApproveAfterImageDelayMs() {
@@ -179,7 +187,12 @@ async function sendWhatsAppLoginLink({ toMobile, name, token, loginUrl }) {
   });
 }
 
-async function sendWhatsAppDownloadTemplate({ toMobile, name }) {
+async function sendWhatsAppDownloadTemplate({
+  toMobile,
+  name,
+  eventName,
+  imageUrl,
+}) {
   const contentSid = getDownloadTemplateContentSid();
 
   if (!contentSid) {
@@ -191,7 +204,11 @@ async function sendWhatsAppDownloadTemplate({ toMobile, name }) {
   return sendWhatsAppContentTemplate({
     toMobile,
     contentSid,
-    contentVariables: getDownloadTemplateContentVariables({ name }),
+    contentVariables: getDownloadTemplateContentVariables({
+      name,
+      eventName,
+      imageUrl,
+    }),
   });
 }
 
@@ -214,25 +231,33 @@ async function sendWhatsAppApprovePostTemplate({ toMobile, name }) {
   });
 }
 
-async function sendWhatsAppTemplateThenImage({ toMobile, name, imageUrl, body }) {
-  const templateResult = await sendWhatsAppDownloadTemplate({ toMobile, name });
-
-  const delayMs = getTemplateBeforeMediaDelayMs();
-  if (delayMs > 0) {
-    await delay(delayMs);
+function buildPosterReadyMessage({ eventName, body }) {
+  if (typeof body === "string" && body.trim()) {
+    return body.trim();
   }
 
-  const mediaResult = await sendPosterWhatsApp({
+  const eventLabel = String(eventName || "Event").trim() || "Event";
+  return `Your ${eventLabel} poster is ready`;
+}
+
+async function sendWhatsAppTemplateThenImage({
+  toMobile,
+  name,
+  imageUrl,
+  body,
+  eventName,
+}) {
+  const templateResult = await sendWhatsAppDownloadTemplate({
     toMobile,
+    name,
+    eventName,
     imageUrl,
-    body,
   });
 
   return {
-    mode: "template_then_image",
+    mode: "media_template",
     sessionOpen: false,
     template: templateResult,
-    media: mediaResult,
   };
 }
 
@@ -245,15 +270,17 @@ async function sendWhatsAppImageSmart({
   name,
   imageUrl,
   body,
+  eventName,
   lastInboundAt,
 }) {
   const sessionOpen = isWhatsAppSessionOpen(lastInboundAt);
+  const posterBody = buildPosterReadyMessage({ eventName, body });
 
   if (sessionOpen) {
     const mediaResult = await sendPosterWhatsApp({
       toMobile,
       imageUrl,
-      body,
+      body: posterBody,
     });
 
     return {
@@ -263,7 +290,13 @@ async function sendWhatsAppImageSmart({
     };
   }
 
-  return sendWhatsAppTemplateThenImage({ toMobile, name, imageUrl, body });
+  return sendWhatsAppTemplateThenImage({
+    toMobile,
+    name,
+    imageUrl,
+    body: posterBody,
+    eventName,
+  });
 }
 
 async function resolveLastInboundAt({ userId, mobileNumber }) {
@@ -291,6 +324,7 @@ module.exports = {
   sendWhatsAppApprovePostTemplate,
   getApproveAfterImageDelayMs,
   delay,
+  buildPosterReadyMessage,
   sendWhatsAppLoginLink,
   sendWhatsAppPortalLink,
   sendWhatsAppRegisterLink,

@@ -545,6 +545,28 @@ function groupEventPostersByFolder(posters) {
     });
 }
 
+function getEventDisplayNameFromPosterSource(posterSource) {
+  const source = String(posterSource || "").trim();
+  if (!source) {
+    return "";
+  }
+
+  const rootFolder = getEventPosterRootFolder();
+  const folderMatch = source.match(
+    new RegExp(`${escapeRegExp(rootFolder)}/([^/?#]+)`, "i"),
+  );
+  if (!folderMatch) {
+    return "";
+  }
+
+  const parsed = parseEventPosterFolderKey(decodeURIComponent(folderMatch[1]));
+  if (!parsed?.eventName) {
+    return "";
+  }
+
+  return formatEventDisplayName(parsed.eventName);
+}
+
 function isAllowedEventPosterSource(posterSource) {
   const source = String(posterSource || "").trim();
   if (!source) {
@@ -583,5 +605,6 @@ module.exports.parseEventPosterFolderKey = parseEventPosterFolderKey;
 module.exports.listEventPosterResourcesFromCloudinary = listEventPosterResourcesFromCloudinary;
 module.exports.groupEventPostersByFolder = groupEventPostersByFolder;
 module.exports.formatEventDisplayName = formatEventDisplayName;
+module.exports.getEventDisplayNameFromPosterSource = getEventDisplayNameFromPosterSource;
 module.exports.isAllowedEventPosterSource = isAllowedEventPosterSource;
 module.exports.isAllowedPosterSource = isAllowedPosterSource;

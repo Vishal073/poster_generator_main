@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon my-backend/server.js",
     "start": "node my-backend/server.js",
+    "start:lambda": "node my-backend/lambda.js",
     "test": "echo \"No tests configured\""
   },
   "engines": {
@@ -27,6 +28,7 @@
     "nodemailer": "^8.0.5",
     "paytmchecksum": "^1.5.1",
     "sharp": "^0.34.5",
+    "serverless-http": "^3.2.0",
     "twilio": "^6.0.0"
   },
   "devDependencies": {

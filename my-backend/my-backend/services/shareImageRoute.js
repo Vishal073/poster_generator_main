@@ -434,10 +434,14 @@ router.post(
           });
         }
       }
+      const eventName =
+        typeof body.eventName === "string" ? body.eventName.trim() : "";
       const whatsappMessage =
         typeof body.whatsappMessage === "string" && body.whatsappMessage.trim()
           ? body.whatsappMessage.trim()
-          : "Here is your image";
+          : eventName
+            ? `Your ${eventName} poster is ready`
+            : "Here is your image";
 
       if (
         !sendWhatsApp &&
@@ -572,6 +576,7 @@ router.post(
               name: user.name,
               imageUrl,
               body: whatsappMessage,
+              eventName,
               lastInboundAt: user.whatsappLastInboundAt,
             });
           }

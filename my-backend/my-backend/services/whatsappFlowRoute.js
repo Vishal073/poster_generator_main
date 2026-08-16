@@ -3,7 +3,7 @@ const {
   formatWhatsAppNumber,
   sendWhatsAppText,
 } = require("./whatsappService");
-const { recordWhatsAppInbound, sendWhatsAppDownloadTemplate, isWhatsAppSessionOpen } = require("./whatsappTemplateService");
+const { recordWhatsAppInbound, isWhatsAppSessionOpen } = require("./whatsappTemplateService");
 const {
   handleGcrGraphixGreeting,
   isGcrGraphixGreeting,
@@ -17,6 +17,7 @@ const {
   sendApproveConfirmation,
 } = require("./whatsappPosterDelivery");
 const { getUserSocialApproveEligibility } = require("./facebookPostService");
+const { getEventDisplayNameFromPosterSource } = require("./cloudnaryService");
 
 const router = express.Router();
 
@@ -159,10 +160,17 @@ function buildPosterRequest(body, { name, mobile }) {
   };
 }
 
-function getContentVariables({ name }) {
-  return {
-    "1": String(name || "Customer"),
+function getContentVariables({ name, eventName, imageUrl }) {
+  const variables = {
+    "1": String(eventName || "Event"),
   };
+  if (imageUrl) {
+    variables["2"] = String(imageUrl);
+  }
+  if (name) {
+    variables["3"] = String(name || "Customer");
+  }
+  return variables;
 }
 
 router.post("/send-whatsapp-template", async (req, res) => {
@@ -202,11 +210,17 @@ router.post("/send-whatsapp-template", async (req, res) => {
     }
     sessionOpen = isWhatsAppSessionOpen(matchedUser?.whatsappLastInboundAt);
 
+    const eventName =
+      typeof body.eventName === "string" && body.eventName.trim()
+        ? body.eventName.trim()
+        : getEventDisplayNameFromPosterSource(posterPayload.posterSource);
+
     pendingPosterRequests.set(to, {
       name,
       mobile: String(mobile).trim(),
+      eventName,
       posterPayload,
-      posterStatus: sessionOpen ? "generating" : "queued",
+      posterStatus: "generating",
       userId: resolvedUserId,
       canApproveSocial,
       sessionOpen,
@@ -214,44 +228,24 @@ router.post("/send-whatsapp-template", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    if (sessionOpen) {
-      preparePosterInBackground({
-        to,
-        mobile: String(mobile).trim(),
-        posterPayload,
-        autoDeliverOnReady: true,
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: "WhatsApp session is active. Poster will be sent directly when ready.",
-        name,
-        mobile: String(mobile).trim(),
-        posterStatus: "generating",
-        sessionOpen: true,
-        posterPayload,
-      });
-    }
-
-    const templateResult = await sendWhatsAppDownloadTemplate({
-      toMobile: to,
-      name,
-    });
     preparePosterInBackground({
       to,
       mobile: String(mobile).trim(),
       posterPayload,
+      autoDeliverOnReady: true,
     });
 
     return res.status(200).json({
       success: true,
-      message: "WhatsApp template sent. Poster generation started in background.",
+      message: sessionOpen
+        ? "WhatsApp session is active. Poster will be sent directly when ready."
+        : "Poster is generating. WhatsApp template with image will be sent when ready.",
       name,
+      eventName: eventName || undefined,
       mobile: String(mobile).trim(),
       posterStatus: "generating",
-      sessionOpen: false,
+      sessionOpen,
       posterPayload,
-      whatsapp: templateResult,
     });
   } catch (error) {
     return res.status(500).json({
@@ -261,7 +255,7 @@ router.post("/send-whatsapp-template", async (req, res) => {
       details: getErrorDetails(error),
       twilioTemplate: {
         contentSid: maskValue(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID),
-        contentVariables: getContentVariables({ name }),
+        contentVariables: getContentVariables({ name: "Customer" }),
       },
     });
   }
