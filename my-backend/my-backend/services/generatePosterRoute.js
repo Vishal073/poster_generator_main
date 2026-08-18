@@ -20,6 +20,8 @@ const { queueReadyPosterForDownload } = require("./whatsappPosterDelivery");
 const {
   postPosterForUser,
   postPosterToInstagramForUser,
+  postCarouselForUser,
+  postCarouselToInstagramForUser,
   postPosterStoryForUser,
   postPosterStoryToInstagramForUser,
   postReelForUser,
@@ -35,6 +37,7 @@ const {
 } = require("./imageAudioVideoService");
 const {
   savePosterConfigFromGenerateBody,
+  resolveUsablePosterConfigs,
 } = require("../utils/posterConfigService");
 const {
   normalizeFontColor,
@@ -232,6 +235,20 @@ function isFalsyParam(value) {
   return value === 0;
 }
 
+function resolveAiPosterFlags(body) {
+  const raw = body.useAiPoster ?? body.aiPoster ?? body.polishPoster;
+  if (raw === undefined || raw === null || raw === "") {
+    return { forceAi: false, skipAi: false };
+  }
+  if (isTruthyParam(raw)) {
+    return { forceAi: true, skipAi: false };
+  }
+  if (isFalsyParam(raw)) {
+    return { forceAi: false, skipAi: true };
+  }
+  return { forceAi: false, skipAi: false };
+}
+
 function resolveUserImageSource(userImageSource, includeUserImage) {
   if (isFalsyParam(includeUserImage)) {
     return undefined;
@@ -256,11 +273,14 @@ function normalizeImagePosition(value, fallback = "left") {
   return fallback;
 }
 
-async function applyPosterEnhancement(buffer, enhancePriority) {
+async function applyPosterEnhancement(buffer, enhancePriority, options = {}) {
   try {
     return await enhancePosterBuffer(buffer, {
       enhancePriority,
       defaultPriority: "medium",
+      forceAi: Boolean(options.forceAi),
+      skipAi: Boolean(options.skipAi),
+      textLines: options.textLines,
     });
   } catch (error) {
     console.error("Poster enhancement failed, using original image:", error.message);
@@ -436,6 +456,9 @@ async function generatePoster(req, res) {
       });
     }
 
+    const { forceAi: forceAiPoster, skipAi: skipAiPoster } =
+      resolveAiPosterFlags(body);
+
     const enhancement =
       posterResult.source === "frontend-upload"
         ? {
@@ -444,7 +467,11 @@ async function generatePoster(req, res) {
             enhanceApplied: "none",
             enhanceFallback: false,
           }
-        : await applyPosterEnhancement(posterResult.buffer, resolvedEnhancePriority);
+        : await applyPosterEnhancement(posterResult.buffer, resolvedEnhancePriority, {
+            forceAi: forceAiPoster,
+            skipAi: skipAiPoster,
+            textLines,
+          });
 
     const imageName = getPosterFileName({
       mobileValue,
@@ -1017,12 +1044,81 @@ function resolvePosterSources(body) {
   return [...new Set(combined)];
 }
 
-function pickRandomPosterSource(sources) {
-  if (!sources.length) {
-    return "";
+/**
+ * Evenly assign selected base posters to selected users (no random).
+ * 1 user + 9 posters → that user gets all 9
+ * 9 users + 9 posters → 1 each
+ * 18 users + 9 posters → 2 users per poster
+ */
+function generateOptionsFromSavedConfig(config, fallbackLayout, fallbackStyles, fallbackLanguage) {
+  const layout = config?.layout && typeof config.layout === "object"
+    ? config.layout
+    : fallbackLayout;
+  const textLineStyles = Array.isArray(config?.textLineStyles)
+    ? config.textLineStyles.map((style) => ({ ...style }))
+    : fallbackStyles.map((style) => ({ ...style }));
+
+  return {
+    language:
+      typeof layout.language === "string" && layout.language.trim()
+        ? layout.language.trim()
+        : fallbackLanguage,
+    insetFromBottom: layout.insetFromBottom,
+    insetLeft: layout.insetLeft,
+    insetRight: layout.insetRight,
+    imagePosition: layout.imagePosition,
+    imageWidth: layout.imageWidth,
+    imageHeight: layout.imageHeight,
+    imageShape: layout.imageShape,
+    imageCornerRadius: layout.imageCornerRadius,
+    imageGap: layout.imageGap,
+    imageMaxSize: layout.imageMaxSize,
+    lineGap: layout.lineGap,
+    lineGaps: layout.lineGaps,
+    paragraphGap: layout.paragraphGap,
+    fontSize: layout.fontSize,
+    fontColor: layout.fontColor,
+    fontFamily: layout.fontFamily,
+    textOpacity: layout.textOpacity,
+    textBlendMode: layout.textBlendMode,
+    textBlockAlign: layout.textBlockAlign,
+    textLineAlignments: layout.textLineAlignments,
+    textLineStyles,
+    includeUserImage: config?.includeUserImage !== false,
+    showPhoneIcon: config?.showPhoneIcon !== false,
+    addWatermark: config?.addWatermark,
+    watermarkPosition: config?.watermarkPosition,
+  };
+}
+
+/**
+ * Evenly assign selected base posters to selected users (no random).
+ * 1 user + 9 posters → that user gets all 9
+ * 9 users + 9 posters → 1 each
+ * 18 users + 9 posters → 2 users per poster
+ */
+function assignPosterSourcesToUsers(userIds, posterSources) {
+  const assignments = new Map(
+    userIds.map((userId) => [String(userId), []]),
+  );
+  if (!userIds.length || !posterSources.length) {
+    return assignments;
   }
-  const index = Math.floor(Math.random() * sources.length);
-  return sources[index];
+
+  if (userIds.length <= posterSources.length) {
+    posterSources.forEach((source, index) => {
+      const userId = String(userIds[index % userIds.length]);
+      assignments.get(userId).push(source);
+    });
+    return assignments;
+  }
+
+  userIds.forEach((userId, index) => {
+    assignments
+      .get(String(userId))
+      .push(posterSources[index % posterSources.length]);
+  });
+  return assignments;
 }
 
 function buildTextLinesFromUser(user) {
@@ -1041,12 +1137,10 @@ function buildTextLinesFromUser(user) {
 }
 
 // POST /generate-posters/bulk
-// Body: { userIds: string[], posterSource: string, language?: string }
-// The admin sends one request with selected user IDs + the chosen base
-// poster. The backend fetches each user's saved details from MongoDB,
-// renders a poster image, uploads to Cloudinary, and returns every
-// generated URL in one response. Users are processed sequentially (queue
-// of concurrency 1) to keep the canvas memory footprint predictable.
+// Body: { userIds: string[], posterSources: string[], language?: string }
+// Evenly assigns selected templates to selected users (no random):
+// 1 user + 9 posters → 9 posters for that user
+// 18 users + 9 posters → 2 users per poster
 router.post(
   "/generate-posters/bulk",
   requireAuth,
@@ -1077,7 +1171,9 @@ router.post(
           body.instagramStory,
       );
       const includeUserImage = !isFalsyParam(body.includeUserImage);
-      const posterSources = resolvePosterSources(body);
+      const { forceAi: forceAiPoster, skipAi: skipAiPoster } =
+        resolveAiPosterFlags(body);
+      let posterSources = resolvePosterSources(body);
       const language =
         typeof body.language === "string" && body.language.trim()
           ? body.language.trim()
@@ -1195,6 +1291,22 @@ router.post(
         });
       }
 
+      const { usable: usablePosterConfigs, skipped: skippedPosterSources } =
+        await resolveUsablePosterConfigs(posterSources);
+      const posterConfigBySource = new Map(
+        usablePosterConfigs.map((item) => [item.posterSource, item.config]),
+      );
+      posterSources = usablePosterConfigs.map((item) => item.posterSource);
+
+      if (posterSources.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "None of the selected posters have a saved layout. Open Generate Poster, adjust text/layout, save config, then use Bulk.",
+          skippedPosterSources,
+        });
+      }
+
       if (userIds.length === 0) {
         return res.status(400).json({
           success: false,
@@ -1217,6 +1329,28 @@ router.post(
         : [];
 
       const usersById = new Map(users.map((user) => [String(user._id), user]));
+      const posterAssignments = assignPosterSourcesToUsers(
+        userIds,
+        posterSources,
+      );
+
+      const feedCaption =
+        typeof body.facebookCaption === "string" ? body.facebookCaption : "";
+      const shareLinkRaw =
+        typeof body.shareLink === "string"
+          ? body.shareLink
+          : typeof body.shopUrl === "string"
+            ? body.shopUrl
+            : typeof body.link === "string"
+              ? body.link
+              : typeof body.websiteUrl === "string"
+                ? body.websiteUrl
+                : "";
+      const shareLink = String(shareLinkRaw || "").trim();
+      const instagramCaption =
+        typeof body.instagramCaption === "string"
+          ? body.instagramCaption
+          : feedCaption;
 
       const results = [];
 
@@ -1254,198 +1388,248 @@ router.post(
           continue;
         }
 
-        try {
-          const userPosterSource = pickRandomPosterSource(posterSources);
+        const assignedSources =
+          posterAssignments.get(String(userId)) || [];
+        const generatedRows = [];
 
-          const posterResult = await generatePosterImage({
-            name: "",
-            textLines,
-            textLineStyles: resolvedTextLineStyles.map((style) => ({ ...style })),
-            userImageSource: includeUserImage ? user.userImageUrl || undefined : undefined,
-            posterSource: userPosterSource,
+        for (const userPosterSource of assignedSources) {
+          const savedConfig = posterConfigBySource.get(userPosterSource);
+          const savedOptions = generateOptionsFromSavedConfig(
+            savedConfig,
+            resolvedLayout,
+            resolvedTextLineStyles,
             language,
-            ...resolvedLayout,
-            showPhoneIcon: !isFalsyParam(body.showPhoneIcon),
-            addWatermark: body.addWatermark,
-            watermarkPosition: body.watermarkPosition,
-          });
-
-          const enhancement = await applyPosterEnhancement(
-            posterResult.buffer,
-            user.enhancePriority || "medium"
           );
 
-          const imageName = getPosterFileName({
-            mobileValue: user.mobileNumber,
-            email: undefined,
-            fallbackName: posterResult.fileName,
-          });
+          try {
+            const posterResult = await generatePosterImage({
+              name: "",
+              textLines,
+              textLineStyles: savedOptions.textLineStyles,
+              userImageSource: savedOptions.includeUserImage
+                ? user.userImageUrl || undefined
+                : undefined,
+              posterSource: userPosterSource,
+              language: savedOptions.language,
+              insetFromBottom: savedOptions.insetFromBottom,
+              insetLeft: savedOptions.insetLeft,
+              insetRight: savedOptions.insetRight,
+              imagePosition: savedOptions.imagePosition,
+              imageWidth: savedOptions.imageWidth,
+              imageHeight: savedOptions.imageHeight,
+              imageShape: savedOptions.imageShape,
+              imageCornerRadius: savedOptions.imageCornerRadius,
+              imageGap: savedOptions.imageGap,
+              imageMaxSize: savedOptions.imageMaxSize,
+              lineGap: savedOptions.lineGap,
+              lineGaps: savedOptions.lineGaps,
+              paragraphGap: savedOptions.paragraphGap,
+              fontSize: savedOptions.fontSize,
+              fontColor: savedOptions.fontColor,
+              fontFamily: savedOptions.fontFamily,
+              textOpacity: savedOptions.textOpacity,
+              textBlendMode: savedOptions.textBlendMode,
+              textBlockAlign: savedOptions.textBlockAlign,
+              textLineAlignments: savedOptions.textLineAlignments,
+              showPhoneIcon: savedOptions.showPhoneIcon,
+              addWatermark: savedOptions.addWatermark,
+              watermarkPosition: savedOptions.watermarkPosition,
+            });
 
-          const uploadResult = await uploadPosterToCloudinary(
-            enhancement.buffer,
-            imageName
-          );
+            const enhancement = await applyPosterEnhancement(
+              posterResult.buffer,
+              user.enhancePriority || "medium",
+              {
+                forceAi: forceAiPoster,
+                skipAi: skipAiPoster,
+                textLines,
+              },
+            );
 
-          let videoUrl = null;
-          if (sharedAudioBuffer) {
-            try {
-              const videoUpload = await uploadImageWithAudioVideo({
-                imageBuffer: enhancement.buffer,
-                audioBuffer: sharedAudioBuffer,
-                imageFileName: imageName,
-                audioFileName: sharedAudioFileName,
-                folder:
-                  process.env.CLOUDINARY_POSTER_AUDIO_FOLDER ||
-                  "poster-with-audio",
-                publicFileName: `bulk-audio-${userId}-${Date.now()}.mp4`,
-                audioAlreadyPrepared: sharedAudioPrepared,
-              });
-              videoUrl = videoUpload.videoUrl;
-            } catch (error) {
-              results.push({
-                userId,
-                name: user.name,
-                mobile: user.mobileNumber,
-                status: "error",
-                message: `Poster generated, but attaching song failed: ${getErrorMessage(error)}`,
-                imageUrl: uploadResult.imageUrl,
-                cloudinaryPublicId: uploadResult.publicId,
-              });
-              continue;
+            const imageName = getPosterFileName({
+              mobileValue: user.mobileNumber,
+              email: undefined,
+              fallbackName: posterResult.fileName,
+            });
+
+            const uploadResult = await uploadPosterToCloudinary(
+              enhancement.buffer,
+              imageName,
+            );
+
+            let videoUrl = null;
+            if (sharedAudioBuffer) {
+              try {
+                const videoUpload = await uploadImageWithAudioVideo({
+                  imageBuffer: enhancement.buffer,
+                  audioBuffer: sharedAudioBuffer,
+                  imageFileName: imageName,
+                  audioFileName: sharedAudioFileName,
+                  folder:
+                    process.env.CLOUDINARY_POSTER_AUDIO_FOLDER ||
+                    "poster-with-audio",
+                  publicFileName: `bulk-audio-${userId}-${Date.now()}.mp4`,
+                  audioAlreadyPrepared: sharedAudioPrepared,
+                });
+                videoUrl = videoUpload.videoUrl;
+              } catch (error) {
+                results.push({
+                  userId,
+                  name: user.name,
+                  mobile: user.mobileNumber,
+                  status: "error",
+                  posterSource: userPosterSource,
+                  message: `Poster generated, but attaching song failed: ${getErrorMessage(error)}`,
+                  imageUrl: uploadResult.imageUrl,
+                  cloudinaryPublicId: uploadResult.publicId,
+                });
+                continue;
+              }
             }
+
+            const row = {
+              userId,
+              name: user.name,
+              mobile: user.mobileNumber,
+              status: "success",
+              posterSource: userPosterSource,
+              imageUrl: uploadResult.imageUrl,
+              videoUrl: videoUrl || undefined,
+              hasAudio: Boolean(videoUrl),
+              cloudinaryPublicId: uploadResult.publicId,
+              imageName,
+              enhancePriority: enhancement.enhancePriority,
+              enhanceApplied: enhancement.enhanceApplied,
+              enhanceFallback: enhancement.enhanceFallback,
+              enhanceError: enhancement.enhanceError || undefined,
+              aiProvider: enhancement.aiProvider || undefined,
+              aiModel: enhancement.aiModel || undefined,
+            };
+            generatedRows.push(row);
+            results.push(row);
+          } catch (error) {
+            results.push({
+              userId,
+              name: user.name,
+              mobile: user.mobileNumber,
+              status: "error",
+              posterSource: userPosterSource,
+              message: getErrorMessage(error),
+            });
           }
+        }
 
-          const feedCaption =
-            typeof body.facebookCaption === "string" ? body.facebookCaption : "";
-          const shareLinkRaw =
-            typeof body.shareLink === "string"
-              ? body.shareLink
-              : typeof body.shopUrl === "string"
-                ? body.shopUrl
-                : typeof body.link === "string"
-                  ? body.link
-                  : typeof body.websiteUrl === "string"
-                    ? body.websiteUrl
-                    : "";
-          const shareLink = String(shareLinkRaw || "").trim();
-          const instagramCaption =
-            typeof body.instagramCaption === "string"
-              ? body.instagramCaption
-              : feedCaption;
+        const successRows = generatedRows.filter(
+          (row) => row.status === "success" && row.imageUrl,
+        );
+        const imageUrls = successRows.map((row) => row.imageUrl);
+        const videoUrls = successRows
+          .map((row) => row.videoUrl)
+          .filter(Boolean);
+        const primaryRow = successRows[0];
 
-          let facebookResult;
-          if (shouldUploadFacebook) {
-            try {
-              const posted = videoUrl
-                ? await postReelForUser({
+        if (!primaryRow) {
+          continue;
+        }
+
+        let facebookResult;
+        if (shouldUploadFacebook) {
+          try {
+            const posted = videoUrls.length
+              ? await postReelForUser({
+                  userId: String(userId),
+                  videoUrl: videoUrls[0],
+                  caption: feedCaption,
+                  shareLink,
+                })
+              : imageUrls.length >= 2
+                ? await postCarouselForUser({
                     userId: String(userId),
-                    videoUrl,
+                    imageUrls,
                     caption: feedCaption,
-                    shareLink,
                   })
                 : await postPosterForUser({
                     userId: String(userId),
-                    imageUrl: uploadResult.imageUrl,
+                    imageUrl: imageUrls[0],
                     caption: feedCaption,
                     shareLink,
                   });
-              facebookResult = { success: true, ...posted };
-            } catch (error) {
-              facebookResult = {
-                success: false,
-                message: getErrorMessage(error),
-              };
-            }
+            facebookResult = { success: true, ...posted };
+          } catch (error) {
+            facebookResult = {
+              success: false,
+              message: getErrorMessage(error),
+            };
           }
+        }
 
-          let instagramResult;
-          if (shouldUploadInstagram) {
-            try {
-              const posted = videoUrl
-                ? await postReelToInstagramForUser({
+        let instagramResult;
+        if (shouldUploadInstagram) {
+          try {
+            const posted = videoUrls.length
+              ? await postReelToInstagramForUser({
+                  userId: String(userId),
+                  videoUrl: videoUrls[0],
+                  caption: instagramCaption,
+                  shareLink,
+                })
+              : imageUrls.length >= 2
+                ? await postCarouselToInstagramForUser({
                     userId: String(userId),
-                    videoUrl,
+                    imageUrls,
                     caption: instagramCaption,
-                    shareLink,
                   })
                 : await postPosterToInstagramForUser({
                     userId: String(userId),
-                    imageUrl: uploadResult.imageUrl,
+                    imageUrl: imageUrls[0],
                     caption: instagramCaption,
                     shareLink,
                   });
-              instagramResult = { success: true, ...posted };
-            } catch (error) {
-              instagramResult = {
-                success: false,
-                message: getErrorMessage(error),
-              };
-            }
+            instagramResult = { success: true, ...posted };
+          } catch (error) {
+            instagramResult = {
+              success: false,
+              message: getErrorMessage(error),
+            };
           }
-
-          let facebookStoryResult;
-          if (shouldUploadFacebookStory) {
-            try {
-              const posted = await postPosterStoryForUser({
-                userId: String(userId),
-                imageUrl: uploadResult.imageUrl,
-              });
-              facebookStoryResult = { success: true, ...posted };
-            } catch (error) {
-              facebookStoryResult = {
-                success: false,
-                message: getErrorMessage(error),
-              };
-            }
-          }
-
-          let instagramStoryResult;
-          if (shouldUploadInstagramStory) {
-            try {
-              const posted = await postPosterStoryToInstagramForUser({
-                userId: String(userId),
-                imageUrl: uploadResult.imageUrl,
-              });
-              instagramStoryResult = { success: true, ...posted };
-            } catch (error) {
-              instagramStoryResult = {
-                success: false,
-                message: getErrorMessage(error),
-              };
-            }
-          }
-
-          results.push({
-            userId,
-            name: user.name,
-            mobile: user.mobileNumber,
-            status: "success",
-            posterSource: userPosterSource,
-            imageUrl: uploadResult.imageUrl,
-            videoUrl: videoUrl || undefined,
-            hasAudio: Boolean(videoUrl),
-            cloudinaryPublicId: uploadResult.publicId,
-            imageName,
-            enhancePriority: enhancement.enhancePriority,
-            enhanceApplied: enhancement.enhanceApplied,
-            enhanceFallback: enhancement.enhanceFallback,
-            enhanceError: enhancement.enhanceError || undefined,
-            aiProvider: enhancement.aiProvider || undefined,
-            aiModel: enhancement.aiModel || undefined,
-            facebook: facebookResult,
-            instagram: instagramResult,
-            facebookStory: facebookStoryResult,
-            instagramStory: instagramStoryResult,
-          });
-        } catch (error) {
-          results.push({
-            userId,
-            name: user.name,
-            mobile: user.mobileNumber,
-            status: "error",
-            message: getErrorMessage(error),
-          });
         }
+
+        let facebookStoryResult;
+        if (shouldUploadFacebookStory) {
+          try {
+            const posted = await postPosterStoryForUser({
+              userId: String(userId),
+              imageUrl: imageUrls[0],
+            });
+            facebookStoryResult = { success: true, ...posted };
+          } catch (error) {
+            facebookStoryResult = {
+              success: false,
+              message: getErrorMessage(error),
+            };
+          }
+        }
+
+        let instagramStoryResult;
+        if (shouldUploadInstagramStory) {
+          try {
+            const posted = await postPosterStoryToInstagramForUser({
+              userId: String(userId),
+              imageUrl: imageUrls[0],
+            });
+            instagramStoryResult = { success: true, ...posted };
+          } catch (error) {
+            instagramStoryResult = {
+              success: false,
+              message: getErrorMessage(error),
+            };
+          }
+        }
+
+        primaryRow.facebook = facebookResult;
+        primaryRow.instagram = instagramResult;
+        primaryRow.facebookStory = facebookStoryResult;
+        primaryRow.instagramStory = instagramStoryResult;
       }
 
       const successCount = results.filter((r) => r.status === "success").length;
@@ -1454,40 +1638,31 @@ router.post(
       const shouldSavePosterConfig = isTruthyParam(body.savePosterConfig);
 
       if (shouldSavePosterConfig) {
-        for (const source of posterSources) {
-          if (!isAllowedEventPosterSource(source)) {
-            continue;
-          }
-
-          try {
-            await savePosterConfigFromGenerateBody(source, {
-              ...body,
-              ...resolvedLayout,
-              textLineStyles: resolvedTextLineStyles,
-              language,
-              includeUserImage,
-            });
-          } catch (configError) {
-            console.warn(
-              "Failed to save bulk poster config:",
-              getErrorMessage(configError),
-            );
-          }
-        }
+        console.log(
+          "[bulk] skip savePosterConfig — each template already uses its own saved layout",
+        );
       }
+
+      const skippedCount = skippedPosterSources.length;
+      const skipNote =
+        skippedCount > 0
+          ? ` Skipped ${skippedCount} template${skippedCount === 1 ? "" : "s"} with default/no saved config.`
+          : "";
 
       return res.status(200).json({
         success: true,
         message:
-          errorCount === 0
+          (errorCount === 0
             ? `Generated ${successCount} poster${successCount === 1 ? "" : "s"}.`
-            : `Generated ${successCount} of ${results.length} posters (${errorCount} failed).`,
+            : `Generated ${successCount} of ${results.length} posters (${errorCount} failed).`) +
+          skipNote,
         posterSources,
+        skippedPosterSources,
         posterSource: posterSources.length === 1 ? posterSources[0] : undefined,
         language,
         layout: resolvedLayout,
         textLineStyles: resolvedTextLineStyles,
-        requested: userIds.length,
+        requested: results.length,
         successCount,
         errorCount,
         results,

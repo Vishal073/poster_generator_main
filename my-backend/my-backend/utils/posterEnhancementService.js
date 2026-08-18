@@ -40,16 +40,23 @@ function passthroughResult(buffer, enhancePriority, extra = {}) {
 async function enhancePosterBuffer(buffer, options = {}) {
   const defaultPriority = options.defaultPriority || "medium";
   const enhancePriority = normalizeEnhancePriority(options.enhancePriority, defaultPriority);
-
+  const forceAi = Boolean(options.forceAi);
+  const skipAi = Boolean(options.skipAi);
+  const aiReady = isAiEnhanceEnabled() && isAiProviderConfigured();
   const shouldRunAi =
-    enhancePriority === "high" && isAiEnhanceEnabled() && isAiProviderConfigured();
+    !skipAi && aiReady && (forceAi || enhancePriority === "high");
 
   if (!shouldRunAi) {
     return passthroughResult(buffer, enhancePriority);
   }
 
+  const aiPriority = forceAi ? "medium" : enhancePriority;
+
   try {
-    const aiResult = await modifyPosterWithAi(buffer, { enhancePriority });
+    const aiResult = await modifyPosterWithAi(buffer, {
+      enhancePriority: aiPriority,
+      textLines: options.textLines,
+    });
     return {
       buffer: aiResult.buffer,
       enhancePriority,
@@ -60,7 +67,7 @@ async function enhancePosterBuffer(buffer, options = {}) {
       aiModel: aiResult.model,
     };
   } catch (error) {
-    console.error(`AI poster modification failed (${enhancePriority}):`, error.message);
+    console.error(`AI poster modification failed (${aiPriority}):`, error.message);
     return passthroughResult(buffer, enhancePriority, {
       enhanceFallback: true,
       enhanceError: error.message,

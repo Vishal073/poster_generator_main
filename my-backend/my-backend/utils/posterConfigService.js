@@ -255,6 +255,37 @@ function toPlainConfig(config) {
   };
 }
 
+function posterConfigIdentitySnapshot(config) {
+  const plain = toPlainConfig(config);
+  return JSON.stringify({
+    textLineStyles: plain.textLineStyles,
+    layout: plain.layout,
+    includeUserImage: plain.includeUserImage,
+    addWatermark: plain.addWatermark,
+    showPhoneIcon: plain.showPhoneIcon,
+    watermarkPosition: plain.watermarkPosition,
+  });
+}
+
+function isDefaultPosterConfig(config) {
+  return (
+    posterConfigIdentitySnapshot(config) ===
+    posterConfigIdentitySnapshot(getDefaultPosterConfig())
+  );
+}
+
+function hasUsableSavedPosterConfig(record) {
+  if (!record) {
+    return false;
+  }
+
+  if (isDefaultPosterConfig(record.config)) {
+    return false;
+  }
+
+  return true;
+}
+
 function formatEventPosterRecord(record) {
   if (!record) {
     return null;
@@ -272,6 +303,10 @@ function formatEventPosterRecord(record) {
     eventName: record.eventName || "",
     date: record.date || "",
     config: toPlainConfig(record.config),
+    configSavedAt: record.configSavedAt
+      ? record.configSavedAt.toISOString?.() || record.configSavedAt
+      : null,
+    hasSavedConfig: hasUsableSavedPosterConfig(record),
   };
 }
 
@@ -387,6 +422,10 @@ async function enrichCloudinaryPostersFromDb(posters) {
         ...poster,
         posterId: record.posterId,
         config: toPlainConfig(record.config),
+        configSavedAt: record.configSavedAt
+          ? record.configSavedAt.toISOString?.() || record.configSavedAt
+          : null,
+        hasSavedConfig: hasUsableSavedPosterConfig(record),
       });
     } catch (error) {
       console.warn("Failed to enrich event poster from database:", error.message);
@@ -538,6 +577,7 @@ async function savePosterConfigForSource(posterSource, configPayload) {
 
   if (record) {
     record.config = normalizedConfig;
+    record.configSavedAt = new Date();
     record.markModified("config");
     await record.save();
     return record;
@@ -552,8 +592,41 @@ async function savePosterConfigForSource(posterSource, configPayload) {
     imageUrl: imageUrl || publicId,
     config: normalizedConfig,
   });
+  record.configSavedAt = new Date();
+  await record.save();
 
   return record;
+}
+
+async function resolveUsablePosterConfigs(posterSources) {
+  const usable = [];
+  const skipped = [];
+
+  for (const source of posterSources) {
+    const record = await findEventPosterBySource(source);
+    if (!record) {
+      skipped.push({
+        posterSource: source,
+        reason: "No saved poster config.",
+      });
+      continue;
+    }
+
+    if (!hasUsableSavedPosterConfig(record)) {
+      skipped.push({
+        posterSource: source,
+        reason: "Poster still uses default config.",
+      });
+      continue;
+    }
+
+    usable.push({
+      posterSource: source,
+      config: toPlainConfig(record.config),
+    });
+  }
+
+  return { usable, skipped };
 }
 
 async function savePosterConfigFromGenerateBody(posterSource, body) {
@@ -603,5 +676,8 @@ module.exports = {
   extractConfigFromGenerateBody,
   savePosterConfigForSource,
   savePosterConfigFromGenerateBody,
+  isDefaultPosterConfig,
+  hasUsableSavedPosterConfig,
+  resolveUsablePosterConfigs,
   syncEventPostersFromCloudinary,
 };

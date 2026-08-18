@@ -92,6 +92,7 @@ const eventPosterSchema = new mongoose.Schema(
     height: { type: Number, default: null },
     format: { type: String, trim: true, default: "" },
     config: { type: posterConfigSchema, required: true },
+    configSavedAt: { type: Date, default: null, index: true },
   },
   {
     timestamps: true,
