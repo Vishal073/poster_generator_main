@@ -194,6 +194,8 @@ async function fetchTwilioContentTemplate(contentSid) {
     sid: content.sid,
     friendlyName: content.friendlyName || content.friendly_name || "",
     types: content.types || {},
+    // Declared sample variables — exact keys Twilio expects in contentVariables
+    variables: content.variables || {},
   };
   contentTemplateCache.set(sid, summary);
   return summary;

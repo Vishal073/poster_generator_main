@@ -154,6 +154,7 @@ function mediaValueForPlaceholder(mediaTemplate, imageUrl) {
     return url;
   }
 
+  // Template media is exactly {{N}} → Twilio expects the full public https URL.
   if (/^\{\{\d+\}\}$/.test(template)) {
     return url;
   }
@@ -175,7 +176,17 @@ function mediaValueForPlaceholder(mediaTemplate, imageUrl) {
   return getTemplateImageVariable(url);
 }
 
-function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
+function isHttpUrl(value) {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+function buildMediaTemplateVariables({
+  types,
+  declaredVariables,
+  name,
+  eventName,
+  imageUrl,
+}) {
   const eventLabel = sanitizeTemplateVariableValue(eventName, "Event");
   const displayName = sanitizeTemplateVariableValue(name, "Customer");
   const mediaTemplates = collectTemplateStrings(types, "media");
@@ -184,15 +195,33 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
     ...collectTemplateStrings(types, "title"),
     ...collectTemplateStrings(types, "subtitle"),
   ];
-  const requiredIndexes = collectAllVariableIndexes(types);
 
-  const variables = {};
+  const indexesFromTypes = collectAllVariableIndexes(types);
+  const indexesFromDeclared = Object.keys(declaredVariables || {}).map(String);
+  const requiredIndexes = [
+    ...new Set(
+      (indexesFromDeclared.length > 0 ? indexesFromDeclared : indexesFromTypes).sort(
+        (left, right) => Number(left) - Number(right),
+      ),
+    ),
+  ];
+
+  const mediaVarIndexes = new Set();
+  for (const mediaTemplate of mediaTemplates) {
+    for (const index of variableIndexes(mediaTemplate)) {
+      mediaVarIndexes.add(index);
+    }
+  }
+
   const bodyVarIndexes = [];
   const seenBodyIndexes = new Set();
-
   for (const bodyTemplate of bodyTemplates) {
     for (const index of variableIndexes(bodyTemplate)) {
-      if (seenBodyIndexes.has(index)) {
+      if (seenBodyIndexes.has(index) || mediaVarIndexes.has(index)) {
+        // Media placeholders must stay URLs — never fill them with name/event.
+        if (mediaVarIndexes.has(index)) {
+          seenBodyIndexes.add(index);
+        }
         continue;
       }
       seenBodyIndexes.add(index);
@@ -200,6 +229,7 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
     }
   }
 
+  const variables = {};
   const bodyValues = [displayName, eventLabel];
   bodyVarIndexes.forEach((index, valueIndex) => {
     variables[index] = sanitizeTemplateVariableValue(
@@ -208,18 +238,19 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
     );
   });
 
-  const mediaVarIndexes = new Set();
   for (const mediaTemplate of mediaTemplates) {
     for (const index of variableIndexes(mediaTemplate)) {
-      mediaVarIndexes.add(index);
-      if (seenBodyIndexes.has(index)) {
-        continue;
-      }
-      variables[index] = sanitizeTemplateVariableValue(
-        mediaValueForPlaceholder(mediaTemplate, imageUrl),
-        displayName,
-      );
+      const mediaValue = mediaValueForPlaceholder(mediaTemplate, imageUrl);
+      // WhatsApp media vars must be public https URLs (not Cloudinary path-only).
+      variables[index] = isHttpUrl(mediaValue)
+        ? mediaValue
+        : sanitizeTemplateVariableValue(String(imageUrl || "").trim(), "");
     }
+  }
+
+  // Single-variable templates (old download-style body {{1}} only)
+  if (requiredIndexes.length === 1 && !mediaVarIndexes.size) {
+    variables[requiredIndexes[0]] = displayName;
   }
 
   const filteredVariables = {};
@@ -235,16 +266,6 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
 
   if (!Object.keys(filteredVariables).length) {
     filteredVariables["1"] = displayName;
-    if (requiredIndexes.includes("2") || requiredIndexes.length === 0) {
-      filteredVariables["2"] = eventLabel;
-    }
-    if (
-      imageUrl &&
-      String(imageUrl).trim() &&
-      (requiredIndexes.includes("3") || requiredIndexes.length === 0)
-    ) {
-      filteredVariables["3"] = sanitizeTemplateVariableValue(String(imageUrl).trim(), "");
-    }
   }
 
   return {
@@ -425,6 +446,7 @@ async function sendWhatsAppPosterCardTemplate({
     const template = await fetchTwilioContentTemplate(contentSid);
     const mapped = buildMediaTemplateVariables({
       types: template?.types || {},
+      declaredVariables: template?.variables || {},
       name,
       eventName,
       imageUrl,
@@ -447,7 +469,16 @@ async function sendWhatsAppPosterCardTemplate({
 
     if (imageUrl && !hasMediaVariable) {
       console.warn(
-        "[WhatsApp] Card template has no media {{variable}}. Set Media URL to {{3}} in Twilio and TWILIO_CARD_TEMPLATE_CONTENT_SID in .env.",
+        "[WhatsApp] Template has no media {{variable}}. Use poster_ready_media (body {{1}}/{{2}}, media {{3}}) as TWILIO_CARD_TEMPLATE_CONTENT_SID.",
+      );
+    }
+
+    const missing = requiredIndexes.filter(
+      (index) => !contentVariables[index] || !String(contentVariables[index]).trim(),
+    );
+    if (missing.length) {
+      throw new Error(
+        `WhatsApp template ${contentSid} is missing content variables: ${missing.join(", ")}.`,
       );
     }
   } catch (error) {
