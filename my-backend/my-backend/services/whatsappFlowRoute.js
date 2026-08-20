@@ -3,7 +3,11 @@ const {
   formatWhatsAppNumber,
   sendWhatsAppText,
 } = require("./whatsappService");
-const { recordWhatsAppInbound, isWhatsAppSessionOpen } = require("./whatsappTemplateService");
+const {
+  recordWhatsAppInbound,
+  isWhatsAppSessionOpen,
+  getPosterCardTemplateContentVariables,
+} = require("./whatsappTemplateService");
 const {
   handleGcrGraphixGreeting,
   isGcrGraphixGreeting,
@@ -161,14 +165,11 @@ function buildPosterRequest(body, { name, mobile }) {
 }
 
 function getContentVariables({ name, eventName, imageUrl }) {
-  const variables = {
-    "1": String(name || "Customer"),
-    "2": String(eventName || "Event"),
-  };
-  if (imageUrl) {
-    variables["3"] = String(imageUrl);
-  }
-  return variables;
+  return getPosterCardTemplateContentVariables({
+    name: name || "Customer",
+    eventName: eventName || "Event",
+    imageUrl,
+  });
 }
 
 router.post("/send-whatsapp-template", async (req, res) => {
@@ -254,8 +255,7 @@ router.post("/send-whatsapp-template", async (req, res) => {
       twilioTemplate: {
         contentSid: maskValue(
           process.env.TWILIO_CARD_TEMPLATE_CONTENT_SID ||
-            process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID ||
-            process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID,
+            process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID,
         ),
         contentVariables: getContentVariables({ name: "Customer" }),
       },

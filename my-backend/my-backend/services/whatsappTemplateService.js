@@ -8,16 +8,11 @@ const {
 
 const WHATSAPP_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-function getMediaTemplateContentSid() {
+function getPosterCardTemplateContentSid() {
   return (
     String(process.env.TWILIO_CARD_TEMPLATE_CONTENT_SID || "").trim() ||
-    String(process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID || "").trim() ||
-    String(process.env.TWILIO_DOWNLOAD_TEMPLATE_CONTENT_SID || "").trim()
+    String(process.env.TWILIO_MEDIA_TEMPLATE_CONTENT_SID || "").trim()
   );
-}
-
-function getDownloadTemplateContentSid() {
-  return getMediaTemplateContentSid();
 }
 
 function getWhatsAppMediaBaseUrl() {
@@ -71,14 +66,10 @@ function getTemplateImageVariable(imageUrl) {
   return getMediaPathSuffix(imageUrl);
 }
 
-function getDownloadApproveTemplateContentSid() {
-  return String(process.env.TWILIO_DOWNLOAD_APPROVE_TEMPLATE_CONTENT_SID || "").trim();
-}
-
 function getApprovePostTemplateContentSid() {
   return (
     String(process.env.TWILIO_APPROVE_POST_TEMPLATE_CONTENT_SID || "").trim() ||
-    getDownloadApproveTemplateContentSid()
+    String(process.env.TWILIO_DOWNLOAD_APPROVE_TEMPLATE_CONTENT_SID || "").trim()
   );
 }
 
@@ -106,6 +97,37 @@ function collectTemplateStrings(types, field) {
 
 function variableIndexes(text) {
   return [...String(text || "").matchAll(/\{\{(\d+)\}\}/g)].map((match) => match[1]);
+}
+
+function collectAllVariableIndexes(types) {
+  const indexes = new Set();
+
+  const walk = (value) => {
+    if (typeof value === "string") {
+      for (const index of variableIndexes(value)) {
+        indexes.add(index);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
+    }
+    if (value && typeof value === "object") {
+      Object.values(value).forEach(walk);
+    }
+  };
+
+  walk(types || {});
+  return [...indexes].sort((left, right) => Number(left) - Number(right));
+}
+
+function sanitizeTemplateVariableValue(value, fallback = "") {
+  const normalized = String(value ?? fallback).trim();
+  if (!normalized) {
+    return String(fallback || "Customer").trim() || "Customer";
+  }
+  return normalized.slice(0, 1600);
 }
 
 function templateHasApproveAction(types) {
@@ -154,14 +176,15 @@ function mediaValueForPlaceholder(mediaTemplate, imageUrl) {
 }
 
 function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
-  const eventLabel = String(eventName || "Event").trim() || "Event";
-  const displayName = String(name || "Customer").trim() || "Customer";
+  const eventLabel = sanitizeTemplateVariableValue(eventName, "Event");
+  const displayName = sanitizeTemplateVariableValue(name, "Customer");
   const mediaTemplates = collectTemplateStrings(types, "media");
   const bodyTemplates = [
     ...collectTemplateStrings(types, "body"),
     ...collectTemplateStrings(types, "title"),
     ...collectTemplateStrings(types, "subtitle"),
   ];
+  const requiredIndexes = collectAllVariableIndexes(types);
 
   const variables = {};
   const bodyVarIndexes = [];
@@ -179,7 +202,10 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
 
   const bodyValues = [displayName, eventLabel];
   bodyVarIndexes.forEach((index, valueIndex) => {
-    variables[index] = bodyValues[valueIndex] || eventLabel;
+    variables[index] = sanitizeTemplateVariableValue(
+      bodyValues[valueIndex],
+      valueIndex === 0 ? displayName : eventLabel,
+    );
   });
 
   const mediaVarIndexes = new Set();
@@ -189,30 +215,41 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
       if (seenBodyIndexes.has(index)) {
         continue;
       }
-      variables[index] = mediaValueForPlaceholder(mediaTemplate, imageUrl);
+      variables[index] = sanitizeTemplateVariableValue(
+        mediaValueForPlaceholder(mediaTemplate, imageUrl),
+        displayName,
+      );
     }
   }
 
-  const mediaOnlyIndexes = [...mediaVarIndexes].filter((index) => !seenBodyIndexes.has(index));
-  if (imageUrl && mediaVarIndexes.size > 0 && mediaOnlyIndexes.length === 0) {
-    console.warn(
-      "[WhatsApp] Card media variable overlaps the title. Keep title as {{1}} name, {{2}} event, and set Media URL to {{3}}.",
-    );
-    if (!variables["3"]) {
-      variables["3"] = mediaValueForPlaceholder(mediaTemplates[0], imageUrl);
+  const filteredVariables = {};
+  if (requiredIndexes.length > 0) {
+    for (const index of requiredIndexes) {
+      if (variables[index] != null && String(variables[index]).trim()) {
+        filteredVariables[index] = variables[index];
+      }
     }
+  } else {
+    Object.assign(filteredVariables, variables);
   }
 
-  if (!Object.keys(variables).length) {
-    variables["1"] = displayName;
-    variables["2"] = eventLabel;
-    if (imageUrl) {
-      variables["3"] = String(imageUrl).trim();
+  if (!Object.keys(filteredVariables).length) {
+    filteredVariables["1"] = displayName;
+    if (requiredIndexes.includes("2") || requiredIndexes.length === 0) {
+      filteredVariables["2"] = eventLabel;
+    }
+    if (
+      imageUrl &&
+      String(imageUrl).trim() &&
+      (requiredIndexes.includes("3") || requiredIndexes.length === 0)
+    ) {
+      filteredVariables["3"] = sanitizeTemplateVariableValue(String(imageUrl).trim(), "");
     }
   }
 
   return {
-    variables,
+    variables: filteredVariables,
+    requiredIndexes,
     hasMediaVariable: mediaVarIndexes.size > 0,
     mediaTemplates,
     typeKeys: Object.keys(types || {}),
@@ -220,30 +257,22 @@ function buildMediaTemplateVariables({ types, name, eventName, imageUrl }) {
 }
 
 /**
- * Poster-ready Card/Media variables:
+ * Poster card template variables:
  * {{1}} = customer name
  * {{2}} = event name
- * {{3}} = poster image URL
+ * {{3}} = poster image URL (full https URL)
  */
-function getDownloadTemplateContentVariables({ name, eventName, imageUrl }) {
+function getPosterCardTemplateContentVariables({ name, eventName, imageUrl }) {
   const variables = {
-    "1": String(name || "Customer").trim() || "Customer",
-    "2": String(eventName || "Event").trim() || "Event",
+    "1": sanitizeTemplateVariableValue(name, "Customer"),
+    "2": sanitizeTemplateVariableValue(eventName, "Event"),
   };
 
   if (imageUrl && String(imageUrl).trim()) {
-    variables["3"] = String(imageUrl).trim();
+    variables["3"] = sanitizeTemplateVariableValue(String(imageUrl).trim(), "");
   }
 
   return variables;
-}
-
-function getTemplateBeforeMediaDelayMs() {
-  const raw = Number(process.env.WHATSAPP_TEMPLATE_BEFORE_MEDIA_DELAY_MS);
-  if (Number.isFinite(raw) && raw >= 0) {
-    return raw;
-  }
-  return 2000;
 }
 
 function getApproveAfterImageDelayMs() {
@@ -251,7 +280,6 @@ function getApproveAfterImageDelayMs() {
   if (Number.isFinite(raw) && raw >= 0) {
     return raw;
   }
-  // Default pause so WhatsApp shows the image before the Approve template.
   return 3000;
 }
 
@@ -290,9 +318,6 @@ function isWhatsAppSessionOpen(lastInboundAt) {
   return Date.now() - timestamp < WHATSAPP_SESSION_WINDOW_MS;
 }
 
-/**
- * Call from the Twilio inbound webhook whenever the user sends any WhatsApp message.
- */
 async function recordWhatsAppInbound(fromWhatsAppNumber) {
   const mobileNumber = toTenDigitMobile(fromWhatsAppNumber);
   if (!/^\d{10}$/.test(mobileNumber)) {
@@ -316,9 +341,6 @@ function getLoginTemplateContentSid() {
   return String(process.env.TWILIO_LOGIN_TEMPLATE_CONTENT_SID || "").trim();
 }
 
-/**
- * Send a WhatsApp Content template with a URL button, or fall back to plain text.
- */
 async function sendWhatsAppPortalLink({
   toMobile,
   contentSid,
@@ -346,9 +368,6 @@ async function sendWhatsAppPortalLink({
   });
 }
 
-/**
- * Registration link — template URL should end with /portal/register?token={{1}}.
- */
 async function sendWhatsAppRegisterLink({ toMobile, token, registerUrl }) {
   const contentSid = getRegisterTemplateContentSid();
 
@@ -364,9 +383,6 @@ async function sendWhatsAppRegisterLink({ toMobile, token, registerUrl }) {
   });
 }
 
-/**
- * Login link — static template body; URL button ends with /portal/login?token={{1}}.
- */
 async function sendWhatsAppLoginLink({ toMobile, name, token, loginUrl }) {
   const contentSid = getLoginTemplateContentSid();
 
@@ -383,28 +399,27 @@ async function sendWhatsAppLoginLink({ toMobile, name, token, loginUrl }) {
   });
 }
 
-async function sendWhatsAppDownloadTemplate({
+async function sendWhatsAppPosterCardTemplate({
   toMobile,
   name,
   eventName,
   imageUrl,
 }) {
-  const contentSid = imageUrl
-    ? getMediaTemplateContentSid()
-    : getDownloadTemplateContentSid();
-
+  const contentSid = getPosterCardTemplateContentSid();
   if (!contentSid) {
     throw new Error(
       "Twilio card template is not configured. Set TWILIO_CARD_TEMPLATE_CONTENT_SID in .env.",
     );
   }
 
-  let contentVariables = getDownloadTemplateContentVariables({
+  let contentVariables = getPosterCardTemplateContentVariables({
     name,
     eventName,
     imageUrl,
   });
   let hasApproveAction = false;
+  let hasMediaVariable = false;
+  let requiredIndexes = collectAllVariableIndexes({});
 
   try {
     const template = await fetchTwilioContentTemplate(contentSid);
@@ -415,25 +430,39 @@ async function sendWhatsAppDownloadTemplate({
       imageUrl,
     });
     contentVariables = mapped.variables;
+    requiredIndexes = mapped.requiredIndexes;
     hasApproveAction = templateHasApproveAction(template?.types);
+    hasMediaVariable = mapped.hasMediaVariable;
 
-    console.log("[WhatsApp] sending poster template", {
+    console.log("[WhatsApp] sending poster card template", {
       contentSid,
       friendlyName: template?.friendlyName || null,
       typeKeys: mapped.typeKeys,
       mediaTemplates: mapped.mediaTemplates,
-      hasMediaVariable: mapped.hasMediaVariable,
+      requiredIndexes,
+      hasMediaVariable,
       hasApproveAction,
       contentVariables,
     });
 
-    if (imageUrl && !mapped.hasMediaVariable) {
+    if (imageUrl && !hasMediaVariable) {
       console.warn(
-        "[WhatsApp] Content template has no media {{variable}}. WhatsApp will not show the poster image. Create a Card template with media {{3}} and set TWILIO_CARD_TEMPLATE_CONTENT_SID.",
+        "[WhatsApp] Card template has no media {{variable}}. Set Media URL to {{3}} in Twilio and TWILIO_CARD_TEMPLATE_CONTENT_SID in .env.",
       );
     }
   } catch (error) {
     console.warn("[WhatsApp] Could not inspect Twilio content template:", error.message);
+    if (requiredIndexes.length > 0) {
+      const filtered = {};
+      for (const index of requiredIndexes) {
+        if (contentVariables[index] != null) {
+          filtered[index] = contentVariables[index];
+        }
+      }
+      contentVariables = filtered;
+    } else if (!imageUrl) {
+      delete contentVariables["3"];
+    }
   }
 
   const result = await sendWhatsAppContentTemplate({
@@ -445,9 +474,6 @@ async function sendWhatsAppDownloadTemplate({
   return result;
 }
 
-/**
- * After the poster image is sent — offer Approve to post on Facebook/Instagram.
- */
 async function sendWhatsAppApprovePostTemplate({ toMobile, name }) {
   const contentSid = getApprovePostTemplateContentSid();
   if (!contentSid) {
@@ -479,7 +505,7 @@ async function sendWhatsAppTemplateThenImage({
   imageUrl,
   eventName,
 }) {
-  const templateResult = await sendWhatsAppDownloadTemplate({
+  const templateResult = await sendWhatsAppPosterCardTemplate({
     toMobile,
     name,
     eventName,
@@ -493,10 +519,6 @@ async function sendWhatsAppTemplateThenImage({
   };
 }
 
-/**
- * If the user messaged us on WhatsApp within 24h, send the image only.
- * Otherwise send one approved media template that includes the poster image.
- */
 async function sendWhatsAppImageSmart({
   toMobile,
   name,
@@ -548,10 +570,18 @@ async function resolveLastInboundAt({ userId, mobileNumber }) {
   return user?.whatsappLastInboundAt || null;
 }
 
+/** @deprecated Use sendWhatsAppPosterCardTemplate */
+async function sendWhatsAppDownloadTemplate(options) {
+  return sendWhatsAppPosterCardTemplate(options);
+}
+
 module.exports = {
   WHATSAPP_SESSION_WINDOW_MS,
   isWhatsAppSessionOpen,
   recordWhatsAppInbound,
+  getPosterCardTemplateContentSid,
+  getPosterCardTemplateContentVariables,
+  sendWhatsAppPosterCardTemplate,
   sendWhatsAppDownloadTemplate,
   sendWhatsAppApprovePostTemplate,
   getApproveAfterImageDelayMs,

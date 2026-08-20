@@ -4,7 +4,7 @@ const {
   waitForTwilioMessageReady,
 } = require("./whatsappService");
 const {
-  sendWhatsAppDownloadTemplate,
+  sendWhatsAppPosterCardTemplate,
   isWhatsAppSessionOpen,
 } = require("./whatsappTemplateService");
 
@@ -77,13 +77,14 @@ async function queueReadyReelForDownload({
     };
   }
 
-  const templateResult = await sendWhatsAppDownloadTemplate({
+  const templateResult = await sendWhatsAppPosterCardTemplate({
     toMobile: displayMobile,
     name: displayName,
+    eventName: "Reel",
   });
 
   return {
-    mode: "download_button",
+    mode: "card_template",
     sessionOpen: false,
     template: templateResult,
     reelStatus: "ready",

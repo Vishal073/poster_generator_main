@@ -7,7 +7,7 @@ const {
   waitForTwilioMessageReady,
 } = require("./whatsappService");
 const {
-  sendWhatsAppDownloadTemplate,
+  sendWhatsAppPosterCardTemplate,
   sendWhatsAppApprovePostTemplate,
   getApproveAfterImageDelayMs,
   isWhatsAppSessionOpen,
@@ -279,7 +279,7 @@ async function sendReadyPosterAsMediaTemplate({
   }
 
   const resolvedEventName = eventName || pendingRequest.eventName;
-  const templateResult = await sendWhatsAppDownloadTemplate({
+  const templateResult = await sendWhatsAppPosterCardTemplate({
     toMobile: to,
     name: pendingRequest.name || name,
     eventName: resolvedEventName,
