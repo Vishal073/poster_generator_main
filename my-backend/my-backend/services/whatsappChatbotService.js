@@ -1,6 +1,7 @@
 const { sendWhatsAppText } = require("./whatsappService");
 const {
   handleGcrGraphixGreeting,
+  isGcrGraphixGreeting,
   findUserByMobile,
   createLoginLinkForUser,
   toTenDigitMobile,
@@ -22,6 +23,11 @@ function isMenuIntent(text) {
     return false;
   }
 
+  // Do NOT treat "Hi GCR Graphix" as menu — that greeting opens login/register.
+  if (isGcrGraphixGreeting(text)) {
+    return false;
+  }
+
   const triggers = [
     "hi",
     "hello",
@@ -33,14 +39,6 @@ function isMenuIntent(text) {
     "menu",
     "start",
     "help",
-    "gcr",
-    "gcr graphix",
-    "hi gcr",
-    "hello gcr",
-    "hi gcr graphix",
-    "hello gcr graphix",
-    "hey gcr graphix",
-    "namaste gcr graphix",
   ];
 
   return triggers.some(
@@ -229,6 +227,12 @@ async function handleWhatsAppChatbot({ fromWhatsAppNumber, bodyText }) {
   const mobileNumber = toTenDigitMobile(fromWhatsAppNumber);
   if (!/^\d{10}$/.test(mobileNumber)) {
     return { handled: false, reason: "invalid_mobile" };
+  }
+
+  // Exact portal greeting always opens login / register (same as before chatbot).
+  if (isGcrGraphixGreeting(bodyText)) {
+    await handleGcrGraphixGreeting(fromWhatsAppNumber);
+    return { handled: true, type: "gcr_greeting" };
   }
 
   const choice = detectMenuChoice(bodyText);

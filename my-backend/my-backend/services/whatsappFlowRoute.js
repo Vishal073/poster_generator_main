@@ -372,7 +372,9 @@ router.post("/webhook", async (req, res) => {
       return res.status(204).end();
     }
 
-    const bodyText = String(req.body.Body || "").trim();
+    const bodyText = String(
+      req.body.Body || req.body.ButtonText || req.body.ButtonPayload || "",
+    ).trim();
 
     // Caption service first (active session or *6* / caption), then menu chatbot.
     handleWhatsAppCaption({
@@ -402,12 +404,23 @@ router.post("/webhook", async (req, res) => {
             toMobile: normalizedFrom,
             body:
               `Thanks for messaging GCR Graphix.\n\n` +
-              `Type *menu* to see options, or *1* to Register / Login.`,
+              `Type *menu* to see options, or *Hi GCR Graphix* to Register / Login.`,
           });
         }
       })
-      .catch((error) => {
+      .catch(async (error) => {
         console.error("WhatsApp caption/chatbot failed:", getErrorMessage(error));
+        try {
+          await sendWhatsAppText({
+            toMobile: normalizedFrom,
+            body: `Sorry, something went wrong. Please try again in a moment.`,
+          });
+        } catch (sendError) {
+          console.error(
+            "WhatsApp error reply failed:",
+            getErrorMessage(sendError),
+          );
+        }
       });
 
     return res.status(204).end();
