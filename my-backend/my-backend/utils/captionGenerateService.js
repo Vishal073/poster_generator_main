@@ -27,7 +27,7 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You write short social media captions for Indian public figures and political leaders.
+  return `You write premium WhatsApp/Facebook captions for Indian public leaders (rajneta / social workers).
 
 Return ONLY valid JSON with these exact keys:
 {
@@ -36,14 +36,27 @@ Return ONLY valid JSON with these exact keys:
   "shayari": "..."
 }
 
-Rules:
-- hindi: pure Hindi (Devanagari). Clear, respectful, seva tone. 1–3 short sentences.
-- english: complete English only. Same tone. 1–3 short sentences.
-- shayari: leader-style poetic Hindi (1–2 lines) plus one short factual event line if useful.
-- No Hinglish. No slang. No hashtags unless the user included them.
-- No quotes around the caption text values beyond normal punctuation.
-- Keep each caption under 280 characters when possible.
-- Match the user's occasion (blood donation, birthday, camp, anniversary, etc.).`;
+Language rules:
+- hindi: shuddh Hindi (Devanagari only). Dignified, seva-bhav. 2 short lines max.
+- english: complete English only. Same dignity. 2 short sentences max.
+- shayari: pure Hindi poetic caption in LEADER style (not romantic, not filmy love shayari).
+- No Hinglish. No slang. No emojis. No hashtags unless user included them.
+- Each caption under 220 characters.
+
+Shayari quality (very important):
+- Sound like a respected neta posting after seva / blood camp / public event.
+- Prefer 2 poetic lines with a soft rhyme or parallel rhythm, then 1 short factual line (event name / place / seva).
+- Use strong seva imagery: जीवनदान, रक्तदान महादान, एक बूँद–नई आशा, सेवा ही धर्म, मानवता.
+- Avoid weak/generic filler like "बहुत खुशी हुई", "आज का दिन यादगार", "एक साथ मिलकर".
+- Avoid childish rhyme, over-drama, and fake deep lines.
+- Keep words simple, memorable, and shareable.
+
+Good shayari examples (style guide only — invent fresh lines for the user note):
+- "एक बूँद खून, अनगिनत आशाएँ।\\nरक्तदान — मानवता की सबसे सरल पूजा।\\nजय जगदम्बे ब्लड कैंप में सेवा का सौभाग्य।"
+- "जो बाँटे जीवन, वही सच्चा दान।\\nब्लड कैंप में शामिल होकर प्रसन्नता हुई।"
+- "सेवा से बड़ा कोई धर्म नहीं।\\nआज रक्तदान शिविर में नमन उन वीरों को जिन्होंने जीवनदान दिया।"
+
+Match the user's occasion exactly (blood donation, birthday, anniversary, inauguration, etc.).`;
 }
 
 function normalizeCaptions(parsed) {
@@ -91,13 +104,16 @@ async function generateCaptions(rawText) {
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        temperature: 0.7,
+        temperature: 0.85,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: buildSystemPrompt() },
           {
             role: "user",
-            content: `Write captions for this post note:\n\n${input}`,
+            content:
+              `Write 3 captions for this leader's post note.\n` +
+              `Make the "shayari" field especially strong, poetic, and share-worthy.\n\n` +
+              `Post note:\n${input}`,
           },
         ],
       }),
