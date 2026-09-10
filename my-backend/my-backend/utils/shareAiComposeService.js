@@ -46,14 +46,18 @@ async function buildReferenceCollage(buffers) {
   }
 
   if (buffers.length === 1) {
-    return sharp(buffers[0]).jpeg({ quality: 90 }).toBuffer();
+    return sharp(buffers[0])
+      .resize(1080, 1080, { fit: "cover" })
+      .jpeg({ quality: 92 })
+      .toBuffer();
   }
 
-  const tileSize = 512;
+  const gap = 12;
+  const tileSize = 520;
   const cols = buffers.length <= 2 ? buffers.length : 2;
   const rows = Math.ceil(buffers.length / cols);
-  const width = cols * tileSize;
-  const height = rows * tileSize;
+  const width = cols * tileSize + (cols + 1) * gap;
+  const height = rows * tileSize + (rows + 1) * gap;
 
   const composites = await Promise.all(
     buffers.map(async (buffer, index) => {
@@ -64,8 +68,8 @@ async function buildReferenceCollage(buffers) {
       const row = Math.floor(index / cols);
       return {
         input: resized,
-        left: col * tileSize,
-        top: row * tileSize,
+        left: gap + col * (tileSize + gap),
+        top: gap + row * (tileSize + gap),
       };
     })
   );
@@ -75,11 +79,11 @@ async function buildReferenceCollage(buffers) {
       width,
       height,
       channels: 3,
-      background: { r: 255, g: 255, b: 255 },
+      background: { r: 248, g: 248, b: 248 },
     },
   })
     .composite(composites)
-    .jpeg({ quality: 90 })
+    .jpeg({ quality: 92 })
     .toBuffer();
 }
 
@@ -135,6 +139,7 @@ async function composeShareImageWithAi({ referenceBuffers, name, category }) {
 module.exports = {
   MAX_REFERENCE_IMAGES,
   buildComposePrompt,
+  buildReferenceCollage,
   composeShareImageWithAi,
   isAiProviderConfigured,
   getFalApiKey,

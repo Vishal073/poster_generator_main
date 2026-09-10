@@ -3,7 +3,7 @@
  * Rough Hinglish life-moment → Hindi shayari (or normal) caption.
  */
 
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MODEL = "gpt-4o";
 
 function getOpenAiApiKey() {
   return String(process.env.OPENAI_API_KEY || "").trim();
@@ -24,6 +24,16 @@ function getErrorMessage(error) {
     return error;
   }
   return "Unknown error";
+}
+
+/** Remove blank lines before hashtags: body\\n\\n#Tag → body\\n#Tag */
+function normalizeCaptionSpacing(caption) {
+  return String(caption || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{2,}(?=#)/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function buildSystemPrompt() {
@@ -49,21 +59,24 @@ COMMON RULES
 - No emojis. No labels like "Caption" or "Shayari" in the text.
 
 HASHTAGS (required when relevant)
-- After the caption body, add a blank line, then 2–5 relevant hashtags from the user's facts.
-- Include party tags when mentioned: BJP / भाजपा → #BJP ; Congress → #Congress ; AAP → #AAP ; etc.
-- Include district/city/place tags: Fatehabad / फतेहाबाद → #Fatehabad ; combine when useful → #BJPFatehabad
-- Optional occasion tags only when strong and natural (e.g. blood donation → #BloodDonation). Do NOT add generic tags like #Meeting, #Update, #Event.
-- Hashtags in Latin script (preferred for reach), no spaces inside a tag. Correct spellings (Fatehabad not Fatehabd).
-- Do NOT invent unrelated trending tags. Only from user's content.
-- Example ending:
-  #BJP #Fatehabad #BJPFatehabad
+- Put hashtags on the IMMEDIATE next line after the last caption sentence — NO blank line, NO extra space.
+- Format exactly:
+  <caption sentence>।
+  #Tag1 #Tag2
+- Include party tags when mentioned: BJP / भाजपा → #BJP ; Congress → #Congress ; etc.
+- Include place/org tags: Fatehabad → #Fatehabad ; company → #Company ; combine when useful → #BJPFatehabad
+- Do NOT add generic tags like #Meeting, #Update, #Event.
+- Hashtags in Latin script, correct spelling. Only from user's content.
+- Prefer short formal closings like "अवसर मिला" (not "अवसर प्राप्त किया").
 
-Gold-standard full example for a meeting note:
+Gold-standard examples:
 Input: "aaj mene jila fatehabad me bjp ki meeting me bhag liya"
-Correct caption:
 "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।
-
 #BJP #Fatehabad #BJPFatehabad"
+
+Input: "aaj company me speech diya"
+"आज मैंने कंपनी में भाषण देने का अवसर मिला।
+#Company"
 
 WHEN style = "shayari" (birthday, blood donation, tribute, festival, sports win, family, seva, khushi):
 - Write ONLY shayari as COMPLETE COUPLETS: exactly 2 lines OR exactly 4 lines.
@@ -92,7 +105,9 @@ WHEN style = "normal" (meeting, visit, notice, detailed update, or non-emotional
   Correct body: "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।"
   Wrong: flat/chatty wording, incomplete polish, or turning it into shayari.
 - Expand short party names naturally when clear (BJP → भारतीय जनता पार्टी) if it fits a formal post.
+- Prefer "अवसर मिला" wording for formal opportunity lines.
 - Prefer one strong complete sentence when the user gave a short note; add a second sentence only if they gave more points.
+- Hashtags must sit on the next line with NO blank line in between.
 
 Under 1200 characters when needed for longer user content.`;
 }
@@ -141,8 +156,9 @@ async function generateCaption(rawText) {
               `Pick either shayari OR normal — never mix both.\n` +
               `- Shayari: exactly 2 OR 4 strong poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme. Blessing optional — do not force it.\n` +
               `- Normal: formal simple Hindi social post. For a meeting note like Fatehabad BJP, aim like: "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।" No shayari.\n` +
-              `Then add a blank line and relevant hashtags from my facts, e.g. #BJP #Fatehabad #BJPFatehabad. Do NOT use #Meeting.\n` +
-              `Improve wording; keep my facts. Do not invent extra slogans, events, or unrelated tags.\n\n` +
+              `Then put hashtags on the NEXT line with NO blank line, e.g.\n` +
+              `आज मैंने कंपनी में भाषण देने का अवसर मिला।\n#Company\n` +
+              `Use "अवसर मिला" style. Do NOT use #Meeting. Do not invent unrelated tags.\n\n` +
               `My content:\n${input}`,
           },
         ],
@@ -170,9 +186,11 @@ async function generateCaption(rawText) {
       throw new Error("Caption AI returned invalid JSON.");
     }
 
-    const caption = String(parsed?.caption || "")
-      .replace(/\\n/g, "\n")
-      .trim();
+    const caption = normalizeCaptionSpacing(
+      String(parsed?.caption || "")
+        .replace(/\\n/g, "\n")
+        .trim(),
+    );
     if (!caption) {
       throw new Error("Caption AI returned an empty caption.");
     }

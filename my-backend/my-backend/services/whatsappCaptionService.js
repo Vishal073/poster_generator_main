@@ -1,5 +1,12 @@
-const { sendWhatsAppText, formatWhatsAppNumber, downloadTwilioMedia } = require("./whatsappService");
+const {
+  sendWhatsAppText,
+  sendPosterWhatsApp,
+  formatWhatsAppNumber,
+  downloadTwilioMedia,
+} = require("./whatsappService");
 const { generateCaption } = require("../utils/captionGenerateService");
+const { buildReferenceCollage } = require("../utils/shareAiComposeService");
+const { downloadImageBuffer } = require("../utils/shareAiFalClient");
 const {
   isGcrGraphixGreeting,
   findUserByMobile,
@@ -14,7 +21,13 @@ const {
   getUserSocialApproveEligibility,
   approveCaptionForUser,
 } = require("./facebookPostService");
-const { uploadPosterToCloudinary } = require("./cloudnaryService");
+const {
+  uploadPosterToCloudinary,
+  uploadBufferToCloudinary,
+} = require("./cloudnaryService");
+
+const CAPTION_COLLAGE_FOLDER =
+  process.env.CLOUDINARY_CAPTION_COLLAGE_FOLDER || "caption-collage";
 
 const pendingCaptionSessions = new Map();
 const pendingCaptionApprovals = new Map();
@@ -207,7 +220,7 @@ async function ingestWhatsAppPhotos(fromWhatsAppNumber, inboundMedia = []) {
   if (room <= 0) {
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
-      body: `Maximum ${MAX_CAPTION_PHOTOS} photos. Ab caption text bhejo.`,
+      body: `Maximum ${MAX_CAPTION_PHOTOS} photos. Ab caption text bhejo ya *Approve*.`,
     });
     return existing;
   }
@@ -222,13 +235,68 @@ async function ingestWhatsAppPhotos(fromWhatsAppNumber, inboundMedia = []) {
     const ext = extensionForContentType(downloaded.contentType || item?.contentType);
     const fileName = `caption-${toTenDigitMobile(fromWhatsAppNumber)}-${Date.now()}-${i}.${ext}`;
     const uploaded = await uploadPosterToCloudinary(downloaded.buffer, fileName);
-    if (uploaded?.url) {
-      existing.push(uploaded.url);
+    const photoUrl = uploaded?.imageUrl || uploaded?.url;
+    if (photoUrl) {
+      existing.push(photoUrl);
     }
   }
 
-  setCaptionSession(fromWhatsAppNumber, { photos: existing });
+  setCaptionSession(fromWhatsAppNumber, { photos: existing, collageUrl: "" });
   return existing;
+}
+
+/**
+ * Plain sharp collage (no AI image polish). Caption AI stays separate.
+ */
+async function buildAndUploadCaptionCollage(imageUrls = []) {
+  const urls = (Array.isArray(imageUrls) ? imageUrls : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  if (urls.length === 0) {
+    throw new Error("At least one photo is required for collage.");
+  }
+
+  if (urls.length === 1) {
+    return { collageUrl: urls[0], photoCount: 1 };
+  }
+
+  const buffers = [];
+  for (const url of urls.slice(0, MAX_CAPTION_PHOTOS)) {
+    buffers.push(await downloadImageBuffer(url));
+  }
+
+  const collageBuffer = await buildReferenceCollage(buffers);
+  const uploaded = await uploadBufferToCloudinary(
+    collageBuffer,
+    `caption-collage-${Date.now()}.jpg`,
+    { folder: CAPTION_COLLAGE_FOLDER },
+  );
+
+  if (!uploaded?.imageUrl) {
+    throw new Error("Collage upload failed.");
+  }
+
+  return { collageUrl: uploaded.imageUrl, photoCount: urls.length };
+}
+
+async function ensureSessionCollage(fromWhatsAppNumber, photos) {
+  const session = getCaptionSession(fromWhatsAppNumber);
+  const photoKey = photos.join("|");
+  if (
+    session?.collageUrl &&
+    session?.collagePhotoKey === photoKey &&
+    photos.length > 0
+  ) {
+    return session.collageUrl;
+  }
+
+  const built = await buildAndUploadCaptionCollage(photos);
+  setCaptionSession(fromWhatsAppNumber, {
+    photos,
+    collageUrl: built.collageUrl,
+    collagePhotoKey: photoKey,
+  });
+  return built.collageUrl;
 }
 
 async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
@@ -238,10 +306,11 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
   user,
   eligibility,
 }) {
+  const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
   setPendingCaptionApproval(fromWhatsAppNumber, {
-    caption,
+    caption: typeof caption === "string" ? caption : "",
     style: style || "normal",
-    imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
+    imageUrls: urls,
     userId: String(user._id),
     name: user.name || "Customer",
     mobile: toTenDigitMobile(fromWhatsAppNumber),
@@ -254,10 +323,11 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
   });
 
   if (!templateResult) {
+    const page = eligibility?.pageName || "Page";
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
       body:
-        `Facebook (${eligibility.pageName || "Page"}) pe photos + caption post karne ke liye *Approve* bhejo.\n` +
+        `Facebook (${page}) pe collage post karne ke liye *Approve* bhejo.\n` +
         `Skip ke liye *Skip*.`,
     });
   }
@@ -265,34 +335,70 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
   return { offered: true };
 }
 
+/**
+ * Photos only → collage → WhatsApp preview + Approve (caption optional later).
+ */
+async function sendCollageForApproval(fromWhatsAppNumber, photos, user, eligibility) {
+  await sendWhatsAppText({
+    toMobile: fromWhatsAppNumber,
+    body: photos.length > 1 ? "Collage bana raha hoon…" : "Photo ready kar raha hoon…",
+  });
+
+  const collageUrl = await ensureSessionCollage(fromWhatsAppNumber, photos);
+
+  await sendPosterWhatsApp({
+    toMobile: fromWhatsAppNumber,
+    imageUrl: collageUrl,
+    body:
+      `Collage ready (${photos.length} photo${photos.length > 1 ? "s" : ""}).\n` +
+      `Caption text bhejo (AI caption), ya *Approve* se sirf collage post.`,
+  });
+
+  await offerCaptionFacebookApprove(fromWhatsAppNumber, {
+    caption: "",
+    style: "photos_only",
+    imageUrls: [collageUrl],
+    user,
+    eligibility,
+  });
+
+  return { handled: true, type: "collage_ready", collageUrl, photoCount: photos.length };
+}
+
 async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user, eligibility) {
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
-    body: "Caption bana raha hoon…",
+    body: "AI caption + collage bana raha hoon…",
   });
 
-  const result = await generateCaption(rawText);
+  const [result, collageUrl] = await Promise.all([
+    generateCaption(rawText),
+    ensureSessionCollage(fromWhatsAppNumber, photos),
+  ]);
+
   setCaptionSession(fromWhatsAppNumber, {
     photos,
+    collageUrl,
     lastStyle: result.style,
     lastCaption: result.caption,
     lastRawText: String(rawText).trim(),
   });
 
-  await sendWhatsAppText({
+  await sendPosterWhatsApp({
     toMobile: fromWhatsAppNumber,
+    imageUrl: collageUrl,
     body: result.caption,
   });
 
   await offerCaptionFacebookApprove(fromWhatsAppNumber, {
     caption: result.caption,
     style: result.style,
-    imageUrls: photos,
+    imageUrls: [collageUrl],
     user,
     eligibility,
   });
 
-  return { handled: true, type: "caption_ready", style: result.style };
+  return { handled: true, type: "caption_ready", style: result.style, collageUrl };
 }
 
 async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
@@ -308,27 +414,31 @@ async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
     toMobile: fromWhatsAppNumber,
     body:
       `Photos (1–${MAX_CAPTION_PHOTOS}) bhejo + event text.\n` +
-      `Caption banegi, phir *Approve* se Facebook pe photos + caption post hongi.`,
+      `AI caption + collage banega, phir *Approve* se Facebook pe post.`,
   });
   return { handled: true, type: "caption_prompt" };
 }
 
 async function approvePendingCaption({ fromWhatsAppNumber }) {
   const pending = getPendingCaptionApproval(fromWhatsAppNumber);
-  if (!pending?.caption || !pending?.userId || !pending?.canApproveSocial) {
+  const hasImages = Array.isArray(pending?.imageUrls) && pending.imageUrls.length > 0;
+  const hasCaption = typeof pending?.caption === "string" && pending.caption.trim().length > 0;
+  if (!pending?.userId || !pending?.canApproveSocial || (!hasImages && !hasCaption)) {
     return { handled: false, reason: "no_pending_caption" };
   }
 
   const result = await approveCaptionForUser({
     userId: pending.userId,
-    caption: pending.caption,
+    caption: pending.caption || "",
     imageUrls: pending.imageUrls || [],
   });
 
   clearPendingCaptionApproval(fromWhatsAppNumber);
 
   const pageName = result?.facebook?.pageName || "your Facebook Page";
-  let body = `Done! Photos + caption Facebook (${pageName}) pe post ho gaye.`;
+  let body = hasCaption
+    ? `Done! Collage + caption Facebook (${pageName}) pe post ho gaye.`
+    : `Done! Collage Facebook (${pageName}) pe post ho gaya.`;
   if (result?.instagram?.success || result?.instagram?.mediaId) {
     body += ` Instagram pe bhi post ho gaya.`;
   } else if (result?.instagram?.message) {
@@ -393,7 +503,7 @@ async function handleWhatsAppCaption({
     const photos = await ingestWhatsAppPhotos(fromWhatsAppNumber, mediaList);
     const photoCount = photos.length;
 
-    // Photos only — save; if text was waiting, generate now.
+    // Photos only — collage + Approve; if text was waiting, caption + collage.
     if (hasMedia && !text) {
       const session = getCaptionSession(fromWhatsAppNumber);
       const waitingText = String(session?.pendingText || "").trim();
@@ -411,15 +521,20 @@ async function handleWhatsAppCaption({
         );
       }
 
-      await sendWhatsAppText({
-        toMobile: fromWhatsAppNumber,
-        body:
-          `${photos.length} photo save.\n` +
-          (photos.length < MAX_CAPTION_PHOTOS
-            ? `Aur photos bhej sakte ho (max ${MAX_CAPTION_PHOTOS}), ya ab caption text bhejo.`
-            : `Ab caption / event text bhejo.`),
-      });
-      return { handled: true, type: "photos_saved", photoCount: photos.length };
+      if (photos.length === 0) {
+        await sendWhatsAppText({
+          toMobile: fromWhatsAppNumber,
+          body: "Photo save nahi hui. Phir se bhejo.",
+        });
+        return { handled: true, type: "photos_failed" };
+      }
+
+      return await sendCollageForApproval(
+        fromWhatsAppNumber,
+        photos,
+        gate.user,
+        gate.eligibility,
+      );
     }
 
     // Text without photos — ask for photos first.
@@ -432,7 +547,7 @@ async function handleWhatsAppCaption({
         toMobile: fromWhatsAppNumber,
         body:
           `Pehle 1–${MAX_CAPTION_PHOTOS} photos bhejo.\n` +
-          `Photos ke baad caption banakar *Approve* se Facebook pe post hogi.`,
+          `Photos se collage banega; text se caption + *Approve* se Facebook pe post.`,
       });
       return { handled: true, type: "need_photos" };
     }
