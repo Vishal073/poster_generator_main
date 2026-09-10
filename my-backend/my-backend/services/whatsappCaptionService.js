@@ -9,7 +9,6 @@ const {
 } = require("../utils/portalAuth");
 const {
   sendWhatsAppApprovePostTemplate,
-  sendWhatsAppLoginLink,
 } = require("./whatsappTemplateService");
 const {
   getUserSocialApproveEligibility,
@@ -177,31 +176,18 @@ function extensionForContentType(contentType) {
 async function ensureCaptionEligibility(fromWhatsAppNumber) {
   const user = await findUserByMobile(fromWhatsAppNumber);
   if (!user?._id) {
-    await sendWhatsAppText({
-      toMobile: fromWhatsAppNumber,
-      body:
-        `Pehle register / login karein.\n` +
-        `Register link bhej raha hoon…`,
-    });
     await handleGcrGraphixGreeting(fromWhatsAppNumber);
     return { ok: false, reason: "not_registered" };
   }
 
   const eligibility = await getUserSocialApproveEligibility(String(user._id));
   if (!eligibility.canApprove) {
-    const { token, loginUrl } = await createLoginLinkForUser(user);
+    const { loginUrl } = await createLoginLinkForUser(user);
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
       body:
         `Hi ${user.name || "there"},\n\n` +
-        `Caption / Facebook post se pehle *Facebook + Instagram* connect karein.\n` +
-        `Link open karke *Connect Facebook* tap karein (Chrome/Safari use karein).`,
-    });
-    await sendWhatsAppLoginLink({
-      toMobile: toTenDigitMobile(fromWhatsAppNumber),
-      name: user.name,
-      token,
-      loginUrl,
+        `Please connect Facebook to continue:\n${loginUrl}`,
     });
     return { ok: false, reason: "facebook_not_linked", user };
   }
