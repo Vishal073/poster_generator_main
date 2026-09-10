@@ -13,6 +13,8 @@ const {
   isGcrGraphixGreeting,
   findUserByMobile,
 } = require("../utils/portalAuth");
+const { handleWhatsAppChatbot } = require("./whatsappChatbotService");
+const { handleWhatsAppCaption } = require("./whatsappCaptionService");
 const {
   pendingPosterRequests,
   preparePosterInBackground,
@@ -371,12 +373,42 @@ router.post("/webhook", async (req, res) => {
     }
 
     const bodyText = String(req.body.Body || "").trim();
-    if (isGcrGraphixGreeting(bodyText)) {
-      handleGcrGraphixGreeting(normalizedFrom).catch((error) => {
-        console.error("GCR Graphix greeting reply failed:", getErrorMessage(error));
+
+    // Caption service first (active session or *6* / caption), then menu chatbot.
+    handleWhatsAppCaption({
+      fromWhatsAppNumber: normalizedFrom,
+      bodyText,
+    })
+      .then((captionResult) => {
+        if (captionResult?.handled) {
+          return null;
+        }
+        return handleWhatsAppChatbot({
+          fromWhatsAppNumber: normalizedFrom,
+          bodyText,
+        });
+      })
+      .then((result) => {
+        if (result == null || result?.handled) {
+          return;
+        }
+        // Legacy exact greeting still supported if chatbot did not claim it.
+        if (isGcrGraphixGreeting(bodyText)) {
+          return handleGcrGraphixGreeting(normalizedFrom);
+        }
+        // Unknown message → gentle nudge to menu (session-open free-form only).
+        if (bodyText) {
+          return sendWhatsAppText({
+            toMobile: normalizedFrom,
+            body:
+              `Thanks for messaging GCR Graphix.\n\n` +
+              `Type *menu* to see options, or *1* to Register / Login.`,
+          });
+        }
+      })
+      .catch((error) => {
+        console.error("WhatsApp caption/chatbot failed:", getErrorMessage(error));
       });
-      return res.status(204).end();
-    }
 
     return res.status(204).end();
   } catch (error) {

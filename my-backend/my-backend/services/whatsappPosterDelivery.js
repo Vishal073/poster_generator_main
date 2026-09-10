@@ -429,6 +429,23 @@ function getPendingPosterRequest(toMobile) {
   return pendingPosterRequests.get(to) || null;
 }
 
+/**
+ * Attach an AI/user-chosen caption to the pending poster for Approve → FB/IG.
+ * @returns {boolean} true if a pending poster existed and was updated
+ */
+function setPendingPosterCaption(toMobile, caption) {
+  const to = formatWhatsAppNumber(toMobile);
+  const pendingRequest = pendingPosterRequests.get(to);
+  if (!pendingRequest) {
+    return false;
+  }
+
+  updatePendingRequest(to, {
+    caption: typeof caption === "string" ? caption.trim() : "",
+  });
+  return true;
+}
+
 module.exports = {
   pendingPosterRequests,
   preparePosterInBackground,
@@ -438,5 +455,6 @@ module.exports = {
   approveReadyPoster,
   sendApproveConfirmation,
   getPendingPosterRequest,
+  setPendingPosterCaption,
   toTenDigitMobile,
 };
