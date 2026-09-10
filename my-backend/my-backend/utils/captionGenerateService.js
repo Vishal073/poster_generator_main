@@ -1,6 +1,7 @@
 /**
  * OpenAI text-only caption generator.
  * Returns one Hindi caption; AI picks shayari vs normal style.
+ * Stays close to the user's own words — polish, don't invent a new poem.
  */
 
 const DEFAULT_MODEL = "gpt-4o-mini";
@@ -27,7 +28,7 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You write ONE WhatsApp/Facebook caption for Indian public leaders (rajneta / social workers).
+  return `You are a Hindi caption editor for Indian public leaders (rajneta / social posts).
 
 Return ONLY valid JSON:
 {
@@ -35,24 +36,30 @@ Return ONLY valid JSON:
   "caption": "..."
 }
 
-Language: shuddh Hindi (Devanagari) only. Default Hindi. No English. No Hinglish. No emojis. No hashtags unless the user included them.
+CRITICAL — stay close to the user's text:
+- The user's note is the source of truth (names, event, feeling, words).
+- Do NOT invent a totally new unrelated shayari.
+- Polish / elevate THEIR meaning so the result feels like an improved version of what they wrote.
+- Keep their key words, names (पापा, जय जगदम्बे, etc.), and occasion.
+- If they already wrote good poetic lines, refine lightly (rhythm, rhyme, clarity) — do not replace with generic AI poetry.
+- If their text is rough/plain, rewrite into better Hindi while keeping the same message.
 
-Decide style yourself:
-- Use "shayari" for emotional / celebratory / seva moments: blood donation, birthday, anniversary, sports win, festival, tribute, big public event, khushi / gambhir seva.
-- Use "normal" for simple updates: meeting, visit, small notice, routine announcement, plain info.
+Language: shuddh Hindi (Devanagari). No English. No Hinglish. No emojis. No hashtags unless user included them. No labels like "Caption" or "Shayari".
 
-Shayari rules (when style=shayari):
-- Leader tone, not romantic/filmy love shayari.
-- Prefer exactly 2 poetic lines with soft rhyme or parallel rhythm.
-- Weave the event (birthday, blood camp, etc.) INTO the poetry — do NOT add a plain third factual line like "पापा के जन्मदिन पर हम सबने मिलकर मनाया उत्सव।"
-- If occasion must be clear, say it poetically inside the 2 lines (e.g. "जन्मदिन की बधाई…" / "रक्तदान शिविर में…"), not as a separate news-style sentence.
-- Avoid weak filler and flat report lines.
+Style decision:
+- "shayari" for birthday, blood donation, tribute, festival, sports win, emotional/khushi/seva moments — OR when user already wrote poetic lines.
+- "normal" for simple meeting/visit/notice/routine updates.
 
-Normal rules (when style=normal):
-- Clear, dignified 1–2 short Hindi sentences.
-- Factual, seva/public tone. No forced poetry.
+When style=shayari:
+- Prefer 2 lines only, leader/seva dignity (not romantic filmy love shayari).
+- Soft rhyme or parallel rhythm is good, but meaning > forced rhyme.
+- Do NOT append a flat third news line (e.g. "पापा के जन्मदिन पर हम सबने मिलकर मनाया उत्सव।").
+- Weave occasion into the poetic lines themselves.
 
-Keep caption under 220 characters. Match the user's occasion exactly.`;
+When style=normal:
+- 1–2 clear dignified Hindi sentences. Same facts as user. No forced poetry.
+
+Keep under 220 characters.`;
 }
 
 /**
@@ -88,16 +95,17 @@ async function generateCaption(rawText) {
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        temperature: 0.85,
+        temperature: 0.55,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: buildSystemPrompt() },
           {
             role: "user",
             content:
-              `Write one Hindi caption for this note.\n` +
-              `Choose shayari or normal yourself.\n\n` +
-              `Note:\n${input}`,
+              `Improve this into ONE WhatsApp caption in Hindi.\n` +
+              `Stay close to my words and meaning. Do not invent a different poem.\n` +
+              `If it should be shayari, polish my lines; if simple, keep normal Hindi.\n\n` +
+              `My text:\n${input}`,
           },
         ],
       }),
