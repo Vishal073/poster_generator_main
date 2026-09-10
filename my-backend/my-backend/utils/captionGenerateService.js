@@ -27,7 +27,7 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You turn a rough WhatsApp Hinglish note into a simple, positive Hindi caption.
+  return `You rewrite the user's rough WhatsApp content into a clear, positive Hindi social-media caption.
 
 Return ONLY valid JSON:
 {
@@ -35,31 +35,22 @@ Return ONLY valid JSON:
   "caption": "..."
 }
 
-INPUT example:
-"Aaj papa ka birthday h hmne cake cut kr k celebrate kiya"
+INPUT
+User may send short or long rough text (Hinglish / broken Hindi / mixed). Use ALL of their content — every fact, name, place, action they mentioned. Do not drop details. Do not invent new events or people.
 
-RULES
-1) Keep the user's facts (who / occasion / what happened). Include them clearly — same or very similar meaning. Do not invent new events or people.
-2) Keep language SIMPLE and warm. Positive vibe is most important.
-3) Do NOT make it over-fancy, heavy, or "shaayari competition" style. Easy words people actually share on WhatsApp/Facebook.
-4) Shuddh Hindi (Devanagari). No English, no Hinglish, no emojis, no hashtags (unless user included them). No "Caption/Shayari" labels.
+YOUR JOB
+- Rewrite their content in better, natural Hindi (Devanagari).
+- Keep the same meaning and all key points they gave.
+- Make it sound like a good social media post: positive vibe, easy to read.
+- Not over-fancy. Not a literary showpiece.
+- No English, no Hinglish, no emojis, no hashtags (unless user included them).
+- No labels like "Caption" or "Shayari" in the text.
 
 Style:
-- "shayari": birthday, blood donation, tribute, festival, sports win, family, seva, khushi — simple 2–3 lines (max 4). Light natural rhyme OK; not forced.
-- "normal": meeting / visit / notice / general social update — clear positive Hindi for a social media post. No fixed line count — write as many short sentences as needed to cover the user's facts cleanly (typically a short paragraph is fine). Not poetry.
+- "shayari": birthday, blood donation, tribute, festival, sports win, family, seva, khushi — simple 2–3 lines (max 4), light natural rhyme OK. End with a short wish/blessing. Separate with \\n.
+- "normal": everything else, or when they gave more detail — rewrite the FULL content as a polished Hindi social post. No line-count limit; cover everything they wrote. Use \\n between sentences/paragraphs when helpful.
 
-For shayari:
-- Mention the real moment (e.g. papa, birthday, cake, celebrate) in a natural way.
-- End with a short positive wish / blessing suited to the occasion.
-- Separate lines with \\n.
-
-For normal:
-- Include the user's facts (same or very similar).
-- Positive, share-ready social media tone.
-- No line-count limit; keep it readable, not a long essay.
-- Separate sentences/lines with \\n when helpful.
-
-Under 800 characters. Prefer clear and positive over literary.`;
+Under 1200 characters if needed so longer user content still fits. Prefer complete coverage of their points over cutting short.`;
 }
 
 /**
@@ -102,12 +93,11 @@ async function generateCaption(rawText) {
           {
             role: "user",
             content:
-              `Rough Hinglish note from WhatsApp.\n\n` +
-              `Write a SIMPLE positive Hindi caption.\n` +
-              `If shayari fits: 2–3 lines (max 4). If normal social post: no line limit — cover my facts clearly with positive vibe.\n` +
-              `Must include my facts (same or very similar). Not over-fancy.\n` +
-              `End with a short good wish if it fits.\n\n` +
-              `My line:\n${input}`,
+              `Rewrite my full content as a better Hindi social media caption.\n` +
+              `Use ALL points I wrote — improve the wording, keep the meaning.\n` +
+              `Positive vibe. Not over-fancy.\n` +
+              `If it is a birthday/seva/khushi moment, light shayari (2–3 lines, max 4) is OK; otherwise polished normal Hindi covering everything.\n\n` +
+              `My content:\n${input}`,
           },
         ],
       }),
