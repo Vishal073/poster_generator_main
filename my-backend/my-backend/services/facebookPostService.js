@@ -699,11 +699,60 @@ async function postTextForUser({ userId, message }) {
 }
 
 /**
- * WhatsApp Approve for AI caption → Facebook Page text post.
+ * WhatsApp Approve for AI caption → Facebook (+ Instagram when linked).
+ * 0 images → text post; 1 image → photo; 2+ → multi-photo carousel.
  */
-async function approveCaptionForUser({ userId, caption }) {
-  const facebook = await postTextForUser({ userId, message: caption });
-  return { facebook, instagram: null };
+async function approveCaptionForUser({ userId, caption, imageUrls = [] }) {
+  const urls = Array.isArray(imageUrls)
+    ? imageUrls.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const text = typeof caption === "string" ? caption.trim() : "";
+
+  let facebook;
+  if (urls.length >= 2) {
+    facebook = await postCarouselForUser({
+      userId,
+      imageUrls: urls,
+      caption: text,
+    });
+  } else if (urls.length === 1) {
+    facebook = await postPosterForUser({
+      userId,
+      imageUrl: urls[0],
+      caption: text,
+    });
+  } else {
+    facebook = await postTextForUser({ userId, message: text });
+  }
+
+  let instagram = null;
+  const eligibility = await getUserSocialApproveEligibility(userId);
+  if (eligibility.hasInstagram && urls.length > 0) {
+    try {
+      if (urls.length >= 2) {
+        const posted = await postCarouselToInstagramForUser({
+          userId,
+          imageUrls: urls,
+          caption: text,
+        });
+        instagram = { success: true, ...posted };
+      } else {
+        const posted = await postPosterToInstagramForUser({
+          userId,
+          imageUrl: urls[0],
+          caption: text,
+        });
+        instagram = { success: true, ...posted };
+      }
+    } catch (error) {
+      instagram = {
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  return { facebook, instagram };
 }
 
 /**

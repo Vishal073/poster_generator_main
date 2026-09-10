@@ -1,26 +1,33 @@
-const { sendWhatsAppText, formatWhatsAppNumber } = require("./whatsappService");
+const { sendWhatsAppText, formatWhatsAppNumber, downloadTwilioMedia } = require("./whatsappService");
 const { generateCaption } = require("../utils/captionGenerateService");
 const {
   isGcrGraphixGreeting,
   findUserByMobile,
   toTenDigitMobile,
+  handleGcrGraphixGreeting,
+  createLoginLinkForUser,
 } = require("../utils/portalAuth");
-const { sendWhatsAppApprovePostTemplate } = require("./whatsappTemplateService");
+const {
+  sendWhatsAppApprovePostTemplate,
+  sendWhatsAppLoginLink,
+} = require("./whatsappTemplateService");
 const {
   getUserSocialApproveEligibility,
   approveCaptionForUser,
 } = require("./facebookPostService");
+const { uploadPosterToCloudinary } = require("./cloudnaryService");
 
-/** Optional session after greeting; free text also works without it. */
 const pendingCaptionSessions = new Map();
-
-/** Caption waiting for WhatsApp Approve → Facebook text post. */
 const pendingCaptionApprovals = new Map();
 
 const CAPTION_SESSION_TTL_MS =
-  Number(process.env.CAPTION_SESSION_TTL_MS || 30 * 60 * 1000) || 30 * 60 * 1000;
+  Number(process.env.CAPTION_SESSION_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
 const CAPTION_APPROVE_TTL_MS =
   Number(process.env.CAPTION_APPROVE_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
+const MAX_CAPTION_PHOTOS = Math.min(
+  Number(process.env.CAPTION_MAX_PHOTOS || 5) || 5,
+  10,
+);
 
 function normalizeChatText(value) {
   return String(value || "")
@@ -73,6 +80,7 @@ function setCaptionSession(fromWhatsAppNumber, updates) {
   const existing = pendingCaptionSessions.get(key) || {};
   pendingCaptionSessions.set(key, {
     ...existing,
+    photos: Array.isArray(existing.photos) ? existing.photos : [],
     ...updates,
     updatedAt: Date.now(),
   });
@@ -104,20 +112,17 @@ function clearPendingCaptionApproval(fromWhatsAppNumber) {
 }
 
 function setPendingCaptionApproval(fromWhatsAppNumber, data) {
-  const key = approvalKey(fromWhatsAppNumber);
-  pendingCaptionApprovals.set(key, {
+  pendingCaptionApprovals.set(approvalKey(fromWhatsAppNumber), {
     ...data,
     createdAt: Date.now(),
   });
 }
 
-/** Short commands that must not become captions (menu / control). */
 function isReservedChatCommand(text) {
   const normalized = normalizeChatText(text);
   if (!normalized) {
     return true;
   }
-
   if (isGcrGraphixGreeting(text)) {
     return true;
   }
@@ -157,51 +162,100 @@ function isReservedChatCommand(text) {
   return reserved.has(normalized);
 }
 
-async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
-  setCaptionSession(fromWhatsAppNumber, {
-    status: "awaiting_text",
-  });
-
-  if (options.silent) {
-    return { handled: true, type: "caption_session_started" };
-  }
-
-  await sendWhatsAppText({
-    toMobile: fromWhatsAppNumber,
-    body:
-      `Event / post ka text bhejo — main Hindi caption banaunga.\n` +
-      `Band: *cancel*`,
-  });
-  return { handled: true, type: "caption_prompt" };
+function extensionForContentType(contentType) {
+  const type = String(contentType || "").toLowerCase();
+  if (type.includes("png")) return "png";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("gif")) return "gif";
+  return "jpg";
 }
 
-async function offerCaptionFacebookApprove(fromWhatsAppNumber, caption, style) {
+/**
+ * Ensure user is registered + Facebook linked before caption work.
+ * @returns {Promise<{ ok: boolean, user?: object, eligibility?: object }>}
+ */
+async function ensureCaptionEligibility(fromWhatsAppNumber) {
   const user = await findUserByMobile(fromWhatsAppNumber);
   if (!user?._id) {
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
       body:
-        `Facebook pe post karne ke liye pehle *Hi GCR Graphix* se register/login karein, ` +
-        `phir Page connect karein (menu *2*).`,
+        `Pehle register / login karein.\n` +
+        `Register link bhej raha hoon…`,
     });
-    return { offered: false, reason: "no_user" };
+    await handleGcrGraphixGreeting(fromWhatsAppNumber);
+    return { ok: false, reason: "not_registered" };
   }
 
   const eligibility = await getUserSocialApproveEligibility(String(user._id));
   if (!eligibility.canApprove) {
+    const { token, loginUrl } = await createLoginLinkForUser(user);
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
       body:
-        `Caption ready. Facebook Page connect nahi hai.\n` +
-        `Connect ke liye *Hi GCR Graphix* → login → Connect Facebook, ` +
-        `ya menu *2*.`,
+        `Hi ${user.name || "there"},\n\n` +
+        `Caption / Facebook post se pehle *Facebook + Instagram* connect karein.\n` +
+        `Link open karke *Connect Facebook* tap karein (Chrome/Safari use karein).`,
     });
-    return { offered: false, reason: "no_facebook" };
+    await sendWhatsAppLoginLink({
+      toMobile: toTenDigitMobile(fromWhatsAppNumber),
+      name: user.name,
+      token,
+      loginUrl,
+    });
+    return { ok: false, reason: "facebook_not_linked", user };
   }
 
+  return { ok: true, user, eligibility };
+}
+
+async function ingestWhatsAppPhotos(fromWhatsAppNumber, inboundMedia = []) {
+  const session = getCaptionSession(fromWhatsAppNumber) || { photos: [] };
+  const existing = Array.isArray(session.photos) ? [...session.photos] : [];
+  const incoming = Array.isArray(inboundMedia) ? inboundMedia : [];
+  if (incoming.length === 0) {
+    return existing;
+  }
+
+  const room = Math.max(0, MAX_CAPTION_PHOTOS - existing.length);
+  if (room <= 0) {
+    await sendWhatsAppText({
+      toMobile: fromWhatsAppNumber,
+      body: `Maximum ${MAX_CAPTION_PHOTOS} photos. Ab caption text bhejo.`,
+    });
+    return existing;
+  }
+
+  const toSave = incoming.slice(0, room);
+  for (let i = 0; i < toSave.length; i += 1) {
+    const item = toSave[i];
+    const mediaUrl = typeof item === "string" ? item : item?.url;
+    if (!mediaUrl) continue;
+
+    const downloaded = await downloadTwilioMedia(mediaUrl);
+    const ext = extensionForContentType(downloaded.contentType || item?.contentType);
+    const fileName = `caption-${toTenDigitMobile(fromWhatsAppNumber)}-${Date.now()}-${i}.${ext}`;
+    const uploaded = await uploadPosterToCloudinary(downloaded.buffer, fileName);
+    if (uploaded?.url) {
+      existing.push(uploaded.url);
+    }
+  }
+
+  setCaptionSession(fromWhatsAppNumber, { photos: existing });
+  return existing;
+}
+
+async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
+  caption,
+  style,
+  imageUrls,
+  user,
+  eligibility,
+}) {
   setPendingCaptionApproval(fromWhatsAppNumber, {
     caption,
     style: style || "normal",
+    imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
     userId: String(user._id),
     name: user.name || "Customer",
     mobile: toTenDigitMobile(fromWhatsAppNumber),
@@ -217,15 +271,15 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, caption, style) {
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
       body:
-        `Facebook (${eligibility.pageName || "Page"}) pe post karne ke liye *Approve* likh kar bhejo.\n` +
+        `Facebook (${eligibility.pageName || "Page"}) pe photos + caption post karne ke liye *Approve* bhejo.\n` +
         `Skip ke liye *Skip*.`,
     });
   }
 
-  return { offered: true, pageName: eligibility.pageName, templateResult };
+  return { offered: true };
 }
 
-async function generateAndSendCaption(fromWhatsAppNumber, rawText) {
+async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user, eligibility) {
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
     body: "Caption bana raha hoon…",
@@ -233,9 +287,10 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText) {
 
   const result = await generateCaption(rawText);
   setCaptionSession(fromWhatsAppNumber, {
-    status: "awaiting_text",
+    photos,
     lastStyle: result.style,
     lastCaption: result.caption,
+    lastRawText: String(rawText).trim(),
   });
 
   await sendWhatsAppText({
@@ -243,19 +298,35 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText) {
     body: result.caption,
   });
 
-  // Approve card / button for Facebook upload.
-  await offerCaptionFacebookApprove(
-    fromWhatsAppNumber,
-    result.caption,
-    result.style,
-  );
+  await offerCaptionFacebookApprove(fromWhatsAppNumber, {
+    caption: result.caption,
+    style: result.style,
+    imageUrls: photos,
+    user,
+    eligibility,
+  });
 
   return { handled: true, type: "caption_ready", style: result.style };
 }
 
-/**
- * User tapped Approve for an AI caption → Facebook Page text post.
- */
+async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
+  setCaptionSession(fromWhatsAppNumber, {
+    photos: [],
+  });
+
+  if (options.silent) {
+    return { handled: true, type: "caption_session_started" };
+  }
+
+  await sendWhatsAppText({
+    toMobile: fromWhatsAppNumber,
+    body:
+      `Photos (1–${MAX_CAPTION_PHOTOS}) bhejo + event text.\n` +
+      `Caption banegi, phir *Approve* se Facebook pe photos + caption post hongi.`,
+  });
+  return { handled: true, type: "caption_prompt" };
+}
+
 async function approvePendingCaption({ fromWhatsAppNumber }) {
   const pending = getPendingCaptionApproval(fromWhatsAppNumber);
   if (!pending?.caption || !pending?.userId || !pending?.canApproveSocial) {
@@ -265,30 +336,47 @@ async function approvePendingCaption({ fromWhatsAppNumber }) {
   const result = await approveCaptionForUser({
     userId: pending.userId,
     caption: pending.caption,
+    imageUrls: pending.imageUrls || [],
   });
 
   clearPendingCaptionApproval(fromWhatsAppNumber);
 
   const pageName = result?.facebook?.pageName || "your Facebook Page";
+  let body = `Done! Photos + caption Facebook (${pageName}) pe post ho gaye.`;
+  if (result?.instagram?.success || result?.instagram?.mediaId) {
+    body += ` Instagram pe bhi post ho gaya.`;
+  } else if (result?.instagram?.message) {
+    body += ` Instagram: ${result.instagram.message}`;
+  }
+
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
-    body: `Done! Caption Facebook (${pageName}) pe post ho gayi.`,
+    body,
   });
 
   return { handled: true, type: "caption_approved", result };
 }
 
 /**
- * Free-text → AI caption (no Hi / menu required).
- * Reserved commands and greetings are left for the chatbot.
+ * Caption flow with gates:
+ * 1) not registered → register link (no caption)
+ * 2) registered, no FB → FB/IG connect link (no caption)
+ * 3) both OK → accept photos + text → caption → Approve → FB upload
  */
-async function handleWhatsAppCaption({ fromWhatsAppNumber, bodyText }) {
+async function handleWhatsAppCaption({
+  fromWhatsAppNumber,
+  bodyText,
+  inboundMedia = [],
+}) {
   const text = String(bodyText || "").trim();
-  if (!text) {
+  const mediaList = Array.isArray(inboundMedia) ? inboundMedia : [];
+  const hasMedia = mediaList.length > 0;
+
+  if (!text && !hasMedia) {
     return { handled: false };
   }
 
-  if (isGcrGraphixGreeting(text)) {
+  if (text && isGcrGraphixGreeting(text) && !hasMedia) {
     return { handled: false, reason: "greeting" };
   }
 
@@ -296,27 +384,95 @@ async function handleWhatsAppCaption({ fromWhatsAppNumber, bodyText }) {
 
   if (["cancel", "stop", "exit"].includes(normalized)) {
     clearPendingCaptionApproval(fromWhatsAppNumber);
-    if (hasActiveCaptionSession(fromWhatsAppNumber)) {
-      clearCaptionSession(fromWhatsAppNumber);
-      await sendWhatsAppText({
-        toMobile: fromWhatsAppNumber,
-        body: "Caption mode band.",
-      });
-      return { handled: true, type: "caption_cancelled" };
-    }
-    return { handled: false };
+    clearCaptionSession(fromWhatsAppNumber);
+    await sendWhatsAppText({
+      toMobile: fromWhatsAppNumber,
+      body: "Caption flow band.",
+    });
+    return { handled: true, type: "caption_cancelled" };
   }
 
-  if (isReservedChatCommand(text)) {
+  // Menu/commands without media → chatbot
+  if (text && isReservedChatCommand(text) && !hasMedia) {
     return { handled: false, reason: "reserved" };
   }
 
+  // Case 1 & 2: register / Facebook first — do not generate caption.
+  const gate = await ensureCaptionEligibility(fromWhatsAppNumber);
+  if (!gate.ok) {
+    return { handled: true, type: gate.reason };
+  }
+
   try {
-    return await generateAndSendCaption(fromWhatsAppNumber, text);
+    const photos = await ingestWhatsAppPhotos(fromWhatsAppNumber, mediaList);
+    const photoCount = photos.length;
+
+    // Photos only — save; if text was waiting, generate now.
+    if (hasMedia && !text) {
+      const session = getCaptionSession(fromWhatsAppNumber);
+      const waitingText = String(session?.pendingText || "").trim();
+      if (waitingText && photos.length > 0) {
+        setCaptionSession(fromWhatsAppNumber, {
+          photos,
+          pendingText: "",
+        });
+        return await generateAndSendCaption(
+          fromWhatsAppNumber,
+          waitingText,
+          photos,
+          gate.user,
+          gate.eligibility,
+        );
+      }
+
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body:
+          `${photos.length} photo save.\n` +
+          (photos.length < MAX_CAPTION_PHOTOS
+            ? `Aur photos bhej sakte ho (max ${MAX_CAPTION_PHOTOS}), ya ab caption text bhejo.`
+            : `Ab caption / event text bhejo.`),
+      });
+      return { handled: true, type: "photos_saved", photoCount: photos.length };
+    }
+
+    // Text without photos — ask for photos first.
+    if (text && photoCount === 0) {
+      setCaptionSession(fromWhatsAppNumber, {
+        photos: [],
+        pendingText: text,
+      });
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body:
+          `Pehle 1–${MAX_CAPTION_PHOTOS} photos bhejo.\n` +
+          `Photos ke baad caption banakar *Approve* se Facebook pe post hogi.`,
+      });
+      return { handled: true, type: "need_photos" };
+    }
+
+    // Text + photos (or text after photos already saved) → generate.
+    const session = getCaptionSession(fromWhatsAppNumber);
+    const captionText = text || session?.pendingText || "";
+    if (!captionText) {
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body: "Caption ke liye event text bhejo.",
+      });
+      return { handled: true, type: "need_text" };
+    }
+
+    return await generateAndSendCaption(
+      fromWhatsAppNumber,
+      captionText,
+      photos,
+      gate.user,
+      gate.eligibility,
+    );
   } catch (error) {
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
-      body: `Caption nahi bani: ${getErrorMessage(error)}\n\nPhir se text bhejo.`,
+      body: `Caption flow error: ${getErrorMessage(error)}\n\nPhir se try karein.`,
     });
     return { handled: true, type: "caption_error" };
   }
@@ -332,5 +488,6 @@ module.exports = {
   getPendingCaptionApproval,
   clearPendingCaptionApproval,
   approvePendingCaption,
+  ensureCaptionEligibility,
   isReservedChatCommand,
 };

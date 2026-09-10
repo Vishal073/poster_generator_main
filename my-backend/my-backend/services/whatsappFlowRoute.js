@@ -400,21 +400,38 @@ router.post("/webhook", async (req, res) => {
       req.body.Body || req.body.ButtonText || req.body.ButtonPayload || "",
     ).trim();
 
-    // Menu / Hi GCR Graphix first, then any other text → AI caption.
-    const chatResult = await handleWhatsAppChatbot({
-      fromWhatsAppNumber: normalizedFrom,
-      bodyText,
-    });
+    const mediaCount = Number(req.body.NumMedia || 0);
+    const inboundMedia = [];
+    for (let i = 0; i < mediaCount; i += 1) {
+      const url = req.body[`MediaUrl${i}`];
+      if (url) {
+        inboundMedia.push({
+          url: String(url),
+          contentType: String(req.body[`MediaContentType${i}`] || ""),
+        });
+      }
+    }
 
-    if (!chatResult?.handled) {
-      const captionResult = await handleWhatsAppCaption({
+    // Greeting / menu first when no media; otherwise caption flow (with gates).
+    if (isGcrGraphixGreeting(bodyText) && inboundMedia.length === 0) {
+      await handleWhatsAppChatbot({
         fromWhatsAppNumber: normalizedFrom,
         bodyText,
       });
+      return;
+    }
 
-      if (!captionResult?.handled && isGcrGraphixGreeting(bodyText)) {
-        await handleGcrGraphixGreeting(normalizedFrom);
-      }
+    const captionResult = await handleWhatsAppCaption({
+      fromWhatsAppNumber: normalizedFrom,
+      bodyText,
+      inboundMedia,
+    });
+
+    if (!captionResult?.handled) {
+      await handleWhatsAppChatbot({
+        fromWhatsAppNumber: normalizedFrom,
+        bodyText,
+      });
     }
   } catch (error) {
     console.error("WhatsApp webhook failed:", getErrorMessage(error), getErrorDetails(error));

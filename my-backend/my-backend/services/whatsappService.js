@@ -278,6 +278,31 @@ async function sendWhatsAppContentTemplate({
   }
 }
 
+async function downloadTwilioMedia(mediaUrl) {
+  const { accountSid, authToken } = getTwilioConfig();
+  const url = String(mediaUrl || "").trim();
+  if (!url) {
+    throw new Error("mediaUrl is required.");
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download WhatsApp media (${response.status}).`);
+  }
+
+  const contentType = String(response.headers.get("content-type") || "").split(";")[0].trim();
+  const arrayBuffer = await response.arrayBuffer();
+  return {
+    buffer: Buffer.from(arrayBuffer),
+    contentType,
+  };
+}
+
 module.exports = {
   formatWhatsAppNumber,
   fetchTwilioContentTemplate,
@@ -286,4 +311,6 @@ module.exports = {
   sendReelWhatsApp,
   sendWhatsAppText,
   waitForTwilioMessageReady,
+  downloadTwilioMedia,
+  getTwilioConfig,
 };

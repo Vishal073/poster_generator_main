@@ -7,7 +7,7 @@ const {
   toTenDigitMobile,
 } = require("../utils/portalAuth");
 const { sendWhatsAppLoginLink } = require("./whatsappTemplateService");
-const { startCaptionFlow } = require("./whatsappCaptionService");
+// caption flow is separate — started after register + Facebook connect
 
 function normalizeChatText(value) {
   return String(value || "")
@@ -125,7 +125,7 @@ function buildMainMenuMessage(name) {
     `3. How posters work\n` +
     `4. Support\n` +
     `5. Our services\n\n` +
-    `AI Caption: *Hi GCR Graphix* ke baad seedha event text bhejo.\n` +
+    `AI Caption: pehle register + Facebook connect, phir photos + text bhejo → Approve.\n` +
     `Type *menu* anytime to see this again.`
   );
 }
@@ -138,7 +138,7 @@ function buildPosterHelpMessage() {
     `3. Connect Facebook Page (optional)\n` +
     `4. Admin sends your poster here\n` +
     `5. Tap *Approve* to post on Facebook / Instagram\n\n` +
-    `AI Caption: *Hi GCR Graphix* ke baad seedha event text bhejo.\n` +
+    `AI Caption: register + Facebook connect ke baad photos + text bhejo, phir Approve.\n` +
     `Type *menu* for more options.`
   );
 }
@@ -218,12 +218,10 @@ async function handleWhatsAppChatbot({ fromWhatsAppNumber, bodyText }) {
     return { handled: false, reason: "invalid_mobile" };
   }
 
-  // Hi GCR Graphix → login/register link, then silent caption mode
-  // (user can send event text directly — no extra "bhejo" prompt).
+  // Hi GCR Graphix → login/register only (caption needs register + FB first).
   if (isGcrGraphixGreeting(bodyText)) {
     await handleGcrGraphixGreeting(fromWhatsAppNumber);
-    await startCaptionFlow(fromWhatsAppNumber, { silent: true });
-    return { handled: true, type: "gcr_greeting_caption" };
+    return { handled: true, type: "gcr_greeting" };
   }
 
   const choice = detectMenuChoice(bodyText);
