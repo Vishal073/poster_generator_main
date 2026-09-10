@@ -55,11 +55,11 @@ No labels like "Caption" or "Shayari" inside the text.
 Do NOT copy the user's rough wording — elevate fully.
 
 If style = "shayari":
-- Write 4 to 6 lines of beautiful Hindi shayari.
+- Write 2 to 4 lines of beautiful Hindi shayari (prefer 2–3; never more than 4).
 - Natural rhyme / rhythm (not forced or childish).
 - Warm, dignified tone (family / seva / public post — not romantic filmy love shayari).
 - Weave the real facts into the poetry (who + occasion + what happened).
-- Last 1–2 lines must be a blessing or good wishes suited to the occasion
+- Last line should be a blessing or good wishes suited to the occasion
   (birthday → long life/happiness; blood donation → life/seva blessing; win → shubhkamnayein, etc.).
 - Separate lines with \\n.
 
@@ -112,7 +112,7 @@ async function generateCaption(rawText) {
               `I will give you a moment from my life written in rough Hinglish — just 1-2 lines, the way people type on WhatsApp.\n\n` +
               `Your job:\n` +
               `1) Understand all the facts from my line (who, what occasion, what happened)\n` +
-              `2) Without changing those facts, write a beautiful Hindi shayari — 4 to 6 lines (if the moment deserves shayari; otherwise polished normal Hindi)\n` +
+              `2) Without changing those facts, write a beautiful Hindi shayari — 2 to 4 lines (prefer 2–3; max 4). If the moment is plain, use short normal Hindi instead.\n` +
               `3) Elevate the language — pure, emotional Hindi; do not copy my rough wording\n` +
               `4) The rhyme should feel natural, not forced\n` +
               `5) End with a blessing or good wishes suited to the occasion\n\n` +
