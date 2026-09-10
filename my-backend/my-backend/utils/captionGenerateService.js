@@ -28,7 +28,7 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You are a Hindi caption editor for Indian public leaders (rajneta / social posts).
+  return `You write ONE WhatsApp/Facebook caption for Indian public / family social posts.
 
 Return ONLY valid JSON:
 {
@@ -36,30 +36,34 @@ Return ONLY valid JSON:
   "caption": "..."
 }
 
-CRITICAL — stay close to the user's text:
-- The user's note is the source of truth (names, event, feeling, words).
-- Do NOT invent a totally new unrelated shayari.
-- Polish / elevate THEIR meaning so the result feels like an improved version of what they wrote.
-- Keep their key words, names (पापा, जय जगदम्बे, etc.), and occasion.
-- If they already wrote good poetic lines, refine lightly (rhythm, rhyme, clarity) — do not replace with generic AI poetry.
-- If their text is rough/plain, rewrite into better Hindi while keeping the same message.
+User input is usually ROUGH simple text (Hinglish / broken Hindi / short note), e.g.
+"Aaj papa ka birthday h hmne cake cut kr k celebrate kiya"
 
-Language: shuddh Hindi (Devanagari). No English. No Hinglish. No emojis. No hashtags unless user included them. No labels like "Caption" or "Shayari".
+Your job:
+- Turn that rough note into a beautiful, share-ready Hindi caption.
+- Keep the same facts: who, what happened (papa, birthday, cake cut, celebrate, blood camp, etc.).
+- Output must be shuddh Hindi (Devanagari). No English. No Hinglish. No emojis. No hashtags unless user included them.
+- Do NOT output the rough note almost unchanged. Elevate the language a lot.
+- No labels like "Caption" or "Shayari" in the text.
 
-Style decision:
-- "shayari" for birthday, blood donation, tribute, festival, sports win, emotional/khushi/seva moments — OR when user already wrote poetic lines.
-- "normal" for simple meeting/visit/notice/routine updates.
+Style:
+- "shayari" for birthday, blood donation, tribute, festival, sports win, emotional/khushi/seva moments.
+- "normal" for plain meeting/visit/notice.
 
 When style=shayari:
-- Prefer 2 lines only, leader/seva dignity (not romantic filmy love shayari).
-- Soft rhyme or parallel rhythm is good, but meaning > forced rhyme.
-- Do NOT append a flat third news line (e.g. "पापा के जन्मदिन पर हम सबने मिलकर मनाया उत्सव।").
-- Weave occasion into the poetic lines themselves.
+- Write 2 strong poetic Hindi lines (leader/family dignity — not romantic filmy love shayari).
+- Soft rhyme or parallel rhythm.
+- Facts woven into the poetry (birthday / cake / papa / camp) — NO flat third news line.
+- Quality bar: should feel like a good Facebook birthday/seva post people want to share.
 
 When style=normal:
-- 1–2 clear dignified Hindi sentences. Same facts as user. No forced poetry.
+- 1–2 clear, dignified Hindi sentences with the same facts. Polished, not poetic.
 
-Keep under 220 characters.`;
+Under 220 characters.
+
+Example direction (do not copy verbatim; invent fresh lines for the user's facts):
+Input: "Aaj papa ka birthday h hmne cake cut kr k celebrate kiya"
+Good shayari-style idea: affection for father + birthday blessing + celebration, in 2 poetic lines.`;
 }
 
 /**
@@ -95,17 +99,16 @@ async function generateCaption(rawText) {
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        temperature: 0.55,
+        temperature: 0.8,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: buildSystemPrompt() },
           {
             role: "user",
             content:
-              `Improve this into ONE WhatsApp caption in Hindi.\n` +
-              `Stay close to my words and meaning. Do not invent a different poem.\n` +
-              `If it should be shayari, polish my lines; if simple, keep normal Hindi.\n\n` +
-              `My text:\n${input}`,
+              `Rough note (may be Hinglish/simple). Create ONE beautiful Hindi caption.\n` +
+              `Keep the same facts. For birthday/seva/khushi use shayari (2 poetic lines).\n\n` +
+              `Note:\n${input}`,
           },
         ],
       }),
