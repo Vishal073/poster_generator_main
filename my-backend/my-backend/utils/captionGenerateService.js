@@ -43,10 +43,27 @@ INPUT
 User may send short or long rough text (Hinglish / broken Hindi). Use ALL their facts (names, place, what happened). Do not invent new people/events.
 
 COMMON RULES
-- Positive vibe, simple Hindi (Devanagari).
+- Positive vibe, simple Hindi (Devanagari) for the main caption body.
 - Keep user's meaning; improve wording.
-- No English/Hinglish, no emojis, no hashtags (unless user included them).
-- No labels like "Caption" or "Shayari" in the text.
+- No English/Hinglish in the caption body (except hashtags block).
+- No emojis. No labels like "Caption" or "Shayari" in the text.
+
+HASHTAGS (required when relevant)
+- After the caption body, add a blank line, then 2–5 relevant hashtags from the user's facts.
+- Include party tags when mentioned: BJP / भाजपा → #BJP ; Congress → #Congress ; AAP → #AAP ; etc.
+- Include district/city/place tags: Fatehabad / फतेहाबाद → #Fatehabad ; combine when useful → #BJPFatehabad
+- Include event tags when clear: meeting → #Meeting ; blood donation → #BloodDonation / #रक्तदान ; birthday → #Birthday
+- Hashtags in Latin script (preferred for reach), no spaces inside a tag. Correct spellings (Fatehabad not Fatehabd).
+- Do NOT invent unrelated trending tags. Only from user's content.
+- Example ending:
+  #BJP #Fatehabad #BJPFatehabad
+
+Gold-standard full example for a meeting note:
+Input: "aaj mene jila fatehabad me bjp ki meeting me bhag liya"
+Correct caption:
+"आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।
+
+#BJP #Fatehabad #BJPFatehabad #Meeting"
 
 WHEN style = "shayari" (birthday, blood donation, tribute, festival, sports win, family, seva, khushi):
 - Write ONLY shayari as COMPLETE COUPLETS: exactly 2 lines OR exactly 4 lines.
@@ -70,9 +87,9 @@ WHEN style = "normal" (meeting, visit, notice, detailed update, or non-emotional
 - Use \\n between sentences if helpful.
 - Tone: respectful public/leader post — polished but simple.
 - Cover all user facts; do not invent slogans or extra events.
-- Gold-standard example (match this dignity and phrasing style; do not copy if facts differ):
+- Gold-standard body (hashtags still appended after as above):
   Input: "aaj mene jila fatehabad me bjp ki meeting me bhag liya"
-  Correct: "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।"
+  Correct body: "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।"
   Wrong: flat/chatty wording, incomplete polish, or turning it into shayari.
 - Expand short party names naturally when clear (BJP → भारतीय जनता पार्टी) if it fits a formal post.
 - Prefer one strong complete sentence when the user gave a short note; add a second sentence only if they gave more points.
@@ -124,7 +141,8 @@ async function generateCaption(rawText) {
               `Pick either shayari OR normal — never mix both.\n` +
               `- Shayari: exactly 2 OR 4 strong poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme. Blessing optional — do not force it.\n` +
               `- Normal: formal simple Hindi social post. For a meeting note like Fatehabad BJP, aim like: "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।" No shayari.\n` +
-              `Improve wording; keep my facts. Do not invent extra slogans or events.\n\n` +
+              `Then add a blank line and relevant hashtags from my facts, e.g. #BJP #Fatehabad #BJPFatehabad #Meeting.\n` +
+              `Improve wording; keep my facts. Do not invent extra slogans, events, or unrelated tags.\n\n` +
               `My content:\n${input}`,
           },
         ],
