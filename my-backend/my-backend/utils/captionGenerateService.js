@@ -1,7 +1,6 @@
 /**
  * OpenAI text-only caption generator.
- * Returns one Hindi caption; AI picks shayari vs normal style.
- * Stays close to the user's own words — polish, don't invent a new poem.
+ * Rough Hinglish life-moment → Hindi shayari (or normal) caption.
  */
 
 const DEFAULT_MODEL = "gpt-4o-mini";
@@ -28,7 +27,7 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You write ONE WhatsApp/Facebook caption for Indian public / family social posts.
+  return `You turn a rough WhatsApp-style Hinglish life moment into a share-ready Hindi caption.
 
 Return ONLY valid JSON:
 {
@@ -36,34 +35,38 @@ Return ONLY valid JSON:
   "caption": "..."
 }
 
-User input is usually ROUGH simple text (Hinglish / broken Hindi / short note), e.g.
+INPUT
+The user gives 1–2 rough lines (Hinglish / broken Hindi), e.g.
 "Aaj papa ka birthday h hmne cake cut kr k celebrate kiya"
 
-Your job:
-- Turn that rough note into a beautiful, share-ready Hindi caption.
-- Keep the same facts: who, what happened (papa, birthday, cake cut, celebrate, blood camp, etc.).
-- Output must be shuddh Hindi (Devanagari). No English. No Hinglish. No emojis. No hashtags unless user included them.
-- Do NOT output the rough note almost unchanged. Elevate the language a lot.
-- No labels like "Caption" or "Shayari" in the text.
+STEP 1 — Understand facts (do not invent new events)
+Extract and keep: who, occasion, what happened.
+Examples of facts to preserve: papa, birthday, cake cut, celebrate, blood camp, school win, etc.
+Do not add people, places, or events the user did not mention.
 
-Style:
-- "shayari" for birthday, blood donation, tribute, festival, sports win, emotional/khushi/seva moments.
-- "normal" for plain meeting/visit/notice.
+STEP 2 — Choose style
+- "shayari": birthday, blood donation, tribute, festival, sports win, family love, seva, emotional/khushi moments.
+- "normal": plain meeting, visit, notice, routine update with little emotion.
 
-When style=shayari:
-- Write 2 strong poetic Hindi lines (leader/family dignity — not romantic filmy love shayari).
-- Soft rhyme or parallel rhythm.
-- Facts woven into the poetry (birthday / cake / papa / camp) — NO flat third news line.
-- Quality bar: should feel like a good Facebook birthday/seva post people want to share.
+STEP 3 — Write the caption
+Language: shuddh emotional Hindi (Devanagari only).
+No English, no Hinglish, no emojis, no hashtags (unless user included them).
+No labels like "Caption" or "Shayari" inside the text.
+Do NOT copy the user's rough wording — elevate fully.
 
-When style=normal:
-- 1–2 clear, dignified Hindi sentences with the same facts. Polished, not poetic.
+If style = "shayari":
+- Write 4 to 6 lines of beautiful Hindi shayari.
+- Natural rhyme / rhythm (not forced or childish).
+- Warm, dignified tone (family / seva / public post — not romantic filmy love shayari).
+- Weave the real facts into the poetry (who + occasion + what happened).
+- Last 1–2 lines must be a blessing or good wishes suited to the occasion
+  (birthday → long life/happiness; blood donation → life/seva blessing; win → shubhkamnayein, etc.).
+- Separate lines with \\n.
 
-Under 220 characters.
+If style = "normal":
+- 1–2 clear, polished Hindi sentences with the same facts. No forced poetry.
 
-Example direction (do not copy verbatim; invent fresh lines for the user's facts):
-Input: "Aaj papa ka birthday h hmne cake cut kr k celebrate kiya"
-Good shayari-style idea: affection for father + birthday blessing + celebration, in 2 poetic lines.`;
+Keep the full caption under 500 characters.`;
 }
 
 /**
@@ -99,16 +102,21 @@ async function generateCaption(rawText) {
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        temperature: 0.8,
+        temperature: 0.75,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: buildSystemPrompt() },
           {
             role: "user",
             content:
-              `Rough note (may be Hinglish/simple). Create ONE beautiful Hindi caption.\n` +
-              `Keep the same facts. For birthday/seva/khushi use shayari (2 poetic lines).\n\n` +
-              `Note:\n${input}`,
+              `I will give you a moment from my life written in rough Hinglish — just 1-2 lines, the way people type on WhatsApp.\n\n` +
+              `Your job:\n` +
+              `1) Understand all the facts from my line (who, what occasion, what happened)\n` +
+              `2) Without changing those facts, write a beautiful Hindi shayari — 4 to 6 lines (if the moment deserves shayari; otherwise polished normal Hindi)\n` +
+              `3) Elevate the language — pure, emotional Hindi; do not copy my rough wording\n` +
+              `4) The rhyme should feel natural, not forced\n` +
+              `5) End with a blessing or good wishes suited to the occasion\n\n` +
+              `My line:\n${input}`,
           },
         ],
       }),
@@ -135,7 +143,9 @@ async function generateCaption(rawText) {
       throw new Error("Caption AI returned invalid JSON.");
     }
 
-    const caption = String(parsed?.caption || "").trim();
+    const caption = String(parsed?.caption || "")
+      .replace(/\\n/g, "\n")
+      .trim();
     if (!caption) {
       throw new Error("Caption AI returned an empty caption.");
     }
