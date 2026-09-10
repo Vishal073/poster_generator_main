@@ -49,11 +49,20 @@ COMMON RULES
 - No labels like "Caption" or "Shayari" in the text.
 
 WHEN style = "shayari" (birthday, blood donation, tribute, festival, sports win, family, seva, khushi):
-- Write ONLY shayari: 2–3 lines preferred, max 4.
-- Light natural rhyme OK; not forced; not over-fancy.
-- All facts must appear inside the poetic lines themselves.
-- Last line = short wish/blessing.
-- Do NOT add extra normal/prose lines below the shayari.
+- Write ONLY shayari as COMPLETE COUPLETS: exactly 2 lines OR exactly 4 lines.
+- Prefer 2 lines. Use 4 lines only if more facts need space.
+- NEVER write 3 lines (odd count breaks the couplet feel).
+- Each pair should rhyme or echo naturally (line1~line2, and if 4 lines also line3~line4).
+- Simple warm Hindi people share on Facebook — clear feeling, not heavy/dictionary words.
+- All user facts inside the poetry (who, occasion, what happened).
+- Last couplet/line ends with a short positive wish or blessing.
+- No plain report sentence after the shayari.
+- Separate lines with \\n.
+
+Quality bar for shayari:
+- Should feel like a real WhatsApp/Facebook shayari post, not a robot summary in rhyme.
+- Avoid weak filler and forced endings.
+- Keep it positive and heartfelt.
 
 WHEN style = "normal" (meeting, visit, notice, detailed update, or non-emotional content):
 - Write ONLY normal social-media Hindi (sentences/paragraph).
@@ -105,10 +114,10 @@ async function generateCaption(rawText) {
             role: "user",
             content:
               `Rewrite my content as ONE Hindi caption.\n` +
-              `Pick either shayari OR normal — never mix both in the same caption.\n` +
-              `- Shayari: only poetic lines (2–3, max 4) + short wish. No plain report lines.\n` +
-              `- Normal: only normal social post prose covering ALL my points. No shayari.\n` +
-              `Positive, simple. Improve my wording; keep my facts.\n\n` +
+              `Pick either shayari OR normal — never mix both.\n` +
+              `- Shayari: exactly 2 OR 4 poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme.\n` +
+              `- Normal: only normal social prose covering ALL my points. No shayari.\n` +
+              `Improve wording; keep my facts.\n\n` +
               `My content:\n${input}`,
           },
         ],
