@@ -38,10 +38,10 @@ const CAPTION_SESSION_TTL_MS =
   Number(process.env.CAPTION_SESSION_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
 const CAPTION_APPROVE_TTL_MS =
   Number(process.env.CAPTION_APPROVE_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
-/** WhatsApp often delivers multi-select photos as separate webhooks — wait to batch. */
+/** WhatsApp multi-photo often arrives as separate delayed webhooks — wait after LAST saved photo. */
 const PHOTO_BATCH_WAIT_MS = Math.min(
-  Math.max(Number(process.env.CAPTION_PHOTO_BATCH_MS || 6500) || 6500, 2000),
-  20000,
+  Math.max(Number(process.env.CAPTION_PHOTO_BATCH_MS || 20000) || 20000, 5000),
+  60000,
 );
 const MAX_CAPTION_PHOTOS = Math.min(
   Number(process.env.CAPTION_MAX_PHOTOS || 5) || 5,
@@ -142,6 +142,7 @@ function isPhotoBatchDoneCommand(text) {
 
 /**
  * Debounce collage/caption until WhatsApp finishes delivering separate photo messages.
+ * Timer starts after each photo is fully saved, and resets on every new photo.
  */
 function schedulePhotoBatchFinalize(fromWhatsAppNumber, user, eligibility) {
   const key = sessionKey(fromWhatsAppNumber);
@@ -149,6 +150,18 @@ function schedulePhotoBatchFinalize(fromWhatsAppNumber, user, eligibility) {
 
   const timer = setTimeout(() => {
     photoBatchTimers.delete(key);
+
+    // Another photo still downloading/uploading — wait until idle, then re-arm.
+    if (isSessionBusy(fromWhatsAppNumber)) {
+      const lock = sessionLocks.get(key) || Promise.resolve();
+      lock.finally(() => {
+        const session = getCaptionSession(fromWhatsAppNumber);
+        if (!session?.photos?.length) return;
+        schedulePhotoBatchFinalize(fromWhatsAppNumber, user, eligibility);
+      });
+      return;
+    }
+
     finalizePhotoBatch(fromWhatsAppNumber, user, eligibility).catch(async (error) => {
       console.error(
         "[caption] photo batch finalize failed:",
@@ -619,8 +632,8 @@ async function handleWhatsAppCaption({
           (photos.length < MAX_CAPTION_PHOTOS
             ? `Aur photos bhej sakte ho (max ${MAX_CAPTION_PHOTOS}).\n`
             : "") +
-          `${waitSec} sec wait → ek collage banega.\n` +
-          `Jaldi chahiye to *done* ya caption text bhejo.`,
+          `Last photo ke baad ~${waitSec}s wait (slow upload OK), phir ek collage.\n` +
+          `Jaldi: *done* ya caption text bhejo.`,
       });
       return { handled: true, type: "photos_collecting", photoCount: photos.length };
     }
