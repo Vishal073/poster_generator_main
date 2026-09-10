@@ -27,7 +27,7 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You rewrite the user's rough WhatsApp content into a clear, positive Hindi social-media caption.
+  return `You rewrite the user's rough WhatsApp content into ONE Hindi social-media caption.
 
 Return ONLY valid JSON:
 {
@@ -35,22 +35,33 @@ Return ONLY valid JSON:
   "caption": "..."
 }
 
-INPUT
-User may send short or long rough text (Hinglish / broken Hindi / mixed). Use ALL of their content — every fact, name, place, action they mentioned. Do not drop details. Do not invent new events or people.
+IMPORTANT: "shayari" and "normal" are TWO DIFFERENT formats. Never mix them in one caption.
+- If style=shayari → ONLY poetic lines. No plain news/report sentences mixed in.
+- If style=normal → ONLY normal prose lines. No shayari / rhyme / couplets.
 
-YOUR JOB
-- Rewrite their content in better, natural Hindi (Devanagari).
-- Keep the same meaning and all key points they gave.
-- Make it sound like a good social media post: positive vibe, easy to read.
-- Not over-fancy. Not a literary showpiece.
-- No English, no Hinglish, no emojis, no hashtags (unless user included them).
+INPUT
+User may send short or long rough text (Hinglish / broken Hindi). Use ALL their facts (names, place, what happened). Do not invent new people/events.
+
+COMMON RULES
+- Positive vibe, simple Hindi (Devanagari).
+- Keep user's meaning; improve wording.
+- No English/Hinglish, no emojis, no hashtags (unless user included them).
 - No labels like "Caption" or "Shayari" in the text.
 
-Style:
-- "shayari": birthday, blood donation, tribute, festival, sports win, family, seva, khushi — simple 2–3 lines (max 4), light natural rhyme OK. End with a short wish/blessing. Separate with \\n.
-- "normal": everything else, or when they gave more detail — rewrite the FULL content as a polished Hindi social post. No line-count limit; cover everything they wrote. Use \\n between sentences/paragraphs when helpful.
+WHEN style = "shayari" (birthday, blood donation, tribute, festival, sports win, family, seva, khushi):
+- Write ONLY shayari: 2–3 lines preferred, max 4.
+- Light natural rhyme OK; not forced; not over-fancy.
+- All facts must appear inside the poetic lines themselves.
+- Last line = short wish/blessing.
+- Do NOT add extra normal/prose lines below the shayari.
 
-Under 1200 characters if needed so longer user content still fits. Prefer complete coverage of their points over cutting short.`;
+WHEN style = "normal" (meeting, visit, notice, detailed update, or non-emotional content):
+- Write ONLY normal social-media Hindi (sentences/paragraph).
+- No line limit — cover everything the user wrote, improved.
+- No rhyme, no couplets, no "shayari look".
+- Use \\n between sentences if helpful.
+
+Under 1200 characters when needed for longer user content.`;
 }
 
 /**
@@ -93,10 +104,11 @@ async function generateCaption(rawText) {
           {
             role: "user",
             content:
-              `Rewrite my full content as a better Hindi social media caption.\n` +
-              `Use ALL points I wrote — improve the wording, keep the meaning.\n` +
-              `Positive vibe. Not over-fancy.\n` +
-              `If it is a birthday/seva/khushi moment, light shayari (2–3 lines, max 4) is OK; otherwise polished normal Hindi covering everything.\n\n` +
+              `Rewrite my content as ONE Hindi caption.\n` +
+              `Pick either shayari OR normal — never mix both in the same caption.\n` +
+              `- Shayari: only poetic lines (2–3, max 4) + short wish. No plain report lines.\n` +
+              `- Normal: only normal social post prose covering ALL my points. No shayari.\n` +
+              `Positive, simple. Improve my wording; keep my facts.\n\n` +
               `My content:\n${input}`,
           },
         ],
