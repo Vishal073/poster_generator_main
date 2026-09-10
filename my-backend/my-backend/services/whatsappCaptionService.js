@@ -33,12 +33,13 @@ const pendingCaptionSessions = new Map();
 const pendingCaptionApprovals = new Map();
 const photoBatchTimers = new Map();
 const sessionLocks = new Map();
+const sessionBusyCount = new Map();
 
 const CAPTION_SESSION_TTL_MS =
   Number(process.env.CAPTION_SESSION_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
 const CAPTION_APPROVE_TTL_MS =
   Number(process.env.CAPTION_APPROVE_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
-/** WhatsApp multi-photo often arrives as separate delayed webhooks — wait after LAST saved photo. */
+/** Wait after LAST photo is fully saved — covers slow WhatsApp/Twilio uploads. */
 const PHOTO_BATCH_WAIT_MS = Math.min(
   Math.max(Number(process.env.CAPTION_PHOTO_BATCH_MS || 20000) || 20000, 5000),
   60000,
@@ -51,7 +52,15 @@ const MAX_CAPTION_PHOTOS = Math.min(
 function runExclusive(fromWhatsAppNumber, fn) {
   const key = sessionKey(fromWhatsAppNumber);
   const prev = sessionLocks.get(key) || Promise.resolve();
-  const next = prev.then(fn, fn);
+  sessionBusyCount.set(key, (sessionBusyCount.get(key) || 0) + 1);
+  const next = prev.then(fn, fn).finally(() => {
+    const remaining = (sessionBusyCount.get(key) || 1) - 1;
+    if (remaining <= 0) {
+      sessionBusyCount.delete(key);
+    } else {
+      sessionBusyCount.set(key, remaining);
+    }
+  });
   sessionLocks.set(
     key,
     next.then(
@@ -60,6 +69,10 @@ function runExclusive(fromWhatsAppNumber, fn) {
     ),
   );
   return next;
+}
+
+function isSessionBusy(fromWhatsAppNumber) {
+  return (sessionBusyCount.get(sessionKey(fromWhatsAppNumber)) || 0) > 0;
 }
 
 function normalizeChatText(value) {
