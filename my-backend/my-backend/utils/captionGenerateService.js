@@ -43,9 +43,10 @@ Decide style yourself:
 
 Shayari rules (when style=shayari):
 - Leader tone, not romantic/filmy love shayari.
-- 2 strong poetic lines + optional 1 short factual line (event/place).
-- Soft rhyme or parallel rhythm. Memorable and shareable.
-- Avoid weak filler: "बहुत खुशी हुई", "आज का दिन यादगार".
+- Prefer exactly 2 poetic lines with soft rhyme or parallel rhythm.
+- Weave the event (birthday, blood camp, etc.) INTO the poetry — do NOT add a plain third factual line like "पापा के जन्मदिन पर हम सबने मिलकर मनाया उत्सव।"
+- If occasion must be clear, say it poetically inside the 2 lines (e.g. "जन्मदिन की बधाई…" / "रक्तदान शिविर में…"), not as a separate news-style sentence.
+- Avoid weak filler and flat report lines.
 
 Normal rules (when style=normal):
 - Clear, dignified 1–2 short Hindi sentences.

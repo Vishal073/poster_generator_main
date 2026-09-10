@@ -140,10 +140,9 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText) {
     lastStyle: result.style,
   });
 
-  const styleLabel = result.style === "shayari" ? "Shayari" : "Normal";
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
-    body: `*Caption (${styleLabel})*\n\n${result.caption}`,
+    body: result.caption,
   });
 
   return { handled: true, type: "caption_ready", style: result.style };
