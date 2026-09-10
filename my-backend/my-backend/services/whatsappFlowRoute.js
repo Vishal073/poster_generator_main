@@ -14,7 +14,12 @@ const {
   findUserByMobile,
 } = require("../utils/portalAuth");
 const { handleWhatsAppChatbot } = require("./whatsappChatbotService");
-const { handleWhatsAppCaption } = require("./whatsappCaptionService");
+const {
+  handleWhatsAppCaption,
+  approvePendingCaption,
+  getPendingCaptionApproval,
+  clearPendingCaptionApproval,
+} = require("./whatsappCaptionService");
 const {
   pendingPosterRequests,
   preparePosterInBackground,
@@ -342,6 +347,23 @@ router.post("/webhook", async (req, res) => {
     }
 
     if (reply === "approve" || reply === approvePayload) {
+      // Caption Approve (AI text → Facebook Page) takes priority when pending.
+      const captionPending = getPendingCaptionApproval(normalizedFrom);
+      if (captionPending?.canApproveSocial && captionPending?.caption) {
+        try {
+          await approvePendingCaption({ fromWhatsAppNumber: normalizedFrom });
+        } catch (error) {
+          console.error("WhatsApp approve caption failed:", getErrorMessage(error));
+          await sendWhatsAppText({
+            toMobile: normalizedFrom,
+            body: `Could not post your caption: ${getErrorMessage(error)}`,
+          }).catch((sendError) => {
+            console.error("WhatsApp caption approve error reply failed:", getErrorMessage(sendError));
+          });
+        }
+        return;
+      }
+
       const pendingRequest = pendingPosterRequests.get(normalizedFrom);
       if (!pendingRequest?.canApproveSocial || !pendingRequest?.downloadedAt) {
         return;
@@ -369,6 +391,7 @@ router.post("/webhook", async (req, res) => {
     }
 
     if (["skip", skipPayload].includes(reply)) {
+      clearPendingCaptionApproval(normalizedFrom);
       pendingPosterRequests.delete(normalizedFrom);
       return;
     }

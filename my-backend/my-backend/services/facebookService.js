@@ -1038,6 +1038,48 @@ async function scrapeFacebookUrl({ url, accessToken }) {
   }
 }
 
+/**
+ * Post a text-only status update to a Facebook Page (organic /feed message).
+ */
+async function postTextToPage({ pageId, pageAccessToken, message }) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (!text) {
+    const error = new Error("message is required for a Facebook text post.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const form = new URLSearchParams();
+    form.set("message", text);
+    form.set("access_token", pageAccessToken);
+
+    logFb("facebook.text_post_request", {
+      pageId,
+      messageLength: text.length,
+      messagePreview: text.slice(0, 120),
+    });
+
+    const response = await axios.post(
+      `${GRAPH_BASE_URL}/${pageId}/feed`,
+      form.toString(),
+      {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        timeout: 60000,
+      },
+    );
+
+    return {
+      postId: response.data?.id || null,
+      format: "text",
+      caption: text,
+      raw: response.data,
+    };
+  } catch (error) {
+    throw wrapGraphError(error, "Failed to post text to Facebook Page.");
+  }
+}
+
 async function postLinkCardToPage({
   pageId,
   pageAccessToken,
@@ -1790,6 +1832,7 @@ module.exports = {
   enrichPagesWithInstagram,
   fetchInstagramAccountForPage,
   postImageToPage,
+  postTextToPage,
   postLinkCardToPage,
   postPhotoStoryToPage,
   postImageToInstagram,

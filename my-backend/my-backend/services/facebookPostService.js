@@ -4,6 +4,7 @@ const { loadDecryptedConnectionLean } = require("../utils/facebookConnectionToke
 const FacebookOAuthState = require("../models/FacebookOAuthState");
 const {
   postImageToPage,
+  postTextToPage,
   postLinkCardToPage,
   postPhotoStoryToPage,
   postImageToInstagram,
@@ -666,6 +667,46 @@ async function postReelToInstagramForUser({
 }
 
 /**
+ * Post text-only caption to the user's Facebook Page.
+ */
+async function postTextForUser({ userId, message }) {
+  if (!isValidObjectId(userId)) {
+    const error = new Error("userId must be a valid MongoDB User _id.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const text = typeof message === "string" ? message.trim() : "";
+  if (!text) {
+    const error = new Error("message is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const connection = await getFacebookConnectionForUser(userId);
+  const posted = await postTextToPage({
+    pageId: connection.selectedPage.pageId,
+    pageAccessToken: connection.selectedPage.pageAccessToken,
+    message: text,
+  });
+
+  return {
+    userId: String(connection.userId),
+    pageId: connection.selectedPage.pageId,
+    pageName: connection.selectedPage.pageName,
+    ...posted,
+  };
+}
+
+/**
+ * WhatsApp Approve for AI caption → Facebook Page text post.
+ */
+async function approveCaptionForUser({ userId, caption }) {
+  const facebook = await postTextForUser({ userId, message: caption });
+  return { facebook, instagram: null };
+}
+
+/**
  * Whether this user can use WhatsApp "Approve" to post the pending poster.
  */
 async function getUserSocialApproveEligibility(userId) {
@@ -973,6 +1014,7 @@ function buildFacebookConnectUrl(userId, apiBaseUrl, req) {
 
 module.exports = {
   postPosterForUser,
+  postTextForUser,
   postPosterToInstagramForUser,
   postCarouselForUser,
   postCarouselToInstagramForUser,
@@ -981,6 +1023,7 @@ module.exports = {
   postReelForUser,
   postReelToInstagramForUser,
   approvePosterForUser,
+  approveCaptionForUser,
   getUserSocialApproveEligibility,
   buildSelectedPageSnapshot,
   toPlainFacebookPage,
