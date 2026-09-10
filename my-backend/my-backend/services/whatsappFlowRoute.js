@@ -398,7 +398,7 @@ router.post("/webhook", async (req, res) => {
           toMobile: normalizedFrom,
           body:
             `Thanks for messaging GCR Graphix.\n\n` +
-            `Type *menu* to see options, or *Hi GCR Graphix* to Register / Login.`,
+            `Type *Hi GCR Graphix* for login + AI caption, or *menu* for options.`,
         });
       }
     }
