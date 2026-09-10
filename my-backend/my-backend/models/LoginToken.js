@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 /**
  * One-time magic link for passwordless end-user login (shared via WhatsApp).
+ * Default TTL: 2 hours (LOGIN_TOKEN_TTL_HOURS). Marked usedAt on first successful login.
  */
 const loginTokenSchema = new mongoose.Schema(
   {

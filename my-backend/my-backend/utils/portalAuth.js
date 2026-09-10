@@ -8,7 +8,7 @@ const {
 } = require("../services/whatsappTemplateService");
 
 const LOGIN_TOKEN_TTL_MS =
-  Number(process.env.LOGIN_TOKEN_TTL_HOURS || 48) * 60 * 60 * 1000;
+  Number(process.env.LOGIN_TOKEN_TTL_HOURS || 2) * 60 * 60 * 1000;
 const REGISTRATION_TOKEN_TTL_MS =
   Number(process.env.REGISTRATION_TOKEN_TTL_HOURS || 48) * 60 * 60 * 1000;
 

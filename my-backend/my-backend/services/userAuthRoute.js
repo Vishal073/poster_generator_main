@@ -32,7 +32,7 @@ const registerUpload = multer({
 });
 
 const LOGIN_TOKEN_TTL_MS =
-  Number(process.env.LOGIN_TOKEN_TTL_HOURS || 48) * 60 * 60 * 1000;
+  Number(process.env.LOGIN_TOKEN_TTL_HOURS || 2) * 60 * 60 * 1000;
 const USER_JWT_EXPIRY = process.env.USER_JWT_EXPIRES_IN || "30d";
 
 function getPortalBaseUrl() {
@@ -148,18 +148,27 @@ router.post("/auth/user/verify-token", requireDb, async (req, res) => {
       });
     }
 
-    const loginDoc = await LoginToken.findOne({ token });
-    if (!loginDoc) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid or expired login link.",
-      });
-    }
+    const loginDoc = await LoginToken.findOneAndUpdate(
+      {
+        token,
+        usedAt: null,
+        expiresAt: { $gt: new Date() },
+      },
+      { $set: { usedAt: new Date() } },
+      { new: true },
+    );
 
-    if (loginDoc.expiresAt.getTime() < Date.now()) {
+    if (!loginDoc) {
+      const existing = await LoginToken.findOne({ token }).lean();
+      if (existing?.usedAt) {
+        return res.status(401).json({
+          success: false,
+          message: "This login link was already used. Ask for a new link.",
+        });
+      }
       return res.status(401).json({
         success: false,
-        message: "Login link has expired. Ask admin for a new link.",
+        message: "Invalid or expired login link. Ask for a new link.",
       });
     }
 
