@@ -140,12 +140,25 @@ async function handleGcrGraphixGreeting(fromWhatsAppNumber) {
 
   if (user) {
     const { token, loginUrl, expiresAt } = await createLoginLinkForUser(user);
-    await sendWhatsAppLoginLink({
-      toMobile: mobileNumber,
-      name: user.name,
-      token,
-      loginUrl,
-    });
+    // Plain text first — more reliable than Content templates when session is open.
+    const { sendWhatsAppText } = require("../services/whatsappService");
+    try {
+      await sendWhatsAppText({
+        toMobile: mobileNumber,
+        body:
+          `Hi ${user.name || "there"},\n\n` +
+          `Tap to open your poster account:\n${loginUrl}\n\n` +
+          `If the link opens inside WhatsApp, use Chrome/Safari (⋮ → Open in browser).`,
+      });
+    } catch (textError) {
+      console.error("Greeting plain-text login failed, trying template:", textError.message);
+      await sendWhatsAppLoginLink({
+        toMobile: mobileNumber,
+        name: user.name,
+        token,
+        loginUrl,
+      });
+    }
     return {
       handled: true,
       type: "login_link",
@@ -157,11 +170,22 @@ async function handleGcrGraphixGreeting(fromWhatsAppNumber) {
   }
 
   const { token, registerUrl } = await createRegistrationToken(mobileNumber);
-  await sendWhatsAppRegisterLink({
-    toMobile: mobileNumber,
-    token,
-    registerUrl,
-  });
+  const { sendWhatsAppText } = require("../services/whatsappService");
+  try {
+    await sendWhatsAppText({
+      toMobile: mobileNumber,
+      body:
+        `Hi! You're not registered with GCR Graphix yet.\n\n` +
+        `Tap to register:\n${registerUrl}`,
+    });
+  } catch (textError) {
+    console.error("Greeting plain-text register failed, trying template:", textError.message);
+    await sendWhatsAppRegisterLink({
+      toMobile: mobileNumber,
+      token,
+      registerUrl,
+    });
+  }
   return { handled: true, type: "registration_link", mobileNumber, registerUrl };
 }
 

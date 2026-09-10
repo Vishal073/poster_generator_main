@@ -376,52 +376,47 @@ router.post("/webhook", async (req, res) => {
       req.body.Body || req.body.ButtonText || req.body.ButtonPayload || "",
     ).trim();
 
-    // Caption service first (active session or *6* / caption), then menu chatbot.
-    handleWhatsAppCaption({
-      fromWhatsAppNumber: normalizedFrom,
-      bodyText,
-    })
-      .then((captionResult) => {
-        if (captionResult?.handled) {
-          return null;
-        }
-        return handleWhatsAppChatbot({
+    try {
+      const captionResult = await handleWhatsAppCaption({
+        fromWhatsAppNumber: normalizedFrom,
+        bodyText,
+      });
+
+      let result = captionResult;
+      if (!captionResult?.handled) {
+        result = await handleWhatsAppChatbot({
           fromWhatsAppNumber: normalizedFrom,
           bodyText,
         });
-      })
-      .then((result) => {
-        if (result == null || result?.handled) {
-          return;
-        }
-        // Legacy exact greeting still supported if chatbot did not claim it.
+      }
+
+      if (!result?.handled) {
         if (isGcrGraphixGreeting(bodyText)) {
-          return handleGcrGraphixGreeting(normalizedFrom);
-        }
-        // Unknown message → gentle nudge to menu (session-open free-form only).
-        if (bodyText) {
-          return sendWhatsAppText({
+          await handleGcrGraphixGreeting(normalizedFrom);
+        } else if (bodyText) {
+          await sendWhatsAppText({
             toMobile: normalizedFrom,
             body:
               `Thanks for messaging GCR Graphix.\n\n` +
               `Type *menu* to see options, or *Hi GCR Graphix* to Register / Login.`,
           });
         }
-      })
-      .catch(async (error) => {
-        console.error("WhatsApp caption/chatbot failed:", getErrorMessage(error));
-        try {
-          await sendWhatsAppText({
-            toMobile: normalizedFrom,
-            body: `Sorry, something went wrong. Please try again in a moment.`,
-          });
-        } catch (sendError) {
-          console.error(
-            "WhatsApp error reply failed:",
-            getErrorMessage(sendError),
-          );
-        }
-      });
+      }
+    } catch (error) {
+      console.error("WhatsApp caption/chatbot failed:", getErrorMessage(error), getErrorDetails(error));
+      try {
+        await sendWhatsAppText({
+          toMobile: normalizedFrom,
+          body: `Sorry, something went wrong: ${getErrorMessage(error)}`,
+        });
+      } catch (sendError) {
+        console.error(
+          "WhatsApp error reply failed:",
+          getErrorMessage(sendError),
+          getErrorDetails(sendError),
+        );
+      }
+    }
 
     return res.status(204).end();
   } catch (error) {
