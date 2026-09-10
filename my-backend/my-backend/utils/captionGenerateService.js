@@ -27,7 +27,7 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You turn a rough WhatsApp-style Hinglish life moment into a share-ready Hindi caption.
+  return `You turn a rough WhatsApp Hinglish note into a simple, positive Hindi caption.
 
 Return ONLY valid JSON:
 {
@@ -35,38 +35,25 @@ Return ONLY valid JSON:
   "caption": "..."
 }
 
-INPUT
-The user gives 1–2 rough lines (Hinglish / broken Hindi), e.g.
+INPUT example:
 "Aaj papa ka birthday h hmne cake cut kr k celebrate kiya"
 
-STEP 1 — Understand facts (do not invent new events)
-Extract and keep: who, occasion, what happened.
-Examples of facts to preserve: papa, birthday, cake cut, celebrate, blood camp, school win, etc.
-Do not add people, places, or events the user did not mention.
+RULES
+1) Keep the user's facts (who / occasion / what happened). Include them clearly — same or very similar meaning. Do not invent new events or people.
+2) Keep language SIMPLE and warm. Positive vibe is most important.
+3) Do NOT make it over-fancy, heavy, or "shaayari competition" style. Easy words people actually share on WhatsApp/Facebook.
+4) Shuddh Hindi (Devanagari). No English, no Hinglish, no emojis, no hashtags (unless user included them). No "Caption/Shayari" labels.
 
-STEP 2 — Choose style
-- "shayari": birthday, blood donation, tribute, festival, sports win, family love, seva, emotional/khushi moments.
-- "normal": plain meeting, visit, notice, routine update with little emotion.
+Style:
+- "shayari": birthday, blood donation, tribute, festival, sports win, family, seva, khushi — simple 2–3 lines (max 4). Light natural rhyme OK; not forced.
+- "normal": meeting / visit / notice — 1–2 simple positive Hindi sentences.
 
-STEP 3 — Write the caption
-Language: shuddh emotional Hindi (Devanagari only).
-No English, no Hinglish, no emojis, no hashtags (unless user included them).
-No labels like "Caption" or "Shayari" inside the text.
-Do NOT copy the user's rough wording — elevate fully.
-
-If style = "shayari":
-- Write 2 to 4 lines of beautiful Hindi shayari (prefer 2–3; never more than 4).
-- Natural rhyme / rhythm (not forced or childish).
-- Warm, dignified tone (family / seva / public post — not romantic filmy love shayari).
-- Weave the real facts into the poetry (who + occasion + what happened).
-- Last line should be a blessing or good wishes suited to the occasion
-  (birthday → long life/happiness; blood donation → life/seva blessing; win → shubhkamnayein, etc.).
+For shayari:
+- Mention the real moment (e.g. papa, birthday, cake, celebrate) in a natural way.
+- End with a short positive wish / blessing suited to the occasion.
 - Separate lines with \\n.
 
-If style = "normal":
-- 1–2 clear, polished Hindi sentences with the same facts. No forced poetry.
-
-Keep the full caption under 500 characters.`;
+Under 400 characters. Prefer short and clear over literary.`;
 }
 
 /**
@@ -109,13 +96,10 @@ async function generateCaption(rawText) {
           {
             role: "user",
             content:
-              `I will give you a moment from my life written in rough Hinglish — just 1-2 lines, the way people type on WhatsApp.\n\n` +
-              `Your job:\n` +
-              `1) Understand all the facts from my line (who, what occasion, what happened)\n` +
-              `2) Without changing those facts, write a beautiful Hindi shayari — 2 to 4 lines (prefer 2–3; max 4). If the moment is plain, use short normal Hindi instead.\n` +
-              `3) Elevate the language — pure, emotional Hindi; do not copy my rough wording\n` +
-              `4) The rhyme should feel natural, not forced\n` +
-              `5) End with a blessing or good wishes suited to the occasion\n\n` +
+              `Rough Hinglish note from WhatsApp.\n\n` +
+              `Write a SIMPLE positive Hindi caption (prefer light shayari 2–3 lines, max 4; or short normal Hindi).\n` +
+              `Must include my facts (same or very similar). Positive vibe. Not over-fancy.\n` +
+              `End with a short good wish if it fits.\n\n` +
               `My line:\n${input}`,
           },
         ],
