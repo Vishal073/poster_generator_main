@@ -69,6 +69,12 @@ WHEN style = "normal" (meeting, visit, notice, detailed update, or non-emotional
 - No line limit — cover everything the user wrote, improved.
 - No rhyme, no couplets, no "shayari look".
 - Use \\n between sentences if helpful.
+- Keep it direct and dignified (neta / public post style): who + where + what, then optional short closing line about purpose/seva if it fits — without inventing facts.
+- Example of desired quality (do not copy verbatim; match this simplicity):
+  Input: "aaj mene jila fatehabad me bjp ki meeting me bhag liya"
+  Good: "आज ज़िला फतेहाबाद में भाजपा की बैठक में हिस्सा लिया।"
+  Optional second line only if useful: "पार्टी के कार्यों और योजनाओं पर चर्चा हुई।"
+  Bad: turning a meeting into shayari, or adding fake slogans/events the user never said.
 
 Under 1200 characters when needed for longer user content.`;
 }
@@ -115,9 +121,9 @@ async function generateCaption(rawText) {
             content:
               `Rewrite my content as ONE Hindi caption.\n` +
               `Pick either shayari OR normal — never mix both.\n` +
-              `- Shayari: exactly 2 OR 4 strong poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme. Blessing/wish optional — do not force it; lines must be good.\n` +
-              `- Normal: only normal social prose covering ALL my points. No shayari.\n` +
-              `Improve wording; keep my facts.\n\n` +
+              `- Shayari: exactly 2 OR 4 strong poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme. Blessing optional — do not force it.\n` +
+              `- Normal: clean Hindi social post only — like "आज ज़िला फतेहाबाद में भाजपा की बैठक में हिस्सा लिया।" Direct, dignified, cover all my points. No shayari.\n` +
+              `Improve wording; keep my facts. Do not invent extra slogans or events.\n\n` +
               `My content:\n${input}`,
           },
         ],
