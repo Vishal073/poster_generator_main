@@ -23,7 +23,6 @@ function isMenuIntent(text) {
     return false;
   }
 
-  // Do NOT treat "Hi GCR Graphix" as menu — that greeting opens login/register.
   if (isGcrGraphixGreeting(text)) {
     return false;
   }
@@ -101,14 +100,6 @@ function detectMenuChoice(text) {
     return "services";
   }
 
-  if (
-    ["6", "caption", "captions", "ai caption", "shayari"].includes(normalized) ||
-    normalized.includes("caption") ||
-    normalized.includes("shayari")
-  ) {
-    return "caption";
-  }
-
   if (normalized === "menu" || normalized === "start") {
     return "menu";
   }
@@ -133,8 +124,8 @@ function buildMainMenuMessage(name) {
     `2. Connect Facebook / Instagram\n` +
     `3. How posters work\n` +
     `4. Support\n` +
-    `5. Our services\n` +
-    `6. AI caption (Hindi / English / Shayari)\n\n` +
+    `5. Our services\n\n` +
+    `AI Caption: type *Hi GCR Graphix*, then send your event text.\n` +
     `Type *menu* anytime to see this again.`
   );
 }
@@ -142,12 +133,12 @@ function buildMainMenuMessage(name) {
 function buildPosterHelpMessage() {
   return (
     `How GCR Graphix posters work:\n\n` +
-    `1. Register / login from WhatsApp (option 1)\n` +
-    `2. Complete your profile (name, photo, details)\n` +
-    `3. Connect Facebook Page (optional) for auto post\n` +
-    `4. Admin generates your event poster\n` +
-    `5. You receive the poster here on WhatsApp\n` +
-    `6. Optional: reply *6* for AI captions, then tap *Approve*\n\n` +
+    `1. Register / login: *Hi GCR Graphix*\n` +
+    `2. Complete your profile\n` +
+    `3. Connect Facebook Page (optional)\n` +
+    `4. Admin sends your poster here\n` +
+    `5. Tap *Approve* to post on Facebook / Instagram\n\n` +
+    `AI Caption: *Hi GCR Graphix* ke baad event text bhejo.\n` +
     `Type *menu* for more options.`
   );
 }
@@ -158,7 +149,7 @@ function buildServicesMessage() {
     `• Event & campaign posters\n` +
     `• WhatsApp poster delivery\n` +
     `• Facebook / Instagram posting\n` +
-    `• AI captions (Hindi / English / leader shayari)\n` +
+    `• AI Hindi captions (shayari ya normal)\n` +
     `• Bulk poster generation for teams\n\n` +
     `For custom work, reply *4* (Support).\n` +
     `Type *menu* to go back.`
@@ -219,9 +210,7 @@ async function handleSocialOption(fromWhatsAppNumber) {
 }
 
 /**
- * Handle inbound WhatsApp chatbot messages (menu 1–6).
- * Caption flow is delegated to whatsappCaptionService.
- * Returns { handled: true } when a reply was sent.
+ * Menu + Hi GCR Graphix (login + caption mode).
  */
 async function handleWhatsAppChatbot({ fromWhatsAppNumber, bodyText }) {
   const mobileNumber = toTenDigitMobile(fromWhatsAppNumber);
@@ -229,10 +218,11 @@ async function handleWhatsAppChatbot({ fromWhatsAppNumber, bodyText }) {
     return { handled: false, reason: "invalid_mobile" };
   }
 
-  // Exact portal greeting always opens login / register (same as before chatbot).
+  // Hi GCR Graphix → login/register link, then caption mode.
   if (isGcrGraphixGreeting(bodyText)) {
     await handleGcrGraphixGreeting(fromWhatsAppNumber);
-    return { handled: true, type: "gcr_greeting" };
+    await startCaptionFlow(fromWhatsAppNumber);
+    return { handled: true, type: "gcr_greeting_caption" };
   }
 
   const choice = detectMenuChoice(bodyText);
@@ -282,10 +272,6 @@ async function handleWhatsAppChatbot({ fromWhatsAppNumber, bodyText }) {
       body: buildServicesMessage(),
     });
     return { handled: true, type: "services" };
-  }
-
-  if (choice === "caption") {
-    return startCaptionFlow(fromWhatsAppNumber);
   }
 
   return { handled: false };

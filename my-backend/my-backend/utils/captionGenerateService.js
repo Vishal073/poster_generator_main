@@ -1,6 +1,6 @@
 /**
- * OpenAI text-only caption generator (no image polish).
- * Returns Hindi, English, and leader/shayari style captions.
+ * OpenAI text-only caption generator.
+ * Returns one Hindi caption; AI picks shayari vs normal style.
  */
 
 const DEFAULT_MODEL = "gpt-4o-mini";
@@ -27,55 +27,38 @@ function getErrorMessage(error) {
 }
 
 function buildSystemPrompt() {
-  return `You write premium WhatsApp/Facebook captions for Indian public leaders (rajneta / social workers).
+  return `You write ONE WhatsApp/Facebook caption for Indian public leaders (rajneta / social workers).
 
-Return ONLY valid JSON with these exact keys:
+Return ONLY valid JSON:
 {
-  "hindi": "...",
-  "english": "...",
-  "shayari": "..."
+  "style": "shayari" | "normal",
+  "caption": "..."
 }
 
-Language rules:
-- hindi: shuddh Hindi (Devanagari only). Dignified, seva-bhav. 2 short lines max.
-- english: complete English only. Same dignity. 2 short sentences max.
-- shayari: pure Hindi poetic caption in LEADER style (not romantic, not filmy love shayari).
-- No Hinglish. No slang. No emojis. No hashtags unless user included them.
-- Each caption under 220 characters.
+Language: shuddh Hindi (Devanagari) only. Default Hindi. No English. No Hinglish. No emojis. No hashtags unless the user included them.
 
-Shayari quality (very important):
-- Sound like a respected neta posting after seva / blood camp / public event.
-- Prefer 2 poetic lines with a soft rhyme or parallel rhythm, then 1 short factual line (event name / place / seva).
-- Use strong seva imagery: जीवनदान, रक्तदान महादान, एक बूँद–नई आशा, सेवा ही धर्म, मानवता.
-- Avoid weak/generic filler like "बहुत खुशी हुई", "आज का दिन यादगार", "एक साथ मिलकर".
-- Avoid childish rhyme, over-drama, and fake deep lines.
-- Keep words simple, memorable, and shareable.
+Decide style yourself:
+- Use "shayari" for emotional / celebratory / seva moments: blood donation, birthday, anniversary, sports win, festival, tribute, big public event, khushi / gambhir seva.
+- Use "normal" for simple updates: meeting, visit, small notice, routine announcement, plain info.
 
-Good shayari examples (style guide only — invent fresh lines for the user note):
-- "एक बूँद खून, अनगिनत आशाएँ।\\nरक्तदान — मानवता की सबसे सरल पूजा।\\nजय जगदम्बे ब्लड कैंप में सेवा का सौभाग्य।"
-- "जो बाँटे जीवन, वही सच्चा दान।\\nब्लड कैंप में शामिल होकर प्रसन्नता हुई।"
-- "सेवा से बड़ा कोई धर्म नहीं।\\nआज रक्तदान शिविर में नमन उन वीरों को जिन्होंने जीवनदान दिया।"
+Shayari rules (when style=shayari):
+- Leader tone, not romantic/filmy love shayari.
+- 2 strong poetic lines + optional 1 short factual line (event/place).
+- Soft rhyme or parallel rhythm. Memorable and shareable.
+- Avoid weak filler: "बहुत खुशी हुई", "आज का दिन यादगार".
 
-Match the user's occasion exactly (blood donation, birthday, anniversary, inauguration, etc.).`;
-}
+Normal rules (when style=normal):
+- Clear, dignified 1–2 short Hindi sentences.
+- Factual, seva/public tone. No forced poetry.
 
-function normalizeCaptions(parsed) {
-  const hindi = String(parsed?.hindi || "").trim();
-  const english = String(parsed?.english || "").trim();
-  const shayari = String(parsed?.shayari || "").trim();
-
-  if (!hindi || !english || !shayari) {
-    throw new Error("Caption AI returned incomplete captions.");
-  }
-
-  return { hindi, english, shayari };
+Keep caption under 220 characters. Match the user's occasion exactly.`;
 }
 
 /**
- * @param {string} rawText - User's rough note about the post
- * @returns {Promise<{ hindi: string, english: string, shayari: string, model: string }>}
+ * @param {string} rawText
+ * @returns {Promise<{ caption: string, style: 'shayari'|'normal', model: string }>}
  */
-async function generateCaptions(rawText) {
+async function generateCaption(rawText) {
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured on the server.");
@@ -111,9 +94,9 @@ async function generateCaptions(rawText) {
           {
             role: "user",
             content:
-              `Write 3 captions for this leader's post note.\n` +
-              `Make the "shayari" field especially strong, poetic, and share-worthy.\n\n` +
-              `Post note:\n${input}`,
+              `Write one Hindi caption for this note.\n` +
+              `Choose shayari or normal yourself.\n\n` +
+              `Note:\n${input}`,
           },
         ],
       }),
@@ -140,11 +123,17 @@ async function generateCaptions(rawText) {
       throw new Error("Caption AI returned invalid JSON.");
     }
 
-    const captions = normalizeCaptions(parsed);
-    return {
-      ...captions,
-      model,
-    };
+    const caption = String(parsed?.caption || "").trim();
+    if (!caption) {
+      throw new Error("Caption AI returned an empty caption.");
+    }
+
+    const style =
+      String(parsed?.style || "").trim().toLowerCase() === "shayari"
+        ? "shayari"
+        : "normal";
+
+    return { caption, style, model };
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new Error("Caption generation timed out. Please try again.");
@@ -155,7 +144,20 @@ async function generateCaptions(rawText) {
   }
 }
 
+/** @deprecated use generateCaption */
+async function generateCaptions(rawText) {
+  const result = await generateCaption(rawText);
+  return {
+    hindi: result.caption,
+    english: result.caption,
+    shayari: result.caption,
+    style: result.style,
+    model: result.model,
+  };
+}
+
 module.exports = {
+  generateCaption,
   generateCaptions,
   getCaptionModel,
 };
