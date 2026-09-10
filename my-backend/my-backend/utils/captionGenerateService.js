@@ -46,14 +46,20 @@ RULES
 
 Style:
 - "shayari": birthday, blood donation, tribute, festival, sports win, family, seva, khushi — simple 2–3 lines (max 4). Light natural rhyme OK; not forced.
-- "normal": meeting / visit / notice — 1–2 simple positive Hindi sentences.
+- "normal": meeting / visit / notice / general social update — clear positive Hindi for a social media post. No fixed line count — write as many short sentences as needed to cover the user's facts cleanly (typically a short paragraph is fine). Not poetry.
 
 For shayari:
 - Mention the real moment (e.g. papa, birthday, cake, celebrate) in a natural way.
 - End with a short positive wish / blessing suited to the occasion.
 - Separate lines with \\n.
 
-Under 400 characters. Prefer short and clear over literary.`;
+For normal:
+- Include the user's facts (same or very similar).
+- Positive, share-ready social media tone.
+- No line-count limit; keep it readable, not a long essay.
+- Separate sentences/lines with \\n when helpful.
+
+Under 800 characters. Prefer clear and positive over literary.`;
 }
 
 /**
@@ -97,8 +103,9 @@ async function generateCaption(rawText) {
             role: "user",
             content:
               `Rough Hinglish note from WhatsApp.\n\n` +
-              `Write a SIMPLE positive Hindi caption (prefer light shayari 2–3 lines, max 4; or short normal Hindi).\n` +
-              `Must include my facts (same or very similar). Positive vibe. Not over-fancy.\n` +
+              `Write a SIMPLE positive Hindi caption.\n` +
+              `If shayari fits: 2–3 lines (max 4). If normal social post: no line limit — cover my facts clearly with positive vibe.\n` +
+              `Must include my facts (same or very similar). Not over-fancy.\n` +
               `End with a short good wish if it fits.\n\n` +
               `My line:\n${input}`,
           },
