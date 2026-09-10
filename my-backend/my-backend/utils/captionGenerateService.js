@@ -55,14 +55,14 @@ WHEN style = "shayari" (birthday, blood donation, tribute, festival, sports win,
 - Each pair should rhyme or echo naturally (line1~line2, and if 4 lines also line3~line4).
 - Simple warm Hindi people share on Facebook — clear feeling, not heavy/dictionary words.
 - All user facts inside the poetry (who, occasion, what happened).
-- Last couplet/line ends with a short positive wish or blessing.
+- Focus on strong, shareable lines. A blessing/wish at the end is OPTIONAL — only if it fits naturally. Do not force a dua/badai line.
 - No plain report sentence after the shayari.
 - Separate lines with \\n.
 
 Quality bar for shayari:
 - Should feel like a real WhatsApp/Facebook shayari post, not a robot summary in rhyme.
 - Avoid weak filler and forced endings.
-- Keep it positive and heartfelt.
+- Keep it positive and heartfelt. Lines quality > mandatory blessing.
 
 WHEN style = "normal" (meeting, visit, notice, detailed update, or non-emotional content):
 - Write ONLY normal social-media Hindi (sentences/paragraph).
@@ -115,7 +115,7 @@ async function generateCaption(rawText) {
             content:
               `Rewrite my content as ONE Hindi caption.\n` +
               `Pick either shayari OR normal — never mix both.\n` +
-              `- Shayari: exactly 2 OR 4 poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme.\n` +
+              `- Shayari: exactly 2 OR 4 strong poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme. Blessing/wish optional — do not force it; lines must be good.\n` +
               `- Normal: only normal social prose covering ALL my points. No shayari.\n` +
               `Improve wording; keep my facts.\n\n` +
               `My content:\n${input}`,
