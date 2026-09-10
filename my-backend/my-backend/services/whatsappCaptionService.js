@@ -31,15 +31,36 @@ const CAPTION_COLLAGE_FOLDER =
 
 const pendingCaptionSessions = new Map();
 const pendingCaptionApprovals = new Map();
+const photoBatchTimers = new Map();
+const sessionLocks = new Map();
 
 const CAPTION_SESSION_TTL_MS =
   Number(process.env.CAPTION_SESSION_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
 const CAPTION_APPROVE_TTL_MS =
   Number(process.env.CAPTION_APPROVE_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
+/** WhatsApp often delivers multi-select photos as separate webhooks — wait to batch. */
+const PHOTO_BATCH_WAIT_MS = Math.min(
+  Math.max(Number(process.env.CAPTION_PHOTO_BATCH_MS || 6500) || 6500, 2000),
+  20000,
+);
 const MAX_CAPTION_PHOTOS = Math.min(
   Number(process.env.CAPTION_MAX_PHOTOS || 5) || 5,
   10,
 );
+
+function runExclusive(fromWhatsAppNumber, fn) {
+  const key = sessionKey(fromWhatsAppNumber);
+  const prev = sessionLocks.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  sessionLocks.set(
+    key,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
 
 function normalizeChatText(value) {
   return String(value || "")
@@ -99,7 +120,76 @@ function setCaptionSession(fromWhatsAppNumber, updates) {
 }
 
 function clearCaptionSession(fromWhatsAppNumber) {
+  clearPhotoBatchTimer(fromWhatsAppNumber);
   pendingCaptionSessions.delete(sessionKey(fromWhatsAppNumber));
+}
+
+function clearPhotoBatchTimer(fromWhatsAppNumber) {
+  const key = sessionKey(fromWhatsAppNumber);
+  const timer = photoBatchTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    photoBatchTimers.delete(key);
+  }
+}
+
+function isPhotoBatchDoneCommand(text) {
+  const normalized = normalizeChatText(text);
+  return ["done", "ok", "ready", "bas", "ho gaya", "hogaya", "finish", "collage"].includes(
+    normalized,
+  );
+}
+
+/**
+ * Debounce collage/caption until WhatsApp finishes delivering separate photo messages.
+ */
+function schedulePhotoBatchFinalize(fromWhatsAppNumber, user, eligibility) {
+  const key = sessionKey(fromWhatsAppNumber);
+  clearPhotoBatchTimer(fromWhatsAppNumber);
+
+  const timer = setTimeout(() => {
+    photoBatchTimers.delete(key);
+    finalizePhotoBatch(fromWhatsAppNumber, user, eligibility).catch(async (error) => {
+      console.error(
+        "[caption] photo batch finalize failed:",
+        getErrorMessage(error),
+      );
+      try {
+        await sendWhatsAppText({
+          toMobile: fromWhatsAppNumber,
+          body: `Collage error: ${getErrorMessage(error)}\n\nPhir se photos bhejo.`,
+        });
+      } catch {
+        // ignore
+      }
+    });
+  }, PHOTO_BATCH_WAIT_MS);
+
+  photoBatchTimers.set(key, timer);
+}
+
+async function finalizePhotoBatch(fromWhatsAppNumber, user, eligibility) {
+  const session = getCaptionSession(fromWhatsAppNumber);
+  const photos = Array.isArray(session?.photos) ? session.photos : [];
+  if (photos.length === 0) {
+    return { handled: true, type: "photos_empty" };
+  }
+
+  clearPendingCaptionApproval(fromWhatsAppNumber);
+
+  const waitingText = String(session?.pendingText || "").trim();
+  if (waitingText) {
+    setCaptionSession(fromWhatsAppNumber, { photos, pendingText: "" });
+    return generateAndSendCaption(
+      fromWhatsAppNumber,
+      waitingText,
+      photos,
+      user,
+      eligibility,
+    );
+  }
+
+  return sendCollageForApproval(fromWhatsAppNumber, photos, user, eligibility);
 }
 
 function hasActiveCaptionSession(fromWhatsAppNumber) {
@@ -209,40 +299,42 @@ async function ensureCaptionEligibility(fromWhatsAppNumber) {
 }
 
 async function ingestWhatsAppPhotos(fromWhatsAppNumber, inboundMedia = []) {
-  const session = getCaptionSession(fromWhatsAppNumber) || { photos: [] };
-  const existing = Array.isArray(session.photos) ? [...session.photos] : [];
-  const incoming = Array.isArray(inboundMedia) ? inboundMedia : [];
-  if (incoming.length === 0) {
-    return existing;
-  }
-
-  const room = Math.max(0, MAX_CAPTION_PHOTOS - existing.length);
-  if (room <= 0) {
-    await sendWhatsAppText({
-      toMobile: fromWhatsAppNumber,
-      body: `Maximum ${MAX_CAPTION_PHOTOS} photos. Ab caption text bhejo ya *Approve*.`,
-    });
-    return existing;
-  }
-
-  const toSave = incoming.slice(0, room);
-  for (let i = 0; i < toSave.length; i += 1) {
-    const item = toSave[i];
-    const mediaUrl = typeof item === "string" ? item : item?.url;
-    if (!mediaUrl) continue;
-
-    const downloaded = await downloadTwilioMedia(mediaUrl);
-    const ext = extensionForContentType(downloaded.contentType || item?.contentType);
-    const fileName = `caption-${toTenDigitMobile(fromWhatsAppNumber)}-${Date.now()}-${i}.${ext}`;
-    const uploaded = await uploadPosterToCloudinary(downloaded.buffer, fileName);
-    const photoUrl = uploaded?.imageUrl || uploaded?.url;
-    if (photoUrl) {
-      existing.push(photoUrl);
+  return runExclusive(fromWhatsAppNumber, async () => {
+    const session = getCaptionSession(fromWhatsAppNumber) || { photos: [] };
+    const existing = Array.isArray(session.photos) ? [...session.photos] : [];
+    const incoming = Array.isArray(inboundMedia) ? inboundMedia : [];
+    if (incoming.length === 0) {
+      return existing;
     }
-  }
 
-  setCaptionSession(fromWhatsAppNumber, { photos: existing, collageUrl: "" });
-  return existing;
+    const room = Math.max(0, MAX_CAPTION_PHOTOS - existing.length);
+    if (room <= 0) {
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body: `Maximum ${MAX_CAPTION_PHOTOS} photos. Ab caption text bhejo ya *done*.`,
+      });
+      return existing;
+    }
+
+    const toSave = incoming.slice(0, room);
+    for (let i = 0; i < toSave.length; i += 1) {
+      const item = toSave[i];
+      const mediaUrl = typeof item === "string" ? item : item?.url;
+      if (!mediaUrl) continue;
+
+      const downloaded = await downloadTwilioMedia(mediaUrl);
+      const ext = extensionForContentType(downloaded.contentType || item?.contentType);
+      const fileName = `caption-${toTenDigitMobile(fromWhatsAppNumber)}-${Date.now()}-${i}.${ext}`;
+      const uploaded = await uploadPosterToCloudinary(downloaded.buffer, fileName);
+      const photoUrl = uploaded?.imageUrl || uploaded?.url;
+      if (photoUrl) {
+        existing.push(photoUrl);
+      }
+    }
+
+    setCaptionSession(fromWhatsAppNumber, { photos: existing, collageUrl: "" });
+    return existing;
+  });
 }
 
 /**
@@ -409,8 +501,9 @@ async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
     body:
-      `Photos (1–${MAX_CAPTION_PHOTOS}) bhejo + event text.\n` +
-      `AI caption + collage banega, phir *Approve* se Facebook pe post.`,
+      `Photos (1–${MAX_CAPTION_PHOTOS}) ek saath ya ek-ek karke bhejo.\n` +
+      `Sab aane ke baad ek collage banega (~${Math.round(PHOTO_BATCH_WAIT_MS / 1000)}s), ya *done* likho.\n` +
+      `Caption text bhejo to AI caption + collage.`,
   });
   return { handled: true, type: "caption_prompt" };
 }
@@ -430,6 +523,7 @@ async function approvePendingCaption({ fromWhatsAppNumber }) {
   });
 
   clearPendingCaptionApproval(fromWhatsAppNumber);
+  clearCaptionSession(fromWhatsAppNumber);
 
   const pageName = result?.facebook?.pageName || "your Facebook Page";
   let body = hasCaption
@@ -484,9 +578,14 @@ async function handleWhatsAppCaption({
     return { handled: true, type: "caption_cancelled" };
   }
 
-  // Menu/commands without media → chatbot
+  // Menu/commands without media → chatbot (except done/bas while collecting photos)
   if (text && isReservedChatCommand(text) && !hasMedia) {
-    return { handled: false, reason: "reserved" };
+    const sessionPeek = getCaptionSession(fromWhatsAppNumber);
+    const collecting =
+      Array.isArray(sessionPeek?.photos) && sessionPeek.photos.length > 0;
+    if (!(collecting && isPhotoBatchDoneCommand(text))) {
+      return { handled: false, reason: "reserved" };
+    }
   }
 
   // Case 1 & 2: register / Facebook first — do not generate caption.
@@ -499,24 +598,8 @@ async function handleWhatsAppCaption({
     const photos = await ingestWhatsAppPhotos(fromWhatsAppNumber, mediaList);
     const photoCount = photos.length;
 
-    // Photos only — collage + Approve; if text was waiting, caption + collage.
+    // Photos arriving (often 1-per-webhook) — batch, then one collage.
     if (hasMedia && !text) {
-      const session = getCaptionSession(fromWhatsAppNumber);
-      const waitingText = String(session?.pendingText || "").trim();
-      if (waitingText && photos.length > 0) {
-        setCaptionSession(fromWhatsAppNumber, {
-          photos,
-          pendingText: "",
-        });
-        return await generateAndSendCaption(
-          fromWhatsAppNumber,
-          waitingText,
-          photos,
-          gate.user,
-          gate.eligibility,
-        );
-      }
-
       if (photos.length === 0) {
         await sendWhatsAppText({
           toMobile: fromWhatsAppNumber,
@@ -525,9 +608,28 @@ async function handleWhatsAppCaption({
         return { handled: true, type: "photos_failed" };
       }
 
-      return await sendCollageForApproval(
+      clearPendingCaptionApproval(fromWhatsAppNumber);
+      schedulePhotoBatchFinalize(fromWhatsAppNumber, gate.user, gate.eligibility);
+
+      const waitSec = Math.round(PHOTO_BATCH_WAIT_MS / 1000);
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body:
+          `${photos.length} photo save.\n` +
+          (photos.length < MAX_CAPTION_PHOTOS
+            ? `Aur photos bhej sakte ho (max ${MAX_CAPTION_PHOTOS}).\n`
+            : "") +
+          `${waitSec} sec wait → ek collage banega.\n` +
+          `Jaldi chahiye to *done* ya caption text bhejo.`,
+      });
+      return { handled: true, type: "photos_collecting", photoCount: photos.length };
+    }
+
+    // Explicit done while photos are collected → collage now.
+    if (text && !hasMedia && isPhotoBatchDoneCommand(text) && photoCount > 0) {
+      clearPhotoBatchTimer(fromWhatsAppNumber);
+      return await finalizePhotoBatch(
         fromWhatsAppNumber,
-        photos,
         gate.user,
         gate.eligibility,
       );
@@ -548,7 +650,7 @@ async function handleWhatsAppCaption({
       return { handled: true, type: "need_photos" };
     }
 
-    // Text + photos (or text after photos already saved) → generate.
+    // Text + photos (or text after photos already saved) → caption + collage.
     const session = getCaptionSession(fromWhatsAppNumber);
     const captionText = text || session?.pendingText || "";
     if (!captionText) {
@@ -559,6 +661,8 @@ async function handleWhatsAppCaption({
       return { handled: true, type: "need_text" };
     }
 
+    clearPhotoBatchTimer(fromWhatsAppNumber);
+    clearPendingCaptionApproval(fromWhatsAppNumber);
     return await generateAndSendCaption(
       fromWhatsAppNumber,
       captionText,
