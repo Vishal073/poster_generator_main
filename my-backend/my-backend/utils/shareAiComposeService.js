@@ -45,39 +45,44 @@ async function buildReferenceCollage(buffers) {
     throw new Error("At least one reference image is required.");
   }
 
+  const OUTPUT = 1080;
+  const gap = 12;
+
   if (buffers.length === 1) {
     return sharp(buffers[0])
-      .resize(1080, 1080, { fit: "cover" })
+      .resize(OUTPUT, OUTPUT, { fit: "cover" })
       .jpeg({ quality: 92 })
       .toBuffer();
   }
 
-  const gap = 12;
-  const tileSize = 520;
   const cols = buffers.length <= 2 ? buffers.length : 2;
   const rows = Math.ceil(buffers.length / cols);
-  const width = cols * tileSize + (cols + 1) * gap;
-  const height = rows * tileSize + (rows + 1) * gap;
+  const tileW = Math.floor((OUTPUT - (cols + 1) * gap) / cols);
+  const tileH = Math.floor((OUTPUT - (rows + 1) * gap) / rows);
+  const gridW = cols * tileW + (cols + 1) * gap;
+  const gridH = rows * tileH + (rows + 1) * gap;
+  const offsetX = Math.floor((OUTPUT - gridW) / 2);
+  const offsetY = Math.floor((OUTPUT - gridH) / 2);
 
   const composites = await Promise.all(
     buffers.map(async (buffer, index) => {
       const resized = await sharp(buffer)
-        .resize(tileSize, tileSize, { fit: "cover" })
+        .resize(tileW, tileH, { fit: "cover" })
         .toBuffer();
       const col = index % cols;
       const row = Math.floor(index / cols);
       return {
         input: resized,
-        left: gap + col * (tileSize + gap),
-        top: gap + row * (tileSize + gap),
+        left: offsetX + gap + col * (tileW + gap),
+        top: offsetY + gap + row * (tileH + gap),
       };
     })
   );
 
   return sharp({
     create: {
-      width,
-      height,
+      width: OUTPUT,
+      height: OUTPUT,
       channels: 3,
       background: { r: 248, g: 248, b: 248 },
     },

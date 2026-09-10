@@ -256,10 +256,6 @@ async function buildAndUploadCaptionCollage(imageUrls = []) {
     throw new Error("At least one photo is required for collage.");
   }
 
-  if (urls.length === 1) {
-    return { collageUrl: urls[0], photoCount: 1 };
-  }
-
   const buffers = [];
   for (const url of urls.slice(0, MAX_CAPTION_PHOTOS)) {
     buffers.push(await downloadImageBuffer(url));
