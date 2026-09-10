@@ -308,19 +308,23 @@ router.post("/webhook", async (req, res) => {
     .trim()
     .toLowerCase();
 
+  // Twilio requires a fast webhook ACK. Heavy work must run after 204
+  // or Twilio marks the webhook as failed (error 11200).
+  res.status(204).end();
+
+  if (!from) {
+    return;
+  }
+
+  console.log("Incoming WhatsApp reply:", {
+    from: normalizedFrom,
+    reply,
+    body: req.body.Body,
+    buttonText: req.body.ButtonText,
+    buttonPayload: req.body.ButtonPayload,
+  });
+
   try {
-    if (!from) {
-      return res.status(204).end();
-    }
-
-    console.log("Incoming WhatsApp reply:", {
-      from: normalizedFrom,
-      reply,
-      body: req.body.Body,
-      buttonText: req.body.ButtonText,
-      buttonPayload: req.body.ButtonPayload,
-    });
-
     await recordWhatsAppInbound(normalizedFrom);
 
     if (reply === "download") {
@@ -328,101 +332,92 @@ router.post("/webhook", async (req, res) => {
         name: "Rajesh Kunwar",
         mobile: getMobileFromWhatsAppNumber(normalizedFrom),
       };
-      sendReadyPoster({
+      await sendReadyPoster({
         to: normalizedFrom,
         name: pendingRequest.name,
         mobile: pendingRequest.mobile,
         posterPayload: pendingRequest.posterPayload,
-      }).catch((error) => {
-        console.error("Background poster WhatsApp send failed:", getErrorMessage(error));
       });
-      return res.status(204).end();
+      return;
     }
 
     if (reply === "approve" || reply === approvePayload) {
       const pendingRequest = pendingPosterRequests.get(normalizedFrom);
       if (!pendingRequest?.canApproveSocial || !pendingRequest?.downloadedAt) {
-        return res.status(204).end();
+        return;
       }
 
-      approveReadyPoster({
-        to: normalizedFrom,
-        mobile: pendingRequest?.mobile || getMobileFromWhatsAppNumber(normalizedFrom),
-      })
-        .then((result) =>
-          sendApproveConfirmation({
-            toMobile: normalizedFrom,
-            result,
-          }),
-        )
-        .catch((error) => {
-          console.error("WhatsApp approve poster failed:", getErrorMessage(error));
-          return sendWhatsAppText({
-            toMobile: normalizedFrom,
-            body: `Could not post your poster: ${getErrorMessage(error)}`,
-          }).catch((sendError) => {
-            console.error("WhatsApp approve error reply failed:", getErrorMessage(sendError));
-          });
+      try {
+        const result = await approveReadyPoster({
+          to: normalizedFrom,
+          mobile: pendingRequest?.mobile || getMobileFromWhatsAppNumber(normalizedFrom),
         });
-      return res.status(204).end();
+        await sendApproveConfirmation({
+          toMobile: normalizedFrom,
+          result,
+        });
+      } catch (error) {
+        console.error("WhatsApp approve poster failed:", getErrorMessage(error));
+        await sendWhatsAppText({
+          toMobile: normalizedFrom,
+          body: `Could not post your poster: ${getErrorMessage(error)}`,
+        }).catch((sendError) => {
+          console.error("WhatsApp approve error reply failed:", getErrorMessage(sendError));
+        });
+      }
+      return;
     }
 
     if (["skip", skipPayload].includes(reply)) {
       pendingPosterRequests.delete(normalizedFrom);
-      return res.status(204).end();
+      return;
     }
 
     const bodyText = String(
       req.body.Body || req.body.ButtonText || req.body.ButtonPayload || "",
     ).trim();
 
-    try {
-      const captionResult = await handleWhatsAppCaption({
+    const captionResult = await handleWhatsAppCaption({
+      fromWhatsAppNumber: normalizedFrom,
+      bodyText,
+    });
+
+    let result = captionResult;
+    if (!captionResult?.handled) {
+      result = await handleWhatsAppChatbot({
         fromWhatsAppNumber: normalizedFrom,
         bodyText,
       });
-
-      let result = captionResult;
-      if (!captionResult?.handled) {
-        result = await handleWhatsAppChatbot({
-          fromWhatsAppNumber: normalizedFrom,
-          bodyText,
-        });
-      }
-
-      if (!result?.handled) {
-        if (isGcrGraphixGreeting(bodyText)) {
-          await handleGcrGraphixGreeting(normalizedFrom);
-        } else if (bodyText) {
-          await sendWhatsAppText({
-            toMobile: normalizedFrom,
-            body:
-              `Thanks for messaging GCR Graphix.\n\n` +
-              `Type *menu* to see options, or *Hi GCR Graphix* to Register / Login.`,
-          });
-        }
-      }
-    } catch (error) {
-      console.error("WhatsApp caption/chatbot failed:", getErrorMessage(error), getErrorDetails(error));
-      try {
-        await sendWhatsAppText({
-          toMobile: normalizedFrom,
-          body: `Sorry, something went wrong: ${getErrorMessage(error)}`,
-        });
-      } catch (sendError) {
-        console.error(
-          "WhatsApp error reply failed:",
-          getErrorMessage(sendError),
-          getErrorDetails(sendError),
-        );
-      }
     }
 
-    return res.status(204).end();
+    if (!result?.handled) {
+      if (isGcrGraphixGreeting(bodyText)) {
+        await handleGcrGraphixGreeting(normalizedFrom);
+      } else if (bodyText) {
+        await sendWhatsAppText({
+          toMobile: normalizedFrom,
+          body:
+            `Thanks for messaging GCR Graphix.\n\n` +
+            `Type *menu* to see options, or *Hi GCR Graphix* to Register / Login.`,
+        });
+      }
+    }
   } catch (error) {
-    console.error("WhatsApp webhook failed:", getErrorMessage(error));
-    return res.sendStatus(500);
+    console.error("WhatsApp webhook failed:", getErrorMessage(error), getErrorDetails(error));
+    try {
+      await sendWhatsAppText({
+        toMobile: normalizedFrom,
+        body: `Sorry, something went wrong. Please try again.`,
+      });
+    } catch (sendError) {
+      console.error("WhatsApp error reply failed:", getErrorMessage(sendError));
+    }
   }
+});
+
+// Twilio may probe the webhook with GET during setup.
+router.get("/webhook", (req, res) => {
+  res.status(200).send("GCR Graphix WhatsApp webhook OK");
 });
 
 module.exports = {
