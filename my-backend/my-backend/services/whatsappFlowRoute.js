@@ -377,29 +377,20 @@ router.post("/webhook", async (req, res) => {
       req.body.Body || req.body.ButtonText || req.body.ButtonPayload || "",
     ).trim();
 
-    const captionResult = await handleWhatsAppCaption({
+    // Menu / Hi GCR Graphix first, then any other text → AI caption.
+    const chatResult = await handleWhatsAppChatbot({
       fromWhatsAppNumber: normalizedFrom,
       bodyText,
     });
 
-    let result = captionResult;
-    if (!captionResult?.handled) {
-      result = await handleWhatsAppChatbot({
+    if (!chatResult?.handled) {
+      const captionResult = await handleWhatsAppCaption({
         fromWhatsAppNumber: normalizedFrom,
         bodyText,
       });
-    }
 
-    if (!result?.handled) {
-      if (isGcrGraphixGreeting(bodyText)) {
+      if (!captionResult?.handled && isGcrGraphixGreeting(bodyText)) {
         await handleGcrGraphixGreeting(normalizedFrom);
-      } else if (bodyText) {
-        await sendWhatsAppText({
-          toMobile: normalizedFrom,
-          body:
-            `Thanks for messaging GCR Graphix.\n\n` +
-            `Type *Hi GCR Graphix* for login + AI caption, or *menu* for options.`,
-        });
       }
     }
   } catch (error) {

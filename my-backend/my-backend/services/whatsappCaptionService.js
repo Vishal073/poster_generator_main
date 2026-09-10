@@ -2,7 +2,7 @@ const { sendWhatsAppText } = require("./whatsappService");
 const { generateCaption } = require("../utils/captionGenerateService");
 const { isGcrGraphixGreeting } = require("../utils/portalAuth");
 
-/** Active after "Hi GCR Graphix" — next free-text messages become captions. */
+/** Optional session after greeting; free text also works without it. */
 const pendingCaptionSessions = new Map();
 
 const CAPTION_SESSION_TTL_MS =
@@ -64,21 +64,52 @@ function hasActiveCaptionSession(fromWhatsAppNumber) {
   return Boolean(getCaptionSession(fromWhatsAppNumber));
 }
 
-function buildCaptionPromptMessage() {
-  return (
-    `*AI Caption ready*\n\n` +
-    `Ab apne post / event ka short text bhejo.\n` +
-    `Main seedha *Hindi caption* banaunga.\n` +
-    `(Blood donation, birthday, sports, khushi — shayari; simple update — normal text. AI decide karega.)\n\n` +
-    `Example:\n` +
-    `जय जगदम्बे ब्लड कैंप में गया, 50 लोगों ने रक्तदान किया\n\n` +
-    `Band karne ke liye *cancel* likho.`
-  );
+/** Short commands that must not become captions (menu / control). */
+function isReservedChatCommand(text) {
+  const normalized = normalizeChatText(text);
+  if (!normalized) {
+    return true;
+  }
+
+  if (isGcrGraphixGreeting(text)) {
+    return true;
+  }
+
+  const reserved = new Set([
+    "cancel",
+    "stop",
+    "exit",
+    "menu",
+    "hi",
+    "hello",
+    "hey",
+    "hii",
+    "hiii",
+    "namaste",
+    "namaskar",
+    "help",
+    "start",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "register",
+    "login",
+    "account",
+    "facebook",
+    "instagram",
+    "fb",
+    "ig",
+    "support",
+    "download",
+    "approve",
+    "skip",
+  ]);
+
+  return reserved.has(normalized);
 }
 
-/**
- * Start caption mode after Hi GCR Graphix (no menu / no 1-2-3).
- */
 async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
   setCaptionSession(fromWhatsAppNumber, {
     status: "awaiting_text",
@@ -90,7 +121,9 @@ async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
 
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
-    body: buildCaptionPromptMessage(),
+    body:
+      `Event / post ka text bhejo — main Hindi caption banaunga.\n` +
+      `Band: *cancel*`,
   });
   return { handled: true, type: "caption_prompt" };
 }
@@ -102,7 +135,6 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText) {
   });
 
   const result = await generateCaption(rawText);
-  // Keep session open so user can send another note anytime.
   setCaptionSession(fromWhatsAppNumber, {
     status: "awaiting_text",
     lastStyle: result.style,
@@ -111,79 +143,60 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText) {
   const styleLabel = result.style === "shayari" ? "Shayari" : "Normal";
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
-    body:
-      `*Caption (${styleLabel})*\n\n` +
-      `${result.caption}\n\n` +
-      `Aur text bhejo naya caption ke liye, ya *cancel*.`,
+    body: `*Caption (${styleLabel})*\n\n${result.caption}`,
   });
 
   return { handled: true, type: "caption_ready", style: result.style };
 }
 
 /**
- * Active caption session after greeting.
+ * Free-text → AI caption (no Hi / menu required).
+ * Reserved commands and greetings are left for the chatbot.
  */
-async function handleCaptionSession({ fromWhatsAppNumber, bodyText }) {
-  const session = getCaptionSession(fromWhatsAppNumber);
-  if (!session) {
+async function handleWhatsAppCaption({ fromWhatsAppNumber, bodyText }) {
+  const text = String(bodyText || "").trim();
+  if (!text) {
     return { handled: false };
   }
 
-  // New greeting should be handled by chatbot (re-login + refresh session).
-  if (isGcrGraphixGreeting(bodyText)) {
-    return { handled: false, reason: "exit_to_greeting" };
+  if (isGcrGraphixGreeting(text)) {
+    return { handled: false, reason: "greeting" };
   }
 
-  const normalized = normalizeChatText(bodyText);
-  if (!normalized) {
-    return { handled: true, type: "caption_empty" };
-  }
+  const normalized = normalizeChatText(text);
 
   if (["cancel", "stop", "exit"].includes(normalized)) {
-    clearCaptionSession(fromWhatsAppNumber);
-    await sendWhatsAppText({
-      toMobile: fromWhatsAppNumber,
-      body: "Caption band. Dubara shuru: *Hi GCR Graphix*",
-    });
-    return { handled: true, type: "caption_cancelled" };
+    if (hasActiveCaptionSession(fromWhatsAppNumber)) {
+      clearCaptionSession(fromWhatsAppNumber);
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body: "Caption mode band.",
+      });
+      return { handled: true, type: "caption_cancelled" };
+    }
+    return { handled: false };
   }
 
-  // Plain hi/menu → leave caption mode for chatbot menu.
-  if (
-    ["menu", "hi", "hello", "hey", "namaste", "help"].includes(normalized)
-  ) {
-    clearCaptionSession(fromWhatsAppNumber);
-    return { handled: false, reason: "exit_to_menu" };
+  if (isReservedChatCommand(text)) {
+    return { handled: false, reason: "reserved" };
   }
 
   try {
-    return await generateAndSendCaption(fromWhatsAppNumber, bodyText);
+    return await generateAndSendCaption(fromWhatsAppNumber, text);
   } catch (error) {
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
-      body:
-        `Caption nahi bani: ${getErrorMessage(error)}\n\n` +
-        `Phir se text bhejo, ya *cancel*.`,
+      body: `Caption nahi bani: ${getErrorMessage(error)}\n\nPhir se text bhejo.`,
     });
     return { handled: true, type: "caption_error" };
   }
 }
 
-/**
- * Caption service entry: only active sessions (started by Hi GCR Graphix).
- */
-async function handleWhatsAppCaption({ fromWhatsAppNumber, bodyText }) {
-  return handleCaptionSession({
-    fromWhatsAppNumber,
-    bodyText,
-  });
-}
-
 module.exports = {
   handleWhatsAppCaption,
   startCaptionFlow,
-  handleCaptionSession,
   hasActiveCaptionSession,
   clearCaptionSession,
   pendingCaptionSessions,
+  isReservedChatCommand,
 };
