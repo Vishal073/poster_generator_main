@@ -52,7 +52,7 @@ HASHTAGS (required when relevant)
 - After the caption body, add a blank line, then 2–5 relevant hashtags from the user's facts.
 - Include party tags when mentioned: BJP / भाजपा → #BJP ; Congress → #Congress ; AAP → #AAP ; etc.
 - Include district/city/place tags: Fatehabad / फतेहाबाद → #Fatehabad ; combine when useful → #BJPFatehabad
-- Include event tags when clear: meeting → #Meeting ; blood donation → #BloodDonation / #रक्तदान ; birthday → #Birthday
+- Optional occasion tags only when strong and natural (e.g. blood donation → #BloodDonation). Do NOT add generic tags like #Meeting, #Update, #Event.
 - Hashtags in Latin script (preferred for reach), no spaces inside a tag. Correct spellings (Fatehabad not Fatehabd).
 - Do NOT invent unrelated trending tags. Only from user's content.
 - Example ending:
@@ -63,7 +63,7 @@ Input: "aaj mene jila fatehabad me bjp ki meeting me bhag liya"
 Correct caption:
 "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।
 
-#BJP #Fatehabad #BJPFatehabad #Meeting"
+#BJP #Fatehabad #BJPFatehabad"
 
 WHEN style = "shayari" (birthday, blood donation, tribute, festival, sports win, family, seva, khushi):
 - Write ONLY shayari as COMPLETE COUPLETS: exactly 2 lines OR exactly 4 lines.
@@ -141,7 +141,7 @@ async function generateCaption(rawText) {
               `Pick either shayari OR normal — never mix both.\n` +
               `- Shayari: exactly 2 OR 4 strong poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme. Blessing optional — do not force it.\n` +
               `- Normal: formal simple Hindi social post. For a meeting note like Fatehabad BJP, aim like: "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।" No shayari.\n` +
-              `Then add a blank line and relevant hashtags from my facts, e.g. #BJP #Fatehabad #BJPFatehabad #Meeting.\n` +
+              `Then add a blank line and relevant hashtags from my facts, e.g. #BJP #Fatehabad #BJPFatehabad. Do NOT use #Meeting.\n` +
               `Improve wording; keep my facts. Do not invent extra slogans, events, or unrelated tags.\n\n` +
               `My content:\n${input}`,
           },
