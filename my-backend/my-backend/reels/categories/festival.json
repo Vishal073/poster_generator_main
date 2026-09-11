@@ -2,8 +2,8 @@
   "id": "festival",
   "name": "Festival Reel",
   "description": "Festive photo slideshow with one fixed festival track for all festivals.",
-  "animationPool": ["ken_burns", "zoom_in", "zoom_out", "pan_left", "pan_right"],
-  "transitionPool": ["fade", "cross_dissolve"],
+  "animationPool": ["static"],
+  "transitionPool": ["fade"],
   "musicPool": ["festival"],
   "voicePool": [],
   "rules": {

@@ -89,6 +89,7 @@ async function generateReel({
   posterUrl,
   posterFile,
   musicOverride,
+  lowMemory = false,
 }) {
   await ensureReelDirectories();
   await assertFfmpegAvailable();
@@ -146,14 +147,18 @@ async function generateReel({
     ...templateForRender,
     segments: templateForRender.segments.map((segment, index) => ({
       ...segment,
-      animation:
-        segment.sceneRole === "poster"
+      animation: lowMemory
+        ? "static"
+        : segment.sceneRole === "poster"
           ? "static"
           : renderPlan.animations[index] || segment.animation,
-      transition: renderPlan.transitions[index] || null,
+      transition: lowMemory
+        ? "fade"
+        : renderPlan.transitions[index] || null,
     })),
   };
   renderPlan.posterIncluded = hasPoster;
+  renderPlan.lowMemory = Boolean(lowMemory);
 
   const jobId = createJobId();
   const jobDir = await createJobWorkspace(jobId);
@@ -166,6 +171,21 @@ async function generateReel({
       posterUrl: hasPoster ? posterUrl : undefined,
       posterFile: hasPoster ? posterFile : undefined,
     });
+
+    if (lowMemory) {
+      const sharp = require("sharp");
+      const targetW = preparedTemplate.width || 540;
+      const targetH = preparedTemplate.height || 960;
+      for (let index = 0; index < imagePaths.length; index += 1) {
+        const litePath = path.join(jobDir, `lite-${index}.jpg`);
+        await sharp(imagePaths[index])
+          .rotate()
+          .resize(targetW, targetH, { fit: "cover" })
+          .jpeg({ quality: 78 })
+          .toFile(litePath);
+        imagePaths[index] = litePath;
+      }
+    }
 
     const segmentCount = preparedTemplate.segments.length;
     const preparedImages = padImageSources(imagePaths, segmentCount);

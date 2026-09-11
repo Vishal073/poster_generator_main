@@ -1,5 +1,6 @@
 /**
  * Occasion reels: birthday / party / festival only, with fixed music each.
+ * Tuned for small hosts (e.g. Render 512MB): lite template, no zoompan, one-at-a-time.
  */
 
 const path = require("path");
@@ -12,6 +13,10 @@ const {
 } = require("../utils/occasionDetectService");
 
 const LOCAL_EXTS = [".mp3", ".m4a", ".wav", ".aac"];
+const MAX_OCCASION_PHOTOS = Math.min(
+  Number(process.env.OCCASION_REEL_MAX_PHOTOS || 3) || 3,
+  5,
+);
 
 /** Royalty-free instrumental placeholders until custom tracks are uploaded. */
 const DEFAULT_MUSIC_URLS = {
@@ -25,6 +30,17 @@ const DEFAULT_MUSIC_URLS = {
     process.env.REEL_MUSIC_FESTIVAL_URL ||
     "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3",
 };
+
+let reelQueue = Promise.resolve();
+
+function runOccasionReelExclusive(fn) {
+  const run = reelQueue.then(fn, fn);
+  reelQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 function localMusicExists(basename) {
   const id = String(basename || "").trim();
@@ -72,23 +88,35 @@ async function generateOccasionReel({ occasion, imageUrls = [] }) {
     throw new Error("At least one photo is required for an occasion reel.");
   }
 
-  const musicOverride = resolveOccasionMusicRef(key);
-  const result = await generateReel({
-    templateId: "slider-01",
-    categoryId: key,
-    imageUrls: urls.slice(0, 5),
-    musicOverride,
-    enableVoice: false,
-  });
+  return runOccasionReelExclusive(async () => {
+    // Soft GC hint before a memory-heavy encode on tiny instances.
+    if (typeof global.gc === "function") {
+      try {
+        global.gc();
+      } catch {
+        // ignore
+      }
+    }
 
-  return {
-    videoUrl: result.video,
-    occasion: key,
-    music: musicOverride,
-    duration: result.duration,
-    jobId: result.jobId,
-    publicId: result.publicId,
-  };
+    const musicOverride = resolveOccasionMusicRef(key);
+    const result = await generateReel({
+      templateId: "occasion-lite",
+      categoryId: key,
+      imageUrls: urls.slice(0, MAX_OCCASION_PHOTOS),
+      musicOverride,
+      enableVoice: false,
+      lowMemory: true,
+    });
+
+    return {
+      videoUrl: result.video,
+      occasion: key,
+      music: musicOverride,
+      duration: result.duration,
+      jobId: result.jobId,
+      publicId: result.publicId,
+    };
+  });
 }
 
 module.exports = {
@@ -97,4 +125,5 @@ module.exports = {
   resolveOccasionMusicRef,
   generateOccasionReel,
   DEFAULT_MUSIC_URLS,
+  MAX_OCCASION_PHOTOS,
 };

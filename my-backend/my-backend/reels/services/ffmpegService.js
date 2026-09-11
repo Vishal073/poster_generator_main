@@ -61,7 +61,8 @@ function buildZoomPanFilter(animation, frames, width, height, fps) {
     case "crossfade":
     case "static":
     default:
-      return `${scaleCrop},zoompan=z='1':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}${common}`;
+      // Avoid zoompan — huge RAM on small instances (e.g. Render 512MB).
+      return `${scaleCrop},fps=${fps},format=yuv420p`;
   }
 }
 
@@ -133,13 +134,16 @@ function buildFilterComplex(template, imageCount) {
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(FFMPEG_PATH, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"],
     });
 
     let stderr = "";
 
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      // Cap stderr so long encodes do not blow RAM on small instances.
+      if (stderr.length < 32000) {
+        stderr += chunk.toString();
+      }
     });
 
     child.on("error", (error) => {
@@ -335,6 +339,14 @@ async function renderReelVideo({ template, imagePaths, outputPath }) {
     "[outv]",
     "-c:v",
     "libx264",
+    "-preset",
+    "ultrafast",
+    "-crf",
+    "28",
+    "-threads",
+    "1",
+    "-filter_threads",
+    "1",
     "-pix_fmt",
     "yuv420p",
     "-movflags",

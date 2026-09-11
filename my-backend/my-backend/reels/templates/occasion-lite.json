@@ -1,0 +1,36 @@
+{
+  "id": "occasion-lite",
+  "name": "Low-memory occasion slideshow",
+  "duration": 8,
+  "aspectRatio": "9:16",
+  "width": 540,
+  "height": 960,
+  "fps": 15,
+  "transitionDuration": 0.35,
+  "supportsMusic": true,
+  "supportsVoice": false,
+  "animations": ["static"],
+  "segments": [
+    {
+      "index": 0,
+      "duration": 2.8,
+      "sceneRole": "hook",
+      "animation": "static",
+      "transition": "fade"
+    },
+    {
+      "index": 1,
+      "duration": 2.8,
+      "sceneRole": "product",
+      "animation": "static",
+      "transition": "fade"
+    },
+    {
+      "index": 2,
+      "duration": 2.4,
+      "sceneRole": "cta",
+      "animation": "static",
+      "transition": "fade"
+    }
+  ]
+}
