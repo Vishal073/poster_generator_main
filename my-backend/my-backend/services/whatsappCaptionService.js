@@ -420,7 +420,6 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
 }) {
   const video = String(videoUrl || "").trim();
   const captionText = String(caption || "").trim();
-  const title = `${occasion || "Occasion"} reel ready`;
 
   setPendingCaptionApproval(fromWhatsAppNumber, {
     caption: captionText,
@@ -446,7 +445,6 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
 
   const card = await sendWhatsAppReelReviewCard({
     toMobile: fromWhatsAppNumber,
-    title,
     caption: captionText,
     videoUrl: video,
   });

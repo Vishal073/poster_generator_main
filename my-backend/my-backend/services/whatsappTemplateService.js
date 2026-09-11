@@ -546,7 +546,6 @@ async function sendWhatsAppApprovePostTemplate({ toMobile, name }) {
  */
 async function sendWhatsAppReelReviewCard({
   toMobile,
-  title,
   caption,
   videoUrl,
 }) {
