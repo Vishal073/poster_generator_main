@@ -563,11 +563,9 @@ async function sendWhatsAppReelReviewCard({
     toMobile,
     contentSid,
     contentVariables: {
-      // Title required by Twilio card, but unused in UX — keep tiny.
-      "1": "Reel",
-      // Full caption in body (newlines flattened for Twilio).
-      "2": truncateForTemplate(caption || "-", 1024),
-      "3": video,
+      // whatsapp/card (no title): {{1}}=caption, {{2}}=video
+      "1": truncateForTemplate(caption || "-", 1024),
+      "2": video,
     },
   });
 }

@@ -1,6 +1,6 @@
 /**
- * Creates a Twilio twilio/card content template for occasion reels:
- * caption + video + Approve + Change Caption.
+ * Creates a WhatsApp card content template for occasion reels:
+ * caption body + video + Approve + Change Caption (no title/header).
  *
  * Run:
  *   node my-backend/my-backend/scripts/createWhatsAppReelCardTemplate.js
@@ -35,18 +35,17 @@ async function main() {
 
   const client = twilio(accountSid, authToken);
   const content = await client.content.v1.contents.create({
-    friendly_name: "occasion_reel_review_card",
+    friendly_name: "occasion_reel_review_card_v2",
     language: "en",
     variables: {
-      1: "Your birthday reel is ready",
-      2: "Sample birthday shayari caption here",
-      3: sampleVideoUrl,
+      1: "Sample birthday shayari caption here",
+      2: sampleVideoUrl,
     },
     types: {
-      "twilio/card": {
-        title: "{{1}}",
-        body: "{{2}}",
-        media: ["{{3}}"],
+      // whatsapp/card: body required; no header_text when media is present
+      "whatsapp/card": {
+        body: "{{1}}",
+        media: ["{{2}}"],
         actions: [
           {
             type: "QUICK_REPLY",
@@ -63,16 +62,17 @@ async function main() {
     },
   });
 
-  console.log("Created reel review card template:");
+  console.log("Created reel review card template (no title):");
   console.log("  SID:", content.sid);
   console.log("  name:", content.friendlyName || content.friendly_name);
+  console.log("  vars: {{1}}=caption, {{2}}=video");
   console.log("  buttons: Approve | Change Caption");
 
   try {
     const approval = await client.content.v1
       .contents(content.sid)
       .approvalCreate.create({
-        name: "occasion_reel_review_card",
+        name: "occasion_reel_review_card_v2",
         category: "UTILITY",
       });
     console.log("Submitted for WhatsApp approval:", approval.status || approval);
