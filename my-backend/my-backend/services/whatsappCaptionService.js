@@ -39,15 +39,10 @@ const CAPTION_SESSION_TTL_MS =
   Number(process.env.CAPTION_SESSION_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
 const CAPTION_APPROVE_TTL_MS =
   Number(process.env.CAPTION_APPROVE_TTL_MS || 60 * 60 * 1000) || 60 * 60 * 1000;
-/** Short wait after last photo so multi-image WhatsApp webhooks can batch. */
+/** After last photo (or caption+photos), wait this long for more photos then generate. */
 const PHOTO_BATCH_WAIT_MS = Math.min(
-  Math.max(Number(process.env.CAPTION_PHOTO_BATCH_MS || 8000) || 8000, 3000),
-  20000,
-);
-/** After photos settle, wait this long for caption text before photos-only Approve. */
-const CAPTION_TEXT_WAIT_MS = Math.min(
-  Math.max(Number(process.env.CAPTION_TEXT_WAIT_MS || 45000) || 45000, 15000),
-  120000,
+  Math.max(Number(process.env.CAPTION_PHOTO_BATCH_MS || 20000) || 20000, 5000),
+  60000,
 );
 const MAX_CAPTION_PHOTOS = Math.min(
   Number(process.env.CAPTION_MAX_PHOTOS || 5) || 5,
@@ -159,8 +154,8 @@ function isPhotoBatchDoneCommand(text) {
 }
 
 /**
- * Phase 1: debounce photo webhooks.
- * Phase 2: if no caption text yet, wait longer for text before photos-only Approve.
+ * Every new photo / caption+photos resets a 20s timer.
+ * After quiet 20s: generate if caption exists, else ask for caption text.
  */
 function schedulePhotoBatchFinalize(fromWhatsAppNumber, user, eligibility) {
   const key = sessionKey(fromWhatsAppNumber);
@@ -179,65 +174,8 @@ function schedulePhotoBatchFinalize(fromWhatsAppNumber, user, eligibility) {
       return;
     }
 
-    const session = getCaptionSession(fromWhatsAppNumber);
-    const photos = Array.isArray(session?.photos) ? session.photos : [];
-    if (photos.length === 0) return;
-
-    const waitingText = String(session?.pendingText || "").trim();
-    if (waitingText) {
-      finalizePhotoBatch(fromWhatsAppNumber, user, eligibility).catch(async (error) => {
-        console.error("[caption] photo batch finalize failed:", getErrorMessage(error));
-        try {
-          await sendWhatsAppText({
-            toMobile: fromWhatsAppNumber,
-            body: `Photo error: ${getErrorMessage(error)}\n\nPhir se photos bhejo.`,
-          });
-        } catch {
-          // ignore
-        }
-      });
-      return;
-    }
-
-    // No caption yet — wait longer for text, then photos-only if still empty.
-    scheduleCaptionTextWait(fromWhatsAppNumber, user, eligibility);
-  }, PHOTO_BATCH_WAIT_MS);
-
-  photoBatchTimers.set(key, timer);
-}
-
-function scheduleCaptionTextWait(fromWhatsAppNumber, user, eligibility) {
-  const key = sessionKey(fromWhatsAppNumber);
-  clearPhotoBatchTimer(fromWhatsAppNumber);
-
-  const session = getCaptionSession(fromWhatsAppNumber);
-  if (!session?.captionWaitNotified) {
-    const waitSec = Math.round(CAPTION_TEXT_WAIT_MS / 1000);
-    setCaptionSession(fromWhatsAppNumber, { captionWaitNotified: true });
-    sendWhatsAppText({
-      toMobile: fromWhatsAppNumber,
-      body:
-        `Photos ready.\n` +
-        `Ab caption / event text bhejo (~${waitSec}s).\n` +
-        `Text aate hi AI caption. Na aaye to baad mein sirf photos Approve.`,
-    }).catch(() => {});
-  }
-
-  const timer = setTimeout(() => {
-    photoBatchTimers.delete(key);
-
-    if (isSessionBusy(fromWhatsAppNumber)) {
-      const lock = sessionLocks.get(key) || Promise.resolve();
-      lock.finally(() => {
-        const latest = getCaptionSession(fromWhatsAppNumber);
-        if (!latest?.photos?.length) return;
-        scheduleCaptionTextWait(fromWhatsAppNumber, user, eligibility);
-      });
-      return;
-    }
-
     finalizePhotoBatch(fromWhatsAppNumber, user, eligibility).catch(async (error) => {
-      console.error("[caption] caption-wait finalize failed:", getErrorMessage(error));
+      console.error("[caption] photo batch finalize failed:", getErrorMessage(error));
       try {
         await sendWhatsAppText({
           toMobile: fromWhatsAppNumber,
@@ -247,7 +185,7 @@ function scheduleCaptionTextWait(fromWhatsAppNumber, user, eligibility) {
         // ignore
       }
     });
-  }, CAPTION_TEXT_WAIT_MS);
+  }, PHOTO_BATCH_WAIT_MS);
 
   photoBatchTimers.set(key, timer);
 }
@@ -273,7 +211,17 @@ async function finalizePhotoBatch(fromWhatsAppNumber, user, eligibility) {
     );
   }
 
-  return offerPhotosForApproval(fromWhatsAppNumber, photos, user, eligibility);
+  // Photos ready but user can take time for caption — just remind, no auto Approve.
+  if (!session?.captionPromptSent) {
+    setCaptionSession(fromWhatsAppNumber, { captionPromptSent: true });
+    await sendWhatsAppText({
+      toMobile: fromWhatsAppNumber,
+      body:
+        `${photos.length} photo ready.\n` +
+        `Jab ready ho caption / event text bhejo — uske baad ~${Math.round(PHOTO_BATCH_WAIT_MS / 1000)}s wait, phir AI caption.`,
+    });
+  }
+  return { handled: true, type: "waiting_for_caption", photoCount: photos.length };
 }
 
 function hasActiveCaptionSession(fromWhatsAppNumber) {
@@ -418,7 +366,7 @@ async function ingestWhatsAppPhotos(fromWhatsAppNumber, inboundMedia = []) {
 
     setCaptionSession(fromWhatsAppNumber, {
       photos: existing,
-      captionWaitNotified: false,
+      captionPromptSent: false,
     });
     return existing;
   });
@@ -607,10 +555,9 @@ async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
     body:
-      `Photos (1–${MAX_CAPTION_PHOTOS}) + event text bhejo.\n` +
-      `Birthday / party / festival → reel + fixed gana + AI caption.\n` +
-      `Baaki → photos + AI caption.\n` +
-      `*Approve* se Facebook pe post.`,
+      `Photos (1–${MAX_CAPTION_PHOTOS}) + caption text bhejo.\n` +
+      `Har photo / caption ke baad ~${Math.round(PHOTO_BATCH_WAIT_MS / 1000)}s wait, phir AI caption.\n` +
+      `Birthday / party / festival → reel. *Approve* se Facebook.`,
   });
   return { handled: true, type: "caption_prompt" };
 }
@@ -734,7 +681,7 @@ async function handleWhatsAppCaption({
     const photos = await ingestWhatsAppPhotos(fromWhatsAppNumber, mediaList);
     const photoCount = photos.length;
 
-    // Photos arriving (often 1-per-webhook) — batch, then offer Approve.
+    // Photos only — each photo resets 20s wait for more photos.
     if (hasMedia && !text) {
       if (photos.length === 0) {
         await sendWhatsAppText({
@@ -747,6 +694,10 @@ async function handleWhatsAppCaption({
       clearPendingCaptionApproval(fromWhatsAppNumber);
       schedulePhotoBatchFinalize(fromWhatsAppNumber, gate.user, gate.eligibility);
 
+      const waitSec = Math.round(PHOTO_BATCH_WAIT_MS / 1000);
+      const hasPendingText = Boolean(
+        String(getCaptionSession(fromWhatsAppNumber)?.pendingText || "").trim(),
+      );
       await sendWhatsAppText({
         toMobile: fromWhatsAppNumber,
         body:
@@ -754,49 +705,56 @@ async function handleWhatsAppCaption({
           (photos.length < MAX_CAPTION_PHOTOS
             ? `Aur photos bhej sakte ho (max ${MAX_CAPTION_PHOTOS}).\n`
             : "") +
-          `Caption text bhejo — aate hi process hoga.\n` +
-          `Text na bhejo to thodi wait ke baad sirf photos.`,
+          `~${waitSec}s wait` +
+          (hasPendingText
+            ? `, phir AI caption.`
+            : `. Caption text bhejo (time ki koi jaldi nahi).`),
       });
       return { handled: true, type: "photos_collecting", photoCount: photos.length };
     }
 
-    // Text + photos → cancel waits, AI caption immediately.
-    const session = getCaptionSession(fromWhatsAppNumber);
-    const captionText = text || session?.pendingText || "";
-
-    // Text without photos — ask for photos first.
+    // Text without photos — save caption, ask for photos.
     if (text && photoCount === 0) {
       setCaptionSession(fromWhatsAppNumber, {
         photos: [],
         pendingText: text,
+        captionPromptSent: false,
       });
       await sendWhatsAppText({
         toMobile: fromWhatsAppNumber,
         body:
-          `Pehle 1–${MAX_CAPTION_PHOTOS} photos bhejo.\n` +
-          `Birthday/party/festival text pe reel; warna photos + caption.\n` +
-          `*Approve* se Facebook pe post.`,
+          `Caption save.\n` +
+          `Ab 1–${MAX_CAPTION_PHOTOS} photos bhejo.\n` +
+          `Last photo ke baad ~${Math.round(PHOTO_BATCH_WAIT_MS / 1000)}s wait, phir AI caption.`,
       });
       return { handled: true, type: "need_photos" };
     }
 
-    if (!captionText) {
+    // Text + photos already there → save caption, wait 20s for more photos, then generate.
+    if (text && photoCount > 0) {
+      setCaptionSession(fromWhatsAppNumber, {
+        photos,
+        pendingText: text,
+        captionPromptSent: false,
+      });
+      clearPendingCaptionApproval(fromWhatsAppNumber);
+      schedulePhotoBatchFinalize(fromWhatsAppNumber, gate.user, gate.eligibility);
+
       await sendWhatsAppText({
         toMobile: fromWhatsAppNumber,
-        body: "Caption ke liye event text bhejo.",
+        body:
+          `Caption save (${photos.length} photo).\n` +
+          `Aur photos bhej sakte ho.\n` +
+          `~${Math.round(PHOTO_BATCH_WAIT_MS / 1000)}s wait ke baad AI caption banegi.`,
       });
-      return { handled: true, type: "need_text" };
+      return { handled: true, type: "caption_saved_waiting_photos" };
     }
 
-    clearPhotoBatchTimer(fromWhatsAppNumber);
-    clearPendingCaptionApproval(fromWhatsAppNumber);
-    return await generateAndSendCaption(
-      fromWhatsAppNumber,
-      captionText,
-      photos,
-      gate.user,
-      gate.eligibility,
-    );
+    await sendWhatsAppText({
+      toMobile: fromWhatsAppNumber,
+      body: "Photos + caption text bhejo.",
+    });
+    return { handled: true, type: "need_input" };
   } catch (error) {
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
