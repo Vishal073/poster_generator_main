@@ -564,9 +564,10 @@ async function sendWhatsAppReelReviewCard({
     toMobile,
     contentSid,
     contentVariables: {
-      // WhatsApp/Twilio card: put caption in title+body (video cards often hide body).
-      "1": truncateForTemplate(caption || title || "Your reel is ready", 60),
-      "2": truncateForTemplate(caption || "-", 900),
+      // WhatsApp card title max ~60 chars — do NOT put full caption here.
+      "1": truncateForTemplate(title || "Your reel is ready", 60),
+      // Full caption belongs in body (newlines flattened for Twilio).
+      "2": truncateForTemplate(caption || "-", 1024),
       "3": video,
     },
   });
