@@ -435,14 +435,7 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
     canApproveSocial: true,
   });
 
-  // Always send full caption as text — video cards often hide body / strip newlines.
-  if (captionText) {
-    await sendWhatsAppText({
-      toMobile: fromWhatsAppNumber,
-      body: captionText,
-    });
-  }
-
+  // Caption only on the card body — do not send a separate text duplicate.
   const card = await sendWhatsAppReelReviewCard({
     toMobile: fromWhatsAppNumber,
     caption: captionText,
@@ -457,7 +450,7 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
   await sendReelWhatsApp({
     toMobile: fromWhatsAppNumber,
     videoUrl: video,
-    body: `${occasion || "Reel"} ready`,
+    body: captionText || `${occasion || "Reel"} ready`,
   });
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
