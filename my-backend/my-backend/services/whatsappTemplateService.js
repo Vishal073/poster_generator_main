@@ -541,18 +541,18 @@ async function sendWhatsAppApprovePostTemplate({ toMobile, name }) {
 }
 
 /**
- * Occasion reel review card: title + caption + video + Approve / Change Caption.
- * Requires TWILIO_REEL_CARD_TEMPLATE_CONTENT_SID (see createWhatsAppReelCardTemplate.js).
+ * Media review card (photo or reel): caption + media + Approve / Change Caption.
+ * Uses TWILIO_REEL_CARD_TEMPLATE_CONTENT_SID (whatsapp/card: {{1}}=caption, {{2}}=media).
  */
-async function sendWhatsAppReelReviewCard({
+async function sendWhatsAppMediaReviewCard({
   toMobile,
   caption,
-  videoUrl,
+  mediaUrl,
 }) {
   const contentSid = getReelCardTemplateContentSid();
-  const video = String(videoUrl || "").trim();
-  if (!video) {
-    throw new Error("videoUrl is required for reel review card.");
+  const media = String(mediaUrl || "").trim();
+  if (!media) {
+    throw new Error("mediaUrl is required for media review card.");
   }
 
   if (!contentSid) {
@@ -563,10 +563,23 @@ async function sendWhatsAppReelReviewCard({
     toMobile,
     contentSid,
     contentVariables: {
-      // whatsapp/card (no title): {{1}}=caption, {{2}}=video
       "1": truncateForTemplate(caption || "-", 1024),
-      "2": video,
+      "2": media,
     },
+  });
+}
+
+/** @deprecated Prefer sendWhatsAppMediaReviewCard */
+async function sendWhatsAppReelReviewCard({
+  toMobile,
+  caption,
+  videoUrl,
+  mediaUrl,
+}) {
+  return sendWhatsAppMediaReviewCard({
+    toMobile,
+    caption,
+    mediaUrl: mediaUrl || videoUrl,
   });
 }
 
@@ -665,6 +678,7 @@ module.exports = {
   sendWhatsAppDownloadTemplate,
   sendWhatsAppApprovePostTemplate,
   sendWhatsAppReelReviewCard,
+  sendWhatsAppMediaReviewCard,
   getReelCardTemplateContentSid,
   getApproveAfterImageDelayMs,
   delay,

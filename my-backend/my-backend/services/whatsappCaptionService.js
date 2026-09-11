@@ -20,7 +20,7 @@ const {
 } = require("../utils/portalAuth");
 const {
   sendWhatsAppApprovePostTemplate,
-  sendWhatsAppReelReviewCard,
+  sendWhatsAppMediaReviewCard,
 } = require("./whatsappTemplateService");
 const {
   getUserSocialApproveEligibility,
@@ -436,10 +436,10 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
   });
 
   // Caption only on the card body — do not send a separate text duplicate.
-  const card = await sendWhatsAppReelReviewCard({
+  const card = await sendWhatsAppMediaReviewCard({
     toMobile: fromWhatsAppNumber,
     caption: captionText,
-    videoUrl: video,
+    mediaUrl: video,
   });
 
   if (card?.sid) {
@@ -462,12 +462,88 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
 }
 
 /**
- * Change Caption button: new AI caption, same reel, resend review card.
+ * Normal photo post review card: first photo + caption + Approve / Change Caption.
+ */
+async function offerPhotoReviewCard(fromWhatsAppNumber, {
+  caption,
+  style,
+  imageUrls,
+  occasion,
+  rawText,
+  user,
+  eligibility,
+}) {
+  const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
+  const captionText = String(caption || "").trim();
+  const previewUrl = urls[0] || "";
+
+  setPendingCaptionApproval(fromWhatsAppNumber, {
+    caption: captionText,
+    style: style || "normal",
+    imageUrls: urls,
+    videoUrl: "",
+    mediaType: "photos",
+    occasion: occasion || "",
+    rawText: typeof rawText === "string" ? rawText.trim() : "",
+    userId: String(user._id),
+    name: user.name || "Customer",
+    mobile: toTenDigitMobile(fromWhatsAppNumber),
+    canApproveSocial: true,
+  });
+
+  if (!previewUrl) {
+    await sendWhatsAppText({
+      toMobile: fromWhatsAppNumber,
+      body: captionText || "Caption ready. Photo missing — phir se bhejo.",
+    });
+    return { offered: false, mode: "no_photo" };
+  }
+
+  let cardBody = captionText || "Photo ready";
+  if (urls.length > 1) {
+    cardBody = `${cardBody} (${urls.length} photos — Approve pe saari jayengi)`;
+  }
+
+  const card = await sendWhatsAppMediaReviewCard({
+    toMobile: fromWhatsAppNumber,
+    caption: cardBody,
+    mediaUrl: previewUrl,
+  });
+
+  if (card?.sid) {
+    return { offered: true, mode: "photo_card" };
+  }
+
+  // Fallback: plain image + Approve template.
+  await sendPosterWhatsApp({
+    toMobile: fromWhatsAppNumber,
+    imageUrl: previewUrl,
+    body: captionText || undefined,
+  });
+  await offerCaptionFacebookApprove(fromWhatsAppNumber, {
+    caption: captionText,
+    style: style || "normal",
+    imageUrls: urls,
+    mediaType: "photos",
+    occasion,
+    rawText,
+    user,
+    eligibility,
+  });
+  return { offered: true, mode: "fallback" };
+}
+
+/**
+ * Change Caption button: new AI caption, same media, resend review card.
  */
 async function changePendingCaption({ fromWhatsAppNumber }) {
   const pending = getPendingCaptionApproval(fromWhatsAppNumber);
-  if (!pending?.canApproveSocial || !pending?.videoUrl) {
-    return { handled: false, reason: "no_pending_reel" };
+  const hasVideo = typeof pending?.videoUrl === "string" && pending.videoUrl.trim();
+  const hasImages =
+    Array.isArray(pending?.imageUrls) && pending.imageUrls.filter(Boolean).length > 0;
+
+  if (!pending?.canApproveSocial || (!hasVideo && !hasImages)) {
+    return { handled: false, reason: "no_pending_media" };
   }
 
   const session = getCaptionSession(fromWhatsAppNumber);
@@ -503,15 +579,27 @@ async function changePendingCaption({ fromWhatsAppNumber }) {
     name: pending.name || "Customer",
   };
 
-  await offerReelReviewCard(fromWhatsAppNumber, {
-    caption: result.caption,
-    style: result.style,
-    videoUrl: pending.videoUrl,
-    occasion: pending.occasion || "reel",
-    rawText,
-    user,
-    eligibility: { pageName: null },
-  });
+  if (hasVideo) {
+    await offerReelReviewCard(fromWhatsAppNumber, {
+      caption: result.caption,
+      style: result.style,
+      videoUrl: pending.videoUrl,
+      occasion: pending.occasion || "reel",
+      rawText,
+      user,
+      eligibility: { pageName: null },
+    });
+  } else {
+    await offerPhotoReviewCard(fromWhatsAppNumber, {
+      caption: result.caption,
+      style: result.style,
+      imageUrls: pending.imageUrls,
+      occasion: pending.occasion || "",
+      rawText,
+      user,
+      eligibility: { pageName: null },
+    });
+  }
 
   return { handled: true, type: "caption_changed", caption: result.caption };
 }
@@ -608,29 +696,32 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user,
     }
   }
 
-  if (urls[0]) {
-    await sendPosterWhatsApp({
-      toMobile: fromWhatsAppNumber,
-      imageUrl: urls[0],
-      body: result.caption,
+  if (urls.length > 0) {
+    await offerPhotoReviewCard(fromWhatsAppNumber, {
+      caption: result.caption,
+      style: result.style,
+      imageUrls: urls,
+      occasion,
+      rawText: String(rawText).trim(),
+      user,
+      eligibility,
     });
   } else {
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
       body: result.caption,
     });
+    await offerCaptionFacebookApprove(fromWhatsAppNumber, {
+      caption: result.caption,
+      style: result.style,
+      imageUrls: [],
+      mediaType: "photos",
+      occasion,
+      rawText: String(rawText).trim(),
+      user,
+      eligibility,
+    });
   }
-
-  await offerCaptionFacebookApprove(fromWhatsAppNumber, {
-    caption: result.caption,
-    style: result.style,
-    imageUrls: urls,
-    mediaType: "photos",
-    occasion,
-    rawText: String(rawText).trim(),
-    user,
-    eligibility,
-  });
 
   return { handled: true, type: "caption_ready", style: result.style, occasion };
 }
