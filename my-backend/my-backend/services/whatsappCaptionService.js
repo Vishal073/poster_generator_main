@@ -467,12 +467,16 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user,
         imageUrls: urls,
       });
 
+      // WhatsApp often hides media message body — send caption as its own text.
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body: result.caption,
+      });
+
       await sendReelWhatsApp({
         toMobile: fromWhatsAppNumber,
         videoUrl: reel.videoUrl,
-        body:
-          `${result.caption}\n\n` +
-          `${occasion} reel ready. *Approve* se Facebook pe post.`,
+        body: `${occasion} reel ready. *Approve* se Facebook pe post.`,
       });
 
       await offerCaptionFacebookApprove(fromWhatsAppNumber, {
