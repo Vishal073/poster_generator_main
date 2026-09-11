@@ -163,7 +163,7 @@ Under 1200 characters when needed for longer user content.`;
  * @param {string} rawText
  * @returns {Promise<{ caption: string, style: 'shayari'|'normal', model: string }>}
  */
-async function generateCaption(rawText) {
+async function generateCaption(rawText, options = {}) {
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured on the server.");
@@ -177,12 +177,25 @@ async function generateCaption(rawText) {
     throw new Error("Text is too long. Please keep it under 2000 characters.");
   }
 
+  const previousCaption = String(options.previousCaption || "").trim();
   const model = getCaptionModel();
   const timeoutMs = Number(process.env.CAPTION_AI_TIMEOUT_MS || 45000);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const userContent =
+      `Rewrite my content as ONE Hindi caption.\n` +
+      `Pick either shayari OR normal — never mix both.\n` +
+      `- Shayari: EXACTLY 2 OR 4 poetic lines with \\n between lines (never one long comma sentence). Prefer 2. Strong rhyme. Include names. Birthday example:\n` +
+      `चाँद सितारे भी आज मुस्कुरा रहे हैं,\\nबेटे राजेश के जन्मदिन पे खुशियाँ छा रहे हैं।\\n#Birthday #Rajesh\n` +
+      `- Normal: formal simple Hindi social post like Fatehabad BJP "अवसर मिला" style. No shayari.\n` +
+      `Hashtags on the NEXT line with NO blank line. Do NOT use #Meeting.\n` +
+      (previousCaption
+        ? `\nIMPORTANT: Write a DIFFERENT caption than this previous one (new lines/rhyme, keep same facts):\n${previousCaption}\n`
+        : "") +
+      `\nMy content:\n${input}`;
+
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -192,21 +205,11 @@ async function generateCaption(rawText) {
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        temperature: 0.75,
+        temperature: previousCaption ? 0.9 : 0.75,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: buildSystemPrompt() },
-          {
-            role: "user",
-            content:
-              `Rewrite my content as ONE Hindi caption.\n` +
-              `Pick either shayari OR normal — never mix both.\n` +
-              `- Shayari: EXACTLY 2 OR 4 poetic lines with \\n between lines (never one long comma sentence). Prefer 2. Strong rhyme. Include names. Birthday example:\n` +
-              `चाँद सितारे भी आज मुस्कुरा रहे हैं,\\nबेटे राजेश के जन्मदिन पे खुशियाँ छा रहे हैं।\\n#Birthday #Rajesh\n` +
-              `- Normal: formal simple Hindi social post like Fatehabad BJP "अवसर मिला" style. No shayari.\n` +
-              `Hashtags on the NEXT line with NO blank line. Do NOT use #Meeting.\n\n` +
-              `My content:\n${input}`,
-          },
+          { role: "user", content: userContent },
         ],
       }),
     });

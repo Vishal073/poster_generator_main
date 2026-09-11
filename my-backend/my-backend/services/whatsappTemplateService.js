@@ -73,10 +73,22 @@ function getApprovePostTemplateContentSid() {
   );
 }
 
+function getReelCardTemplateContentSid() {
+  return String(process.env.TWILIO_REEL_CARD_TEMPLATE_CONTENT_SID || "").trim();
+}
+
 function getApprovePostTemplateContentVariables({ name }) {
   return {
     "1": String(name || "Customer"),
   };
+}
+
+function truncateForTemplate(value, maxLen = 900) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLen) {
+    return text || "-";
+  }
+  return `${text.slice(0, Math.max(0, maxLen - 1)).trim()}…`;
 }
 
 function collectTemplateStrings(types, field) {
@@ -521,6 +533,37 @@ async function sendWhatsAppApprovePostTemplate({ toMobile, name }) {
   });
 }
 
+/**
+ * Occasion reel review card: title + caption + video + Approve / Change Caption.
+ * Requires TWILIO_REEL_CARD_TEMPLATE_CONTENT_SID (see createWhatsAppReelCardTemplate.js).
+ */
+async function sendWhatsAppReelReviewCard({
+  toMobile,
+  title,
+  caption,
+  videoUrl,
+}) {
+  const contentSid = getReelCardTemplateContentSid();
+  const video = String(videoUrl || "").trim();
+  if (!video) {
+    throw new Error("videoUrl is required for reel review card.");
+  }
+
+  if (!contentSid) {
+    return null;
+  }
+
+  return sendWhatsAppContentTemplate({
+    toMobile,
+    contentSid,
+    contentVariables: {
+      "1": truncateForTemplate(title || "Your reel is ready", 60),
+      "2": truncateForTemplate(caption || "-", 900),
+      "3": video,
+    },
+  });
+}
+
 function buildPosterReadyMessage({ eventName, body }) {
   if (typeof body === "string" && body.trim()) {
     return body.trim();
@@ -615,6 +658,8 @@ module.exports = {
   sendWhatsAppPosterCardTemplate,
   sendWhatsAppDownloadTemplate,
   sendWhatsAppApprovePostTemplate,
+  sendWhatsAppReelReviewCard,
+  getReelCardTemplateContentSid,
   getApproveAfterImageDelayMs,
   delay,
   buildPosterReadyMessage,

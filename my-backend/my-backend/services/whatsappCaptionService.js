@@ -20,6 +20,7 @@ const {
 } = require("../utils/portalAuth");
 const {
   sendWhatsAppApprovePostTemplate,
+  sendWhatsAppReelReviewCard,
 } = require("./whatsappTemplateService");
 const {
   getUserSocialApproveEligibility,
@@ -369,6 +370,7 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
   videoUrl,
   mediaType,
   occasion,
+  rawText,
   user,
   eligibility,
 }) {
@@ -381,6 +383,7 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
     videoUrl: video || "",
     mediaType: mediaType || (video ? "reel" : "photos"),
     occasion: occasion || "",
+    rawText: typeof rawText === "string" ? rawText.trim() : "",
     userId: String(user._id),
     name: user.name || "Customer",
     mobile: toTenDigitMobile(fromWhatsAppNumber),
@@ -404,6 +407,117 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
   }
 
   return { offered: true };
+}
+
+async function offerReelReviewCard(fromWhatsAppNumber, {
+  caption,
+  style,
+  videoUrl,
+  occasion,
+  rawText,
+  user,
+  eligibility,
+}) {
+  const video = String(videoUrl || "").trim();
+  const title = `${occasion || "Occasion"} reel ready`;
+
+  setPendingCaptionApproval(fromWhatsAppNumber, {
+    caption: typeof caption === "string" ? caption : "",
+    style: style || "shayari",
+    imageUrls: [],
+    videoUrl: video,
+    mediaType: "reel",
+    occasion: occasion || "",
+    rawText: typeof rawText === "string" ? rawText.trim() : "",
+    userId: String(user._id),
+    name: user.name || "Customer",
+    mobile: toTenDigitMobile(fromWhatsAppNumber),
+    canApproveSocial: true,
+  });
+
+  const card = await sendWhatsAppReelReviewCard({
+    toMobile: fromWhatsAppNumber,
+    title,
+    caption,
+    videoUrl: video,
+  });
+
+  if (card?.sid) {
+    return { offered: true, mode: "reel_card" };
+  }
+
+  // Fallback when reel card template SID is not configured.
+  await sendWhatsAppText({
+    toMobile: fromWhatsAppNumber,
+    body: caption,
+  });
+  await sendReelWhatsApp({
+    toMobile: fromWhatsAppNumber,
+    videoUrl: video,
+    body: `${occasion || "Reel"} ready`,
+  });
+  await sendWhatsAppText({
+    toMobile: fromWhatsAppNumber,
+    body:
+      `*Approve* — Facebook pe post\n` +
+      `*Change Caption* — nayi caption`,
+  });
+  return { offered: true, mode: "fallback" };
+}
+
+/**
+ * Change Caption button: new AI caption, same reel, resend review card.
+ */
+async function changePendingCaption({ fromWhatsAppNumber }) {
+  const pending = getPendingCaptionApproval(fromWhatsAppNumber);
+  if (!pending?.canApproveSocial || !pending?.videoUrl) {
+    return { handled: false, reason: "no_pending_reel" };
+  }
+
+  const session = getCaptionSession(fromWhatsAppNumber);
+  const rawText =
+    String(pending.rawText || "").trim() ||
+    String(session?.lastRawText || "").trim();
+  if (!rawText) {
+    await sendWhatsAppText({
+      toMobile: fromWhatsAppNumber,
+      body: "Caption change ke liye pehle wala text nahi mila. Naya text bhejo.",
+    });
+    return { handled: true, type: "need_raw_text" };
+  }
+
+  await sendWhatsAppText({
+    toMobile: fromWhatsAppNumber,
+    body: "Generating new caption…",
+  });
+
+  const result = await generateCaption(rawText, {
+    previousCaption: pending.caption || "",
+  });
+
+  setCaptionSession(fromWhatsAppNumber, {
+    lastCaption: result.caption,
+    lastStyle: result.style,
+    lastRawText: rawText,
+    lastOccasion: pending.occasion || session?.lastOccasion || "",
+  });
+
+  const user = {
+    _id: pending.userId,
+    name: pending.name || "Customer",
+  };
+
+  await offerReelReviewCard(fromWhatsAppNumber, {
+    caption: result.caption,
+    style: result.style,
+    videoUrl: pending.videoUrl,
+    occasion: pending.occasion || "reel",
+    rawText,
+    user,
+    eligibility: { pageName: null },
+  });
+
+  return { handled: true, type: "caption_changed", caption: result.caption };
 }
 
 /**
@@ -467,25 +581,12 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user,
         imageUrls: urls,
       });
 
-      // WhatsApp often hides media message body — send caption as its own text.
-      await sendWhatsAppText({
-        toMobile: fromWhatsAppNumber,
-        body: result.caption,
-      });
-
-      await sendReelWhatsApp({
-        toMobile: fromWhatsAppNumber,
-        videoUrl: reel.videoUrl,
-        body: `${occasion} reel ready. *Approve* se Facebook pe post.`,
-      });
-
-      await offerCaptionFacebookApprove(fromWhatsAppNumber, {
+      await offerReelReviewCard(fromWhatsAppNumber, {
         caption: result.caption,
         style: result.style,
-        imageUrls: [],
         videoUrl: reel.videoUrl,
-        mediaType: "reel",
         occasion,
+        rawText: String(rawText).trim(),
         user,
         eligibility,
       });
@@ -530,6 +631,7 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user,
     imageUrls: urls,
     mediaType: "photos",
     occasion,
+    rawText: String(rawText).trim(),
     user,
     eligibility,
   });
@@ -734,6 +836,7 @@ module.exports = {
   getPendingCaptionApproval,
   clearPendingCaptionApproval,
   approvePendingCaption,
+  changePendingCaption,
   ensureCaptionEligibility,
   isReservedChatCommand,
 };

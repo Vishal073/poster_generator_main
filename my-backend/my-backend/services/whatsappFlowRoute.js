@@ -17,6 +17,7 @@ const { handleWhatsAppChatbot } = require("./whatsappChatbotService");
 const {
   handleWhatsAppCaption,
   approvePendingCaption,
+  changePendingCaption,
   getPendingCaptionApproval,
   clearPendingCaptionApproval,
 } = require("./whatsappCaptionService");
@@ -312,6 +313,16 @@ router.post("/webhook", async (req, res) => {
   const approvePayload = String(process.env.TWILIO_APPROVE_BUTTON_PAYLOAD || "approve")
     .trim()
     .toLowerCase();
+  const changeCaptionPayload = String(
+    process.env.TWILIO_CHANGE_CAPTION_BUTTON_PAYLOAD || "change_caption",
+  )
+    .trim()
+    .toLowerCase();
+  const isChangeCaption =
+    reply === changeCaptionPayload ||
+    reply === "change caption" ||
+    reply === "changecaption" ||
+    reply.replace(/\s+/g, " ") === "change caption";
 
   // Twilio requires a fast webhook ACK. Heavy work must run after 204
   // or Twilio marks the webhook as failed (error 11200).
@@ -331,6 +342,27 @@ router.post("/webhook", async (req, res) => {
 
   try {
     await recordWhatsAppInbound(normalizedFrom);
+
+    if (isChangeCaption) {
+      try {
+        const changed = await changePendingCaption({
+          fromWhatsAppNumber: normalizedFrom,
+        });
+        if (!changed?.handled) {
+          await sendWhatsAppText({
+            toMobile: normalizedFrom,
+            body: "Koi pending reel nahi mili. Pehle birthday/party/festival reel generate karo.",
+          });
+        }
+      } catch (error) {
+        console.error("WhatsApp change caption failed:", getErrorMessage(error));
+        await sendWhatsAppText({
+          toMobile: normalizedFrom,
+          body: `Caption change failed: ${getErrorMessage(error)}`,
+        }).catch(() => {});
+      }
+      return;
+    }
 
     if (reply === "download") {
       const pendingRequest = pendingPosterRequests.get(normalizedFrom) || {
