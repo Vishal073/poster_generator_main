@@ -84,9 +84,16 @@ function getApprovePostTemplateContentVariables({ name }) {
 }
 
 function truncateForTemplate(value, maxLen = 900) {
-  const text = String(value || "").trim();
+  const text = String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) {
+    return "-";
+  }
   if (text.length <= maxLen) {
-    return text || "-";
+    return text;
   }
   return `${text.slice(0, Math.max(0, maxLen - 1)).trim()}…`;
 }
@@ -557,7 +564,8 @@ async function sendWhatsAppReelReviewCard({
     toMobile,
     contentSid,
     contentVariables: {
-      "1": truncateForTemplate(title || "Your reel is ready", 60),
+      // WhatsApp/Twilio card: put caption in title+body (video cards often hide body).
+      "1": truncateForTemplate(caption || title || "Your reel is ready", 60),
       "2": truncateForTemplate(caption || "-", 900),
       "3": video,
     },

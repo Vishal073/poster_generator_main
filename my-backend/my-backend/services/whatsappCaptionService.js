@@ -419,10 +419,11 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
   eligibility,
 }) {
   const video = String(videoUrl || "").trim();
+  const captionText = String(caption || "").trim();
   const title = `${occasion || "Occasion"} reel ready`;
 
   setPendingCaptionApproval(fromWhatsAppNumber, {
-    caption: typeof caption === "string" ? caption : "",
+    caption: captionText,
     style: style || "shayari",
     imageUrls: [],
     videoUrl: video,
@@ -435,10 +436,18 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
     canApproveSocial: true,
   });
 
+  // Always send full caption as text — video cards often hide body / strip newlines.
+  if (captionText) {
+    await sendWhatsAppText({
+      toMobile: fromWhatsAppNumber,
+      body: captionText,
+    });
+  }
+
   const card = await sendWhatsAppReelReviewCard({
     toMobile: fromWhatsAppNumber,
     title,
-    caption,
+    caption: captionText,
     videoUrl: video,
   });
 
@@ -447,10 +456,6 @@ async function offerReelReviewCard(fromWhatsAppNumber, {
   }
 
   // Fallback when reel card template SID is not configured.
-  await sendWhatsAppText({
-    toMobile: fromWhatsAppNumber,
-    body: caption,
-  });
   await sendReelWhatsApp({
     toMobile: fromWhatsAppNumber,
     videoUrl: video,
