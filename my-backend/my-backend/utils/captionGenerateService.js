@@ -36,6 +36,36 @@ function normalizeCaptionSpacing(caption) {
     .trim();
 }
 
+/** Prefer real line breaks for couplets; fix one-line comma shayari when needed. */
+function normalizeShayariLayout(caption, style) {
+  let text = normalizeCaptionSpacing(caption);
+  if (style !== "shayari") {
+    return text;
+  }
+
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const hashLines = lines.filter((line) => line.startsWith("#"));
+  const bodyLines = lines.filter((line) => !line.startsWith("#"));
+
+  // If model dumped couplet as one comma-separated line, split into 2 lines.
+  if (bodyLines.length === 1 && bodyLines[0].includes(",")) {
+    const parts = bodyLines[0]
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length === 2) {
+      const second = /[।.!?]$/.test(parts[1]) ? parts[1] : `${parts[1]}।`;
+      text = `${parts[0]},\n${second}`;
+      if (hashLines.length) {
+        text += `\n${hashLines.join(" ")}`;
+      }
+      return normalizeCaptionSpacing(text);
+    }
+  }
+
+  return text;
+}
+
 function buildSystemPrompt() {
   return `You rewrite the user's rough WhatsApp content into ONE Hindi social-media caption.
 
@@ -82,17 +112,34 @@ WHEN style = "shayari" (birthday, blood donation, tribute, festival, sports win,
 - Write ONLY shayari as COMPLETE COUPLETS: exactly 2 lines OR exactly 4 lines.
 - Prefer 2 lines. Use 4 lines only if more facts need space.
 - NEVER write 3 lines (odd count breaks the couplet feel).
-- Each pair should rhyme or echo naturally (line1~line2, and if 4 lines also line3~line4).
-- Simple warm Hindi people share on Facebook — clear feeling, not heavy/dictionary words.
-- All user facts inside the poetry (who, occasion, what happened).
-- Focus on strong, shareable lines. A blessing/wish at the end is OPTIONAL — only if it fits naturally. Do not force a dua/badai line.
+- NEVER put the whole shayari on ONE line with commas. Each poetic line must be its own line separated by \\n.
+- Each couplet must rhyme or clearly echo (line1~line2; if 4 lines also line3~line4).
+- Simple warm Facebook/WhatsApp Hindi — heartfelt, shareable, not heavy dictionary words.
+- Include ALL key facts inside the poetry (name, relation like बेटा/बेटी, occasion).
+- Birthday: MUST include the person's name when given. Warm family tone.
+- A short birthday wish can be the SECOND line of the couplet, not a plain add-on sentence.
 - No plain report sentence after the shayari.
-- Separate lines with \\n.
+- After the last poetic line, hashtags on the NEXT line (no blank line), e.g. #Birthday #Rajesh
+
+BIRTHDAY shayari — CORRECT (2 lines + hashtags):
+Input: "mere bete ka birthday h rajesh ka"
+"चाँद सितारे भी आज मुस्कुरा रहे हैं,
+बेटे राजेश के जन्मदिन पे खुशियाँ छा रहे हैं।
+#Birthday #Rajesh"
+
+Also correct:
+"फूलों सी महके ज़िंदगी तुम्हारी,
+जन्मदिन मुबारक हो बेटे राजेश हमारे।
+#Birthday #Rajesh"
+
+WRONG (do NOT do this):
+"तुमसे ही रोशन है जिंदगी हमारी, जन्मदिन मुबारक हो बेटे राजेश प्यारे।"
+(Reason: one long comma-line, weak couplet, not 2 separate lines.)
 
 Quality bar for shayari:
-- Should feel like a real WhatsApp/Facebook shayari post, not a robot summary in rhyme.
-- Avoid weak filler and forced endings.
-- Keep it positive and heartfelt. Lines quality > mandatory blessing.
+- Must feel like a real shareable Facebook shayari, not a robot summary.
+- Strong rhyme > forced dua.
+- Lines quality > filler words.
 
 WHEN style = "normal" (meeting, visit, notice, detailed update, or non-emotional content):
 - Write ONLY normal social-media Hindi (sentences/paragraph).
@@ -154,11 +201,10 @@ async function generateCaption(rawText) {
             content:
               `Rewrite my content as ONE Hindi caption.\n` +
               `Pick either shayari OR normal — never mix both.\n` +
-              `- Shayari: exactly 2 OR 4 strong poetic lines only (never 3). Prefer 2. Cover my facts. Positive, simple, good rhyme. Blessing optional — do not force it.\n` +
-              `- Normal: formal simple Hindi social post. For a meeting note like Fatehabad BJP, aim like: "आज जिला फतेहाबाद में आयोजित भारतीय जनता पार्टी की बैठक में शामिल होने का अवसर मिला।" No shayari.\n` +
-              `Then put hashtags on the NEXT line with NO blank line, e.g.\n` +
-              `आज मैंने कंपनी में भाषण देने का अवसर मिला।\n#Company\n` +
-              `Use "अवसर मिला" style. Do NOT use #Meeting. Do not invent unrelated tags.\n\n` +
+              `- Shayari: EXACTLY 2 OR 4 poetic lines with \\n between lines (never one long comma sentence). Prefer 2. Strong rhyme. Include names. Birthday example:\n` +
+              `चाँद सितारे भी आज मुस्कुरा रहे हैं,\\nबेटे राजेश के जन्मदिन पे खुशियाँ छा रहे हैं।\\n#Birthday #Rajesh\n` +
+              `- Normal: formal simple Hindi social post like Fatehabad BJP "अवसर मिला" style. No shayari.\n` +
+              `Hashtags on the NEXT line with NO blank line. Do NOT use #Meeting.\n\n` +
               `My content:\n${input}`,
           },
         ],
@@ -186,19 +232,20 @@ async function generateCaption(rawText) {
       throw new Error("Caption AI returned invalid JSON.");
     }
 
-    const caption = normalizeCaptionSpacing(
-      String(parsed?.caption || "")
-        .replace(/\\n/g, "\n")
-        .trim(),
-    );
-    if (!caption) {
-      throw new Error("Caption AI returned an empty caption.");
-    }
-
     const style =
       String(parsed?.style || "").trim().toLowerCase() === "shayari"
         ? "shayari"
         : "normal";
+
+    const caption = normalizeShayariLayout(
+      String(parsed?.caption || "")
+        .replace(/\\n/g, "\n")
+        .trim(),
+      style,
+    );
+    if (!caption) {
+      throw new Error("Caption AI returned an empty caption.");
+    }
 
     return { caption, style, model };
   } catch (error) {
