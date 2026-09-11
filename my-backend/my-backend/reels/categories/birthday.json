@@ -1,0 +1,14 @@
+{
+  "id": "birthday",
+  "name": "Birthday Reel",
+  "description": "Warm birthday photo slideshow with fixed birthday music.",
+  "animationPool": ["ken_burns", "zoom_in", "zoom_out", "pan_left", "pan_right"],
+  "transitionPool": ["fade", "cross_dissolve"],
+  "musicPool": ["birthday"],
+  "voicePool": [],
+  "rules": {
+    "pace": "slow",
+    "maxAggressiveTransitions": 0,
+    "avoidBackToBackSameAnimation": true
+  }
+}

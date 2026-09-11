@@ -1,10 +1,16 @@
 const {
   sendWhatsAppText,
   sendPosterWhatsApp,
+  sendReelWhatsApp,
   formatWhatsAppNumber,
   downloadTwilioMedia,
 } = require("./whatsappService");
 const { generateCaption } = require("../utils/captionGenerateService");
+const {
+  detectOccasion,
+  isReelOccasion,
+  generateOccasionReel,
+} = require("./occasionReelService");
 const {
   isGcrGraphixGreeting,
   findUserByMobile,
@@ -18,6 +24,8 @@ const {
 const {
   getUserSocialApproveEligibility,
   approveCaptionForUser,
+  postReelForUser,
+  postReelToInstagramForUser,
 } = require("./facebookPostService");
 const { uploadPosterToCloudinary } = require("./cloudnaryService");
 
@@ -358,14 +366,21 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
   caption,
   style,
   imageUrls,
+  videoUrl,
+  mediaType,
+  occasion,
   user,
   eligibility,
 }) {
   const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
+  const video = typeof videoUrl === "string" ? videoUrl.trim() : "";
   setPendingCaptionApproval(fromWhatsAppNumber, {
     caption: typeof caption === "string" ? caption : "",
     style: style || "normal",
     imageUrls: urls,
+    videoUrl: video || "",
+    mediaType: mediaType || (video ? "reel" : "photos"),
+    occasion: occasion || "",
     userId: String(user._id),
     name: user.name || "Customer",
     mobile: toTenDigitMobile(fromWhatsAppNumber),
@@ -379,10 +394,11 @@ async function offerCaptionFacebookApprove(fromWhatsAppNumber, {
 
   if (!templateResult) {
     const page = eligibility?.pageName || "Page";
+    const kind = video ? "reel" : "photos";
     await sendWhatsAppText({
       toMobile: fromWhatsAppNumber,
       body:
-        `Facebook (${page}) pe photos post karne ke liye *Approve* bhejo.\n` +
+        `Facebook (${page}) pe ${kind} post karne ke liye *Approve* bhejo.\n` +
         `Skip ke liye *Skip*.`,
     });
   }
@@ -424,9 +440,13 @@ async function offerPhotosForApproval(fromWhatsAppNumber, photos, user, eligibil
 
 async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user, eligibility) {
   const urls = Array.isArray(photos) ? photos.filter(Boolean) : [];
+  const occasion = detectOccasion(rawText);
+
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
-    body: "AI caption bana raha hoon…",
+    body: isReelOccasion(occasion)
+      ? `AI caption + ${occasion} reel bana raha hoon…`
+      : "AI caption bana raha hoon…",
   });
 
   const result = await generateCaption(rawText);
@@ -436,7 +456,56 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user,
     lastStyle: result.style,
     lastCaption: result.caption,
     lastRawText: String(rawText).trim(),
+    lastOccasion: occasion,
   });
+
+  // Birthday / party / festival → reel with fixed music.
+  if (isReelOccasion(occasion) && urls.length > 0) {
+    try {
+      const reel = await generateOccasionReel({
+        occasion,
+        imageUrls: urls,
+      });
+
+      await sendReelWhatsApp({
+        toMobile: fromWhatsAppNumber,
+        videoUrl: reel.videoUrl,
+        body:
+          `${result.caption}\n\n` +
+          `${occasion} reel ready. *Approve* se Facebook pe post.`,
+      });
+
+      await offerCaptionFacebookApprove(fromWhatsAppNumber, {
+        caption: result.caption,
+        style: result.style,
+        imageUrls: [],
+        videoUrl: reel.videoUrl,
+        mediaType: "reel",
+        occasion,
+        user,
+        eligibility,
+      });
+
+      return {
+        handled: true,
+        type: "reel_ready",
+        style: result.style,
+        occasion,
+        videoUrl: reel.videoUrl,
+      };
+    } catch (error) {
+      console.error(
+        "[caption] occasion reel failed, falling back to photos:",
+        getErrorMessage(error),
+      );
+      await sendWhatsAppText({
+        toMobile: fromWhatsAppNumber,
+        body:
+          `Reel nahi ban paya (${getErrorMessage(error)}).\n` +
+          `Photos + caption se continue…`,
+      });
+    }
+  }
 
   if (urls[0]) {
     await sendPosterWhatsApp({
@@ -455,11 +524,13 @@ async function generateAndSendCaption(fromWhatsAppNumber, rawText, photos, user,
     caption: result.caption,
     style: result.style,
     imageUrls: urls,
+    mediaType: "photos",
+    occasion,
     user,
     eligibility,
   });
 
-  return { handled: true, type: "caption_ready", style: result.style };
+  return { handled: true, type: "caption_ready", style: result.style, occasion };
 }
 
 async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
@@ -474,9 +545,10 @@ async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
   await sendWhatsAppText({
     toMobile: fromWhatsAppNumber,
     body:
-      `Photos (1–${MAX_CAPTION_PHOTOS}) bhejo + event text.\n` +
-      `AI caption banegi; *Approve* se original photos Facebook pe post hongi.\n` +
-      `Sirf photos: ~${Math.round(PHOTO_BATCH_WAIT_MS / 1000)}s wait ya *done*.`,
+      `Photos (1–${MAX_CAPTION_PHOTOS}) + event text bhejo.\n` +
+      `Birthday / party / festival → reel + fixed gana + AI caption.\n` +
+      `Baaki → photos + AI caption.\n` +
+      `*Approve* se Facebook pe post.`,
   });
   return { handled: true, type: "caption_prompt" };
 }
@@ -484,24 +556,58 @@ async function startCaptionFlow(fromWhatsAppNumber, options = {}) {
 async function approvePendingCaption({ fromWhatsAppNumber }) {
   const pending = getPendingCaptionApproval(fromWhatsAppNumber);
   const hasImages = Array.isArray(pending?.imageUrls) && pending.imageUrls.length > 0;
+  const hasVideo = typeof pending?.videoUrl === "string" && pending.videoUrl.trim().length > 0;
   const hasCaption = typeof pending?.caption === "string" && pending.caption.trim().length > 0;
-  if (!pending?.userId || !pending?.canApproveSocial || (!hasImages && !hasCaption)) {
+  if (!pending?.userId || !pending?.canApproveSocial || (!hasImages && !hasVideo && !hasCaption)) {
     return { handled: false, reason: "no_pending_caption" };
   }
 
-  const result = await approveCaptionForUser({
-    userId: pending.userId,
-    caption: pending.caption || "",
-    imageUrls: pending.imageUrls || [],
-  });
+  let result;
+  if (hasVideo) {
+    const facebook = await postReelForUser({
+      userId: pending.userId,
+      videoUrl: pending.videoUrl,
+      caption: pending.caption || "",
+    });
+
+    let instagram = null;
+    const eligibility = await getUserSocialApproveEligibility(pending.userId);
+    if (eligibility.hasInstagram) {
+      try {
+        const posted = await postReelToInstagramForUser({
+          userId: pending.userId,
+          videoUrl: pending.videoUrl,
+          caption: pending.caption || "",
+        });
+        instagram = { success: true, ...posted };
+      } catch (error) {
+        instagram = {
+          success: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+    result = { facebook, instagram };
+  } else {
+    result = await approveCaptionForUser({
+      userId: pending.userId,
+      caption: pending.caption || "",
+      imageUrls: pending.imageUrls || [],
+    });
+  }
 
   clearPendingCaptionApproval(fromWhatsAppNumber);
   clearCaptionSession(fromWhatsAppNumber);
 
   const pageName = result?.facebook?.pageName || "your Facebook Page";
-  let body = hasCaption
-    ? `Done! Photos + caption Facebook (${pageName}) pe post ho gaye.`
-    : `Done! Photos Facebook (${pageName}) pe post ho gaye.`;
+  let body;
+  if (hasVideo) {
+    body = `Done! ${pending.occasion || "Occasion"} reel Facebook (${pageName}) pe post ho gaya.`;
+  } else if (hasCaption) {
+    body = `Done! Photos + caption Facebook (${pageName}) pe post ho gaye.`;
+  } else {
+    body = `Done! Photos Facebook (${pageName}) pe post ho gaye.`;
+  }
   if (result?.instagram?.success || result?.instagram?.mediaId) {
     body += ` Instagram pe bhi post ho gaya.`;
   } else if (result?.instagram?.message) {
@@ -513,7 +619,7 @@ async function approvePendingCaption({ fromWhatsAppNumber }) {
     body,
   });
 
-  return { handled: true, type: "caption_approved", result };
+  return { handled: true, type: hasVideo ? "reel_approved" : "caption_approved", result };
 }
 
 /**
@@ -618,7 +724,8 @@ async function handleWhatsAppCaption({
         toMobile: fromWhatsAppNumber,
         body:
           `Pehle 1–${MAX_CAPTION_PHOTOS} photos bhejo.\n` +
-          `Phir AI caption + *Approve* se original photos Facebook pe post.`,
+          `Birthday/party/festival text pe reel; warna photos + caption.\n` +
+          `*Approve* se Facebook pe post.`,
       });
       return { handled: true, type: "need_photos" };
     }

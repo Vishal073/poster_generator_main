@@ -88,6 +88,7 @@ async function generateReel({
   sticker,
   posterUrl,
   posterFile,
+  musicOverride,
 }) {
   await ensureReelDirectories();
   await assertFfmpegAvailable();
@@ -126,6 +127,9 @@ async function generateReel({
     : resolvedTemplate;
 
   const renderPlan = buildRenderPlan(categoryPreset, templateForRender);
+  if (typeof musicOverride === "string" && musicOverride.trim()) {
+    renderPlan.music = musicOverride.trim();
+  }
   const customVoiceUrl =
     typeof voiceUrl === "string" && isHttpUrl(voiceUrl) ? voiceUrl.trim() : null;
   const matchedVoice = matchVoicePoolEntry(categoryPreset.voicePool, voiceKey);
@@ -134,6 +138,9 @@ async function generateReel({
     renderPlan.voice = customVoiceUrl;
   } else if (matchedVoice) {
     renderPlan.voice = String(matchedVoice).trim();
+  }
+  if (enableVoice === false) {
+    renderPlan.voice = null;
   }
   const preparedTemplate = {
     ...templateForRender,

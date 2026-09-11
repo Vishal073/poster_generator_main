@@ -1,0 +1,14 @@
+{
+  "id": "party",
+  "name": "Party Event Reel",
+  "description": "Upbeat party/event photo slideshow with fixed party music.",
+  "animationPool": ["ken_burns", "zoom_in", "pan_left", "pan_right", "zoom_out"],
+  "transitionPool": ["fade", "cross_dissolve", "slide_left"],
+  "musicPool": ["party"],
+  "voicePool": [],
+  "rules": {
+    "pace": "medium",
+    "maxAggressiveTransitions": 1,
+    "avoidBackToBackSameAnimation": true
+  }
+}

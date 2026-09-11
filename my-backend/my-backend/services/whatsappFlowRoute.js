@@ -347,16 +347,21 @@ router.post("/webhook", async (req, res) => {
     }
 
     if (reply === "approve" || reply === approvePayload) {
-      // Caption Approve (AI text → Facebook Page) takes priority when pending.
+      // Caption/reel Approve takes priority when pending.
       const captionPending = getPendingCaptionApproval(normalizedFrom);
-      if (captionPending?.canApproveSocial && captionPending?.caption) {
+      const hasCaptionMedia =
+        Boolean(captionPending?.videoUrl) ||
+        (Array.isArray(captionPending?.imageUrls) &&
+          captionPending.imageUrls.length > 0) ||
+        Boolean(String(captionPending?.caption || "").trim());
+      if (captionPending?.canApproveSocial && hasCaptionMedia) {
         try {
           await approvePendingCaption({ fromWhatsAppNumber: normalizedFrom });
         } catch (error) {
           console.error("WhatsApp approve caption failed:", getErrorMessage(error));
           await sendWhatsAppText({
             toMobile: normalizedFrom,
-            body: `Could not post your caption: ${getErrorMessage(error)}`,
+            body: `Could not post: ${getErrorMessage(error)}`,
           }).catch((sendError) => {
             console.error("WhatsApp caption approve error reply failed:", getErrorMessage(sendError));
           });
