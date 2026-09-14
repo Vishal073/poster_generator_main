@@ -106,33 +106,6 @@ async function loadPosterImage(source, loadImage) {
   return loadImage(absolutePath);
 }
 
-async function loadCanvasImage(source, loadImage, maxEdge) {
-  if (!source || typeof source !== "string") {
-    throw new Error("A valid poster source (file path or URL) is required.");
-  }
-
-  const inputBuffer = await loadRasterBuffer(source);
-  const sharp = require("sharp");
-  const meta = await sharp(inputBuffer).metadata();
-  const srcW = Math.max(1, meta.width || 1);
-  const srcH = Math.max(1, meta.height || 1);
-  const cap = Math.max(64, Number(maxEdge) || 1600);
-  const scale = Math.min(1, cap / Math.max(srcW, srcH));
-  const W = Math.max(1, Math.round(srcW * scale));
-  const H = Math.max(1, Math.round(srcH * scale));
-  const resized = await sharp(inputBuffer)
-    .resize(W, H, { fit: "fill" })
-    .jpeg({ quality: 90 })
-    .toBuffer();
-
-  return {
-    image: await loadImage(resized),
-    scale,
-    W,
-    H,
-  };
-}
-
 async function loadRasterBuffer(source) {
   if (isUrl(source)) {
     if (typeof fetch !== "function") {
@@ -1430,56 +1403,9 @@ async function generatePosterImage({
     }
   }
 
-  const maxEdge = Math.max(800, Number(process.env.POSTER_MAX_EDGE || 1600) || 1600);
-  const loadedPoster = await loadCanvasImage(posterSource, loadImage, maxEdge);
-  const posterImage = loadedPoster.image;
-  const scale = loadedPoster.scale;
-  const W = loadedPoster.W;
-  const H = loadedPoster.H;
-
-  if (scale < 1) {
-    const scalePx = (value) =>
-      typeof value === "number" && Number.isFinite(value) ? value * scale : value;
-    x = scalePx(x);
-    y = scalePx(y);
-    imageX = scalePx(imageX);
-    imageY = scalePx(imageY);
-    imageWidth = scalePx(imageWidth);
-    imageHeight = scalePx(imageHeight);
-    imageCornerRadius = scalePx(imageCornerRadius);
-    insetFromBottom = scalePx(insetFromBottom);
-    insetLeft = scalePx(insetLeft);
-    insetRight = scalePx(insetRight);
-    imageGap = scalePx(imageGap);
-    imageMaxSize = scalePx(imageMaxSize);
-    lineGap = scalePx(lineGap);
-    paragraphGap = scalePx(paragraphGap);
-    fontSize = scalePx(fontSize);
-    if (Array.isArray(lineGaps)) {
-      lineGaps = lineGaps.map((gap) => scalePx(gap));
-    }
-    if (Array.isArray(normalizedLineGaps)) {
-      for (let index = 0; index < normalizedLineGaps.length; index += 1) {
-        normalizedLineGaps[index] = scalePx(normalizedLineGaps[index]);
-      }
-    }
-    if (Array.isArray(textLineStyles)) {
-      textLineStyles = textLineStyles.map((style) => {
-        if (!style || typeof style !== "object") return style;
-        if (typeof style.fontSize !== "number") return style;
-        return { ...style, fontSize: style.fontSize * scale };
-      });
-    }
-    if (watermark && watermark.addWatermark) {
-      watermark.watermarkWidth = scalePx(watermark.watermarkWidth);
-      watermark.watermarkHeight = scalePx(watermark.watermarkHeight);
-      watermark.watermarkCornerRadius = scalePx(watermark.watermarkCornerRadius);
-      watermark.watermarkPadding = scalePx(watermark.watermarkPadding);
-      watermark.watermarkLogoSize = scalePx(watermark.watermarkLogoSize);
-      watermark.watermarkLogoGap = scalePx(watermark.watermarkLogoGap);
-    }
-  }
-
+  const posterImage = await loadPosterImage(posterSource, loadImage);
+  const W = posterImage.width;
+  const H = posterImage.height;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
   ctx.antialias = "gray";
@@ -1490,11 +1416,7 @@ async function generatePosterImage({
   let userImage = null;
   if (userImageSource) {
     try {
-      const photoCap = Math.max(
-        256,
-        Math.ceil(Number(imageMaxSize || imageWidth || 120) * 3),
-      );
-      userImage = (await loadCanvasImage(userImageSource, loadImage, photoCap)).image;
+      userImage = await loadPosterImage(userImageSource, loadImage);
     } catch (error) {
       // User image is optional; continue without image and use full text space.
       userImage = null;
@@ -1587,23 +1509,12 @@ async function generatePosterImage({
     await drawPosterWatermark(ctx, W, H, watermark, loadImage);
   }
 
-  let outputBuffer;
-  let fileName;
-  let mimeType;
-  try {
-    outputBuffer = canvas.toBuffer("image/jpeg", { quality: 0.88 });
-    fileName = `poster-${Date.now()}.jpg`;
-    mimeType = "image/jpeg";
-  } catch {
-    outputBuffer = canvas.toBuffer("image/png");
-    fileName = `poster-${Date.now()}.png`;
-    mimeType = "image/png";
-  }
+  let outputBuffer = canvas.toBuffer("image/png");
 
   return {
     buffer: outputBuffer,
-    fileName,
-    mimeType,
+    fileName: `poster-${Date.now()}.png`,
+    mimeType: "image/png",
   };
 }
 
