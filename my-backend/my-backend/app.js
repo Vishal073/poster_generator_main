@@ -9,10 +9,11 @@ const facebookRoutes = require("./routes/facebookRoutes");
 const { router: shareImageRoute } = require("./services/shareImageRoute");
 const { router: eventPosterRoute } = require("./services/eventPosterRoute");
 const { router: reelsRoute } = require("./services/reelsRoute");
-const { router: musicRoute } = require("./services/musicRoute");
 const { router: ogShareCardRoute } = require("./services/ogShareCardRoute");
-const { router: shopRoute } = require("./services/shop/shopRoute");
-const { router: shopAdminRoute } = require("./services/shop/shopAdminRoute");
+// Shop + music paused — restore from git branch archive/shop-and-song
+// const { router: musicRoute } = require("./services/musicRoute");
+// const { router: shopRoute } = require("./services/shop/shopRoute");
+// const { router: shopAdminRoute } = require("./services/shop/shopAdminRoute");
 const FacebookConnection = require("./models/FacebookConnection");
 
 const defaultAllowedOrigins = [
@@ -102,10 +103,10 @@ function createApp() {
   app.use(shareImageRoute);
   app.use(eventPosterRoute);
   app.use(reelsRoute);
-  app.use(musicRoute);
   app.use(ogShareCardRoute);
-  app.use(shopAdminRoute);
-  app.use(shopRoute);
+  // app.use(musicRoute);
+  // app.use(shopAdminRoute);
+  // app.use(shopRoute);
   app.use(whatsappFlowRoute);
   app.use(facebookRoutes);
 
