@@ -203,16 +203,38 @@ function getErrorMessage(error) {
 }
 
 function getPosterFileName({ mobileValue, email, fallbackName }) {
+  const fallback = String(fallbackName || `poster-${Date.now()}`).trim();
+  const extMatch = fallback.match(/\.(jpe?g|png|webp)$/i);
+  const ext = extMatch ? extMatch[0].toLowerCase().replace(/jpeg$/i, "jpg") : ".jpg";
   const normalizedIdentifier = mobileValue
     ? String(mobileValue).replace(/\D/g, "")
     : typeof email === "string" && email.trim()
       ? email.trim()
-      : String(fallbackName || `poster-${Date.now()}`)
-          .trim()
-          .replace(/\.png$/i, "");
+      : fallback.replace(/\.(jpe?g|png|webp)$/i, "");
 
   // Unique public_id each run so we never overwrite with a bad/test image.
-  return `${normalizedIdentifier || "poster"}-${Date.now()}.png`;
+  return `${normalizedIdentifier || "poster"}-${Date.now()}${ext}`;
+}
+
+function hintGc() {
+  if (typeof global.gc === "function") {
+    try {
+      global.gc();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+let generateQueue = Promise.resolve();
+
+function runGenerateExclusive(fn) {
+  const run = generateQueue.then(fn, fn);
+  generateQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 function isTruthyParam(value) {
@@ -886,7 +908,18 @@ async function generatePoster(req, res) {
   }
 }
 
-router.post("/generate-poster", parseGeneratePosterRequest, generatePoster);
+async function generatePosterQueued(req, res) {
+  return runGenerateExclusive(async () => {
+    hintGc();
+    try {
+      return await generatePoster(req, res);
+    } finally {
+      hintGc();
+    }
+  });
+}
+
+router.post("/generate-poster", parseGeneratePosterRequest, generatePosterQueued);
 
 router.get("/base-posters", async (req, res) => {
   try {
